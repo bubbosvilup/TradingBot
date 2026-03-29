@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TradingBot Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <h1>Dashboard Paper Trading</h1>
+        <p id="summary">Caricamento dati della sessione...</p>
+      </header>
+
+      <section class="summary-grid" id="summary-cards"></section>
+
+      <section class="card">
+        <h2>Decisione attuale</h2>
+        <div class="decision-highlight">
+          <div class="decision-main">
+            <span class="big-action" id="current-action">HOLD</span>
+            <span class="badge" id="current-symbol-badge">n/a</span>
+          </div>
+          <p class="explanation-short" id="decision-short-explanation">Caricamento spiegazione...</p>
+          <p class="explanation-detail" id="decision-detailed-explanation"></p>
+          <dl class="facts compact-facts" id="decision-main-facts"></dl>
+          <ul class="explanation-list" id="decision-reason-list"></ul>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Mercati monitorati</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Simbolo</th>
+                <th>Prezzo</th>
+                <th>Trend</th>
+                <th>Segnale</th>
+                <th>Score</th>
+                <th>RSI</th>
+                <th>EMA veloce</th>
+                <th>EMA lenta</th>
+              </tr>
+            </thead>
+            <tbody id="markets-body">
+              <tr>
+                <td colspan="8">Caricamento mercati...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Operazioni eseguite</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ora</th>
+                <th>Simbolo</th>
+                <th>Azione</th>
+                <th>Prezzo</th>
+                <th>Quantita</th>
+                <th>PnL trade</th>
+              </tr>
+            </thead>
+            <tbody id="trades-body">
+              <tr>
+                <td colspan="6">Nessuna operazione disponibile.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card controls-card">
+        <h2>Controlli</h2>
+        <p>Usa il reset per riportare il paper trading allo stato iniziale.</p>
+        <button id="reset-button" type="button">Reset sessione</button>
+        <p class="note" id="reset-result"></p>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+  </html>

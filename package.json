@@ -1,0 +1,24 @@
+{
+  "name": "tradingbot",
+  "version": "1.0.0",
+  "description": "Minimal BTC/USDT paper trading bot using ccxt",
+  "main": "bot.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "keywords": [
+    "trading",
+    "bot",
+    "paper-trading",
+    "ccxt",
+    "btc",
+    "usdt"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ccxt": "^4.5.45",
+    "dotenv": "^16.6.1"
+  }
+}
