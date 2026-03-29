@@ -193,6 +193,71 @@ th {
   flex-wrap: wrap;
 }
 
+.trade-action-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trade-info {
+  position: relative;
+}
+
+.trade-info summary {
+  list-style: none;
+}
+
+.trade-info summary::-webkit-details-marker {
+  display: none;
+}
+
+.info-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid #bfd3f2;
+  background: #eef4ff;
+  color: #1849a9;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.trade-tooltip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  width: 280px;
+  padding: 10px;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.trade-tooltip strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #102a43;
+}
+
+.trade-tooltip p {
+  margin: 0 0 8px;
+  color: #334e68;
+  line-height: 1.4;
+}
+
+.trade-tooltip ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #334e68;
+}
+
 .badge {
   display: inline-block;
   border: 1px solid #d9e2ec;

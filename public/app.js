@@ -12,7 +12,7 @@ const resetButton = document.getElementById("reset-button");
 const resetResult = document.getElementById("reset-result");
 
 function formatPrice(value) {
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return "n/a";
   }
 
@@ -20,7 +20,7 @@ function formatPrice(value) {
 }
 
 function formatBtc(value) {
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return "n/a";
   }
 
@@ -28,16 +28,15 @@ function formatBtc(value) {
 }
 
 function formatUsdt(value) {
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return "n/a";
   }
 
-  const absoluteValue = Math.abs(Number(value));
-  return absoluteValue >= 100 ? Number(value).toFixed(2) : Number(value).toFixed(4);
+  return Number(value).toFixed(2);
 }
 
 function formatIndicator(value) {
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return "n/a";
   }
 
@@ -45,7 +44,7 @@ function formatIndicator(value) {
 }
 
 function formatSignedUsdt(value) {
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return "n/a";
   }
 
@@ -76,6 +75,15 @@ function formatDate(value) {
   }
 
   return new Date(value).toLocaleString();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function renderFacts(container, entries) {
@@ -152,11 +160,34 @@ function renderTrades(trades) {
     .reverse()
     .map((trade) => {
       const pnlClass = getValueClass(trade.pnlUsdt);
+      const shortExplanation = escapeHtml(trade.explanationShort || trade.reason || "Spiegazione non disponibile.");
+      const detailedExplanation = escapeHtml(trade.detailedExplanation || "Dettaglio non disponibile.");
+      const reasonItems = Array.isArray(trade.reasonList) && trade.reasonList.length > 0
+        ? `<ul>${trade.reasonList.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+        : "";
+      const budgetLine = trade.budgetUsedAfter !== undefined && trade.budgetRemainingAfter !== undefined
+        ? `<p>Budget usato: ${formatUsdt(trade.budgetUsedAfter)} | Budget disponibile: ${formatUsdt(trade.budgetRemainingAfter)}</p>`
+        : "";
+      const entryLabel = trade.entryIndex && trade.action === "BUY" ? `Ingresso ${trade.entryIndex}` : trade.action;
+
       return `
         <tr>
           <td>${formatDate(trade.time)}</td>
           <td>${trade.symbol || "n/a"}</td>
-          <td>${trade.action}</td>
+          <td>
+            <div class="trade-action-cell">
+              <span>${entryLabel}</span>
+              <details class="trade-info">
+                <summary class="info-chip" title="Perche il bot ha preso questa decisione">i</summary>
+                <div class="trade-tooltip">
+                  <strong>${shortExplanation}</strong>
+                  <p>${detailedExplanation}</p>
+                  ${budgetLine}
+                  ${reasonItems}
+                </div>
+              </details>
+            </div>
+          </td>
           <td>${formatPrice(trade.price)}</td>
           <td>${formatBtc(trade.btcAmount)}</td>
           <td class="${pnlClass}">${trade.pnlUsdt === null ? "n/a" : formatSignedUsdt(trade.pnlUsdt)}</td>
@@ -171,6 +202,10 @@ async function loadDashboard() {
     fetch("/api/status"),
     fetch("/api/trades")
   ]);
+
+  if (!statusResponse.ok || !tradesResponse.ok) {
+    throw new Error("Dashboard API unavailable.");
+  }
 
   const statusData = await statusResponse.json();
   const tradesData = await tradesResponse.json();
@@ -197,6 +232,9 @@ async function loadDashboard() {
     ["Mercato in focus", statusData.decision.symbol || "n/a"],
     ["Perche guardiamo questo mercato", statusData.decision.focusReason || "n/a"],
     ["Motivo principale", statusData.decision.reason || "n/a"],
+    ["Entrate aperte", statusData.portfolio.entryCount ?? 0],
+    ["Budget usato", formatUsdt(statusData.portfolio.budgetUsed)],
+    ["Budget disponibile", formatUsdt(statusData.portfolio.budgetRemaining)],
     ["RSI", formatIndicator(statusData.decision.rsi)],
     ["EMA veloce", formatPrice(statusData.decision.ema9)],
     ["EMA lenta", formatPrice(statusData.decision.ema21)]
@@ -206,7 +244,7 @@ async function loadDashboard() {
   detailedExplanationElement.textContent = statusData.decision.detailedExplanation || "";
   renderReasonList(statusData.decision.reasonList || []);
   renderMarkets(statusData.markets || []);
-  renderTrades(tradesData.trades || []);
+  renderTrades(Array.isArray(tradesData.trades) ? tradesData.trades : []);
 }
 
 async function resetSession() {
@@ -236,10 +274,12 @@ resetButton.addEventListener("click", () => {
 
 loadDashboard().catch(() => {
   summaryElement.textContent = "Impossibile caricare la dashboard.";
+  shortExplanationElement.textContent = "La dashboard non riesce a leggere i dati del bot.";
 });
 
 setInterval(() => {
   loadDashboard().catch(() => {
     summaryElement.textContent = "Impossibile aggiornare la dashboard.";
+    shortExplanationElement.textContent = "Aggiornamento temporaneamente non disponibile.";
   });
 }, 4000);
