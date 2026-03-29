@@ -1530,7 +1530,8 @@ async function fetchTopSymbols(exchange) {
         baseAsset,
         quoteAsset,
         active: ticker?.active !== false,
-        volumeScore
+        volumeScore,
+        lastPrice
       };
     })
     .filter((ticker) => {
@@ -1547,6 +1548,22 @@ async function fetchTopSymbols(exchange) {
       }
 
       if (LEVERAGED_TOKEN_REGEX.test(ticker.baseAsset)) {
+        return false;
+      }
+
+      if (/[^\x20-\x7E]/.test(ticker.baseAsset)) {
+        return false;
+      }
+
+      if (ticker.baseAsset.length > 10) {
+        return false;
+      }
+
+      if (!Number.isFinite(ticker.volumeScore) || ticker.volumeScore < 50000) {
+        return false;
+      }
+
+      if (Number.isFinite(ticker.lastPrice) && ticker.lastPrice < 0.000001) {
         return false;
       }
 
