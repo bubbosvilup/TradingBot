@@ -4,6 +4,7 @@ const currentActionElement = document.getElementById("current-action");
 const currentSymbolBadge = document.getElementById("current-symbol-badge");
 const marketsBody = document.getElementById("markets-body");
 const tradesBody = document.getElementById("trades-body");
+const positionsBody = document.getElementById("positions-body");
 const summaryElement = document.getElementById("summary");
 const shortExplanationElement = document.getElementById("decision-short-explanation");
 const detailedExplanationElement = document.getElementById("decision-detailed-explanation");
@@ -115,6 +116,39 @@ function renderReasonList(items) {
   reasonListElement.innerHTML = items.map((item) => `<li>${item}</li>`).join("");
 }
 
+function renderPositions(positions) {
+  if (!positions || !positions.length) {
+    positionsBody.innerHTML = '<tr><td colspan="7">Nessuna posizione aperta al momento.</td></tr>';
+    return;
+  }
+
+  positionsBody.innerHTML = positions
+    .map((pos) => {
+      const pnlClass = getValueClass(pos.pnlUsdt);
+      const stopLoss = pos.trailingActive && pos.trailingStop ? pos.trailingStop : pos.stopLoss;
+
+      return `
+        <tr>
+          <td>
+            <div class="symbol-cell">
+              <strong>${pos.symbol}</strong>
+              <span class="badge ${pos.trailingActive ? "badge-best" : "badge-position"}">
+                ${pos.trailingActive ? "Trailing" : "Open"}
+              </span>
+            </div>
+          </td>
+          <td>${formatPrice(pos.entryPrice)}</td>
+          <td>${formatPrice(pos.lastPrice)}</td>
+          <td>${formatBtc(pos.btcAmount)}</td>
+          <td class="${pnlClass}">${pos.pnlLabel}</td>
+          <td>${formatPrice(stopLoss)}</td>
+          <td>${pos.takeProfit ? formatPrice(pos.takeProfit) : "n/a"}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 function renderMarkets(markets) {
   if (!markets || !markets.length) {
     marketsBody.innerHTML = '<tr><td colspan="8">Nessun mercato disponibile.</td></tr>';
@@ -150,48 +184,99 @@ function renderMarkets(markets) {
     .join("");
 }
 
+function groupTrades(trades) {
+  const groups = new Map();
+  
+  // Group activities by tradeId
+  for (const t of trades) {
+    const id = t.tradeId || `Legacy-${t.time}-${t.symbol}`;
+    if (!groups.has(id)) {
+      groups.set(id, []);
+    }
+    groups.get(id).push(t);
+  }
+
+  // Aggregate groups into trade rounds
+  const rounds = Array.from(groups.values()).map(events => {
+    const sorted = events.sort((a, b) => new Date(a.time) - new Date(b.time));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const isClosed = sorted.some(e => e.action === "SELL_FULL");
+    
+    // Aggregation of BUYs (Entry)
+    const buys = sorted.filter(e => e.action === "BUY");
+    const totalBtc = buys.reduce((sum, e) => sum + e.btcAmount, 0);
+    const totalUsdt = buys.reduce((sum, e) => sum + (e.usdtAmount || e.price * e.btcAmount), 0);
+    const avgEntry = totalUsdt / totalBtc;
+    
+    // Total PnL sum
+    const totalPnl = sorted.reduce((sum, e) => sum + (e.netPnlUsdt || 0), 0);
+    
+    // Duration
+    const startTime = new Date(first.time);
+    const endTime = new Date(last.time);
+    const durationMs = endTime - startTime;
+    const durationMin = Math.floor(durationMs / 60000);
+    
+    return {
+      id: first.tradeId || "Legacy",
+      symbol: first.symbol,
+      startTime,
+      endTime: isClosed ? endTime : null,
+      duration: isClosed ? (durationMin > 0 ? `${durationMin}m` : "< 1m") : "In corso...",
+      entryPrice: avgEntry,
+      exitPrice: isClosed ? last.price : null,
+      pnl: totalPnl,
+      status: isClosed ? "Chiuso" : "Aperto",
+      lastReason: last.reason,
+      events: sorted
+    };
+  });
+
+  return rounds.sort((a, b) => b.startTime - a.startTime);
+}
+
 function renderTrades(trades) {
   if (!trades.length) {
-    tradesBody.innerHTML = '<tr><td colspan="6">Nessuna operazione disponibile.</td></tr>';
+    tradesBody.innerHTML = '<tr><td colspan="6">Nessuna operazione completata disponibile.</td></tr>';
     return;
   }
 
-  tradesBody.innerHTML = trades
-    .slice()
-    .reverse()
-    .map((trade) => {
-      const pnlClass = getValueClass(trade.pnlUsdt);
-      const shortExplanation = escapeHtml(trade.explanationShort || trade.reason || "Spiegazione non disponibile.");
-      const detailedExplanation = escapeHtml(trade.detailedExplanation || "Dettaglio non disponibile.");
-      const reasonItems = Array.isArray(trade.reasonList) && trade.reasonList.length > 0
-        ? `<ul>${trade.reasonList.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-        : "";
-      const budgetLine = trade.budgetUsedAfter !== undefined && trade.budgetRemainingAfter !== undefined
-        ? `<p>Capitale impegnato: ${formatUsdt(trade.budgetUsedAfter)} | Spazio residuo per nuove entrate: ${formatUsdt(trade.budgetRemainingAfter)}</p>`
-        : "";
-      const entryLabel = trade.entryIndex && trade.action === "BUY" ? `Ingresso ${trade.entryIndex}` : trade.action;
+  const rounds = groupTrades(trades);
+
+  tradesBody.innerHTML = rounds
+    .map((round) => {
+      const pnlClass = getValueClass(round.pnl);
+      const lastEvent = round.events[round.events.length - 1];
+      const shortExplanation = escapeHtml(lastEvent.explanationShort || lastEvent.reason || "Dettagli non disponibili.");
+      
+      const statusBadge = round.status === "Chiuso" 
+        ? '<span class="badge badge-wait">Chiuso</span>' 
+        : '<span class="badge badge-position">In corso</span>';
+
+      const priceOut = round.exitPrice ? formatPrice(round.exitPrice) : "---";
 
       return `
         <tr>
-          <td>${formatDate(trade.time)}</td>
-          <td>${trade.symbol || "n/a"}</td>
+          <td>${formatDate(round.startTime)}</td>
+          <td><strong>${round.symbol}</strong></td>
+          <td>${statusBadge}</td>
           <td>
             <div class="trade-action-cell">
-              <span>${entryLabel}</span>
+              <span>${formatPrice(round.entryPrice)} / ${priceOut}</span>
               <details class="trade-info">
-                <summary class="info-chip" title="Perche il bot ha preso questa decisione">i</summary>
+                <summary class="info-chip" title="Dettagli operazione">i</summary>
                 <div class="trade-tooltip">
-                  <strong>${shortExplanation}</strong>
-                  <p>${detailedExplanation}</p>
-                  ${budgetLine}
-                  ${reasonItems}
+                  <strong>Status: ${round.status}</strong>
+                  <p>${shortExplanation}</p>
+                  <p>Motivo: ${round.lastReason || "Nessuno"}</p>
+                  <p>Eventi: ${round.events.length}</p>
                 </div>
               </details>
             </div>
           </td>
-          <td>${formatPrice(trade.price)}</td>
-          <td>${formatBtc(trade.btcAmount)}</td>
-          <td class="${pnlClass}">${trade.pnlUsdt === null ? "n/a" : formatSignedUsdt(trade.pnlUsdt)}</td>
+          <td>${round.duration}</td>
+          <td class="${pnlClass}">${round.status === "Chiuso" ? formatSignedUsdt(round.pnl) : "---"}</td>
         </tr>
       `;
     })
@@ -225,7 +310,7 @@ async function loadDashboard() {
       value: formatSignedUsdt(statusData.overview.sessionPnl),
       cssClass: getValueClass(statusData.overview.sessionPnl)
     },
-    { label: "Posizione aperta", value: statusData.overview.hasOpenPosition ? "Si" : "No" }
+    { label: "Posizioni aperte", value: statusData.overview.activeCount || 0 }
   ]);
 
   currentActionElement.textContent = statusData.decision.action || "HOLD";
@@ -248,6 +333,7 @@ async function loadDashboard() {
   shortExplanationElement.textContent = statusData.decision.shortExplanation || "Spiegazione non disponibile.";
   detailedExplanationElement.textContent = statusData.decision.detailedExplanation || "";
   renderReasonList(statusData.decision.reasonList || []);
+  renderPositions(statusData.overview.positions || []);
   renderMarkets(statusData.markets || []);
   renderTrades(Array.isArray(tradesData.trades) ? tradesData.trades : []);
 }

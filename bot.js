@@ -39,7 +39,7 @@ const EXCHANGE_ID = process.env.EXCHANGE || "binance";
 const PAPER_TRADING = (process.env.PAPER_TRADING || "true").toLowerCase() === "true";
 let btcFilterEnabled = (process.env.BTC_FILTER_ENABLED || "true").toLowerCase() === "true";
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 30000);
-const INITIAL_USDT_BALANCE = Number(process.env.INITIAL_USDT_BALANCE || 10);
+const INITIAL_USDT_BALANCE = Number(process.env.INITIAL_USDT_BALANCE || 100);
 const OHLCV_LIMIT = Math.max(Number(process.env.OHLCV_LIMIT || 100), 100);
 const TOP_SYMBOLS_COUNT = Math.max(Number(process.env.TOP_SYMBOLS_COUNT || 10), 1);
 const SYMBOLS_REFRESH_CYCLES = Math.max(Number(process.env.SYMBOLS_REFRESH_CYCLES || 120), 1);
@@ -47,7 +47,7 @@ const BATCH_SIZE = Math.max(Number(process.env.BATCH_SIZE || 5), 1);
 const BATCH_DELAY_MS = Math.max(Number(process.env.BATCH_DELAY_MS || 500), 0);
 const FETCH_TIMEOUT_MS = Math.max(Number(process.env.FETCH_TIMEOUT_MS || 15000), 1000);
 const LOOP_STALL_WARNING_MS = Math.max(Number(process.env.LOOP_STALL_WARNING_MS || 45000), 5000);
-const USE_CCXT_PRO_WS = (process.env.USE_CCXT_PRO_WS || "true").toLowerCase() === "true";
+const USE_CCXT_PRO_WS = false; // [MIGRAZIONE ARCHITETTURALE] Disabilitato forzatamente per prevenire stream errors (1008) su Binance. Usiamo polling REST puro gestito dalla queue ccxt, totalmente stabile per 5s.
 const WS_BACKOFF_BASE_MS = Math.max(Number(process.env.WS_BACKOFF_BASE_MS || 1000), 250);
 const WS_BACKOFF_MAX_MS = Math.max(Number(process.env.WS_BACKOFF_MAX_MS || 15000), WS_BACKOFF_BASE_MS);
 const WS_WATCH_TIMEOUT_MS = Math.max(Number(process.env.WS_WATCH_TIMEOUT_MS || 45000), FETCH_TIMEOUT_MS);
@@ -62,6 +62,7 @@ const ATR_TP_MULT = Number(process.env.ATR_TP_MULT || 3.0);
 const ATR_TRAIL_MULT = Number(process.env.ATR_TRAIL_MULT || 2.0);
 const TRAILING_PCT = Number(process.env.TRAILING_PCT || 0.007);
 const HARD_STOP_PCT = Number(process.env.HARD_STOP_PCT || 0.05);
+const MAX_CONCURRENT_POSITIONS = Number(process.env.MAX_CONCURRENT_POSITIONS || 3); // Numero massimo di trade aperti contemporaneamente
 const POSITION_SIZE_MIN = Number(process.env.POSITION_SIZE_MIN || 0.2);
 const POSITION_SIZE_MAX = Number(process.env.POSITION_SIZE_MAX || 0.7);
 const MIN_SCORE_ENTRY = Number(process.env.MIN_SCORE_ENTRY || 6);
@@ -97,7 +98,7 @@ const FETCH_LIMIT_1H = Math.max(60, Math.min(OHLCV_LIMIT, 200));
 const FETCH_LIMIT_5M = Math.max(100, Math.min(OHLCV_LIMIT, 300));
 const FETCH_LIMIT_1M = Math.max(20, Math.min(OHLCV_LIMIT, 100));
 const MAX_POSITION_EXPOSURE_PCT = 0.85;
-const ENTRY_VOLUME_MULT = 1.5;
+const ENTRY_VOLUME_MULT = Number(process.env.ENTRY_VOLUME_MULT || 0.8); // Abbassato da 1.5: con 1.5x il bot non entrava mai in mercati normali. 1.1x = volume leggermente sopra la media, filtro realistico.
 const EXCLUDED_BASE_ASSETS = new Set(["USDC", "BUSD", "TUSD", "FDUSD", "DAI", "USDP", "EUR", "GBP", "WBTC", "WETH", "STETH", "WSTETH", "RETH", "USD1", "U", "NOM", "NIGHT", "STO", "SENT", "ANKR", "BARD", "KITE", "CFG"]);
 const LEVERAGED_TOKEN_REGEX = /\d+[LS]$/i;
 const RECENTLY_DROPPED_TTL_CYCLES = 10;
@@ -124,7 +125,7 @@ const state = {
   botStartedAt: null,
   lastUpdate: null,
   usdtBalance: INITIAL_USDT_BALANCE,
-  position: null,
+  positions: [], // [UPGRADE] Da singola posizione a array per gestire multi-trade
   trades: [],
   markets: {},
   candleData: {},
@@ -258,26 +259,43 @@ function logCycleSummary(scanCycle, realtimeSymbols) {
   const focusMarket = selectFocusMarket();
   const bestMarket = state.bestCandidateSymbol ? state.markets[state.bestCandidateSymbol] : null;
 
+  const positionLabel = state.positions.length > 0 
+    ? state.positions.map(p => {
+        const pnl = p.lastPrice ? ((p.btcAmount * p.lastPrice) - p.usdtAllocated) : 0;
+        const pnlPct = p.usdtAllocated > 0 ? (pnl / p.usdtAllocated) * 100 : 0;
+        return `${p.symbol}:${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%`;
+      }).join(", ")
+    : "none";
+
   logScoped(
     "SCAN",
-    `cycle=${scanCycle} | watch=${SYMBOLS.length} | ready=${readyMarkets.length} | bull=${bullishMarkets.length} | btc=${state.btcRegime} | ws=${realtimeSymbols.size} | buy_candidates=${buyCandidates.length} | executable=${executableBuys.length} | position=${state.position ? state.position.symbol : "none"}`
+    `cycle=${scanCycle} | watch=${SYMBOLS.length} | ready=${readyMarkets.length} | bull=${bullishMarkets.length} | btc=${state.btcRegime} | ws=${realtimeSymbols.size} | buy_candidates=${buyCandidates.length} | executable=${executableBuys.length} | positions=${positionLabel}`
   );
 
-  if (focusMarket) {
-    const focusLabel = state.position && state.position.symbol === focusMarket.symbol ? "Position" : "Focus";
-    logScoped(focusLabel.toUpperCase(), summarizeMarketForLog(focusMarket));
+  for (const pos of state.positions) {
+    const market = state.markets[pos.symbol];
+    if (market) {
+      logScoped("POSITION", summarizeMarketForLog(market));
+    }
   }
 
-  if (state.position && bestMarket && bestMarket.symbol !== state.position.symbol) {
+  if (focusMarket && !state.positions.some(p => p.symbol === focusMarket.symbol)) {
+    logScoped("FOCUS", summarizeMarketForLog(focusMarket));
+  }
+
+  if (bestMarket && !state.positions.some(p => p.symbol === bestMarket.symbol) && (focusMarket ? bestMarket.symbol !== focusMarket.symbol : true)) {
     logScoped("CANDIDATE", summarizeMarketForLog(bestMarket));
   }
 
-  if (!state.position && buyCandidates.length > 1) {
+  if (state.positions.length < MAX_CONCURRENT_POSITIONS && buyCandidates.length > 1) {
     const topCandidates = buyCandidates
+      .filter(m => !state.positions.some(p => p.symbol === m.symbol))
       .slice(0, 3)
       .map((market) => `${market.symbol}:${market.compositeScore}/${market.action === "BUY" ? "ready" : "candidate"}`)
       .join(" | ");
-    logScoped("CANDIDATES", topCandidates);
+    if (topCandidates) {
+      logScoped("CANDIDATES", topCandidates);
+    }
   }
 }
 
@@ -800,7 +818,7 @@ function buildMarketSnapshot(symbol, candleSet) {
   const rsi_5m = wilderRsi(closes_5m, RSI_PERIOD);
   const atr14_5m = calculateAtr(candles_5m, ATR_PERIOD);
   const volumeSMA20 = calculateSma(volumes_5m, VOLUME_SMA_PERIOD);
-  const currentVolume_5m = volumes_5m.length > 0 ? volumes_5m[volumes_5m.length - 1] : null;
+  const currentVolume_5m = volumes_5m.length > 1 ? volumes_5m[volumes_5m.length - 2] : (volumes_5m.length > 0 ? volumes_5m[volumes_5m.length - 1] : null); // [FIX] Usa la candela 5m già CHIUSA, non quella in formazione che ha volume parziale!
   const macd = calculateMacd(closes_5m, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
   const ema9_1m = calculateEma(closes_1m, EMA9_1M_PERIOD);
 
@@ -818,7 +836,7 @@ function buildMarketSnapshot(symbol, candleSet) {
   const warmingUp = missingIndicators.length > 0;
   const pullbackZoneOk =
     lastPrice_5m !== null && ema21_5m !== null && atr14_5m !== null
-      ? Math.abs(lastPrice_5m - ema21_5m) <= atr14_5m * 0.5
+      ? Math.abs(lastPrice_5m - ema21_5m) <= atr14_5m * 1.0 // [FIX] Allargato da 0.5 a 1.0 ATR: con 0.5 ATR il prezzo era quasi sempre "troppo lontano" in mercati trending normali
       : false;
   const volumeOk =
     currentVolume_5m !== null && volumeSMA20 !== null
@@ -849,7 +867,7 @@ function buildMarketSnapshot(symbol, candleSet) {
     latestOneMinuteTimestamp > previousOneMinuteTimestamp &&
     previousOneMinuteClose !== null &&
     ema9_1m !== null
-      ? previousOneMinuteClose > ema9_1m
+      ? (previousOneMinuteClose > ema9_1m || (lastPrice_5m !== null && lastPrice_5m > ema9_1m)) // [FIX] Accetta sia la chiusura candela che il prezzo live sopra EMA9 asincrono
       : false;
   const setupValid =
     !warmingUp &&
@@ -859,7 +877,7 @@ function buildMarketSnapshot(symbol, candleSet) {
     ema9_5m > ema21_5m &&
     rsi_5m >= RSI_MIN &&
     rsi_5m <= RSI_MAX &&
-    pullbackZoneOk &&
+    // pullbackZoneOk rimosso da hard-requirement: ora è solo +1 score. In mercati trending il prezzo sta sopra EMA21 a lungo e questo bloccava sempre gli ingressi.
     triggerFired;
 
   let trendContinuationScore = 0;
@@ -870,6 +888,7 @@ function buildMarketSnapshot(symbol, candleSet) {
   if (pullbackZoneOk) trendContinuationScore += 1;
   if (triggerFired) trendContinuationScore += 1;
   if (macdPositive) trendContinuationScore += 1;
+  if (entryVolumeReady) trendContinuationScore += 1; // [FIX] Volume ora contribuisce allo score (+1) invece di bloccare duramente l'ingresso
 
   let sfpScore = 0;
   if (sfpSweep && sfpReclaim) sfpScore += 2;
@@ -878,7 +897,7 @@ function buildMarketSnapshot(symbol, candleSet) {
   if (trendBull_1h) sfpScore += 2;
 
   const compositeScore = Math.max(trendContinuationScore, sfpScore);
-  const positionOpen = state.position !== null && state.position.symbol === symbol;
+  const positionOpen = state.positions.some(p => p.symbol === symbol);
   const trendContinuationValid = setupValid;
   const entryBlockers = [];
   const trendBlockers = [];
@@ -950,19 +969,15 @@ function buildMarketSnapshot(symbol, candleSet) {
     reason = "Trend 1h non rialzista: nuovi ingressi bloccati.";
   } else if (positionOpen) {
     reason = "Posizione aperta in gestione.";
-  } else if ((trendContinuationValid || sfpValid) && !entryVolumeReady) {
+  } else if (false) {
+    // [FIX] Rimosso blocco hard sul volume: il volume ora è solo un contributo allo score (+1 punto)
+    // In mercati laterali a basso volume il bot si bloccava perennemente anche con setup tecnici perfetti
     reason = `Setup valido ma ingresso bloccato: volume 5m sotto ${ENTRY_VOLUME_MULT}x della media.`;
-  } else if (!trendContinuationValid && !sfpValid && compositeScore >= MIN_SCORE_ENTRY) {
-    reason = `Score ${compositeScore}/10 ma manca una conferma reale: ${entryBlockers.slice(0, 2).join(" | ")}.`;
-  } else if (!trendContinuationValid && !sfpValid && !setupValid) {
-    reason = `Setup 5m non valido: ${entryBlockers.slice(0, 2).join(" | ")}.`;
-  } else if (!trendContinuationValid && !sfpValid && !triggerFired) {
-    reason = `Trigger 1m non ancora confermato: ${entryBlockers.slice(0, 2).join(" | ")}.`;
   } else if (compositeScore < MIN_SCORE_ENTRY) {
-    signal = "BUY candidate";
-    reason = sfpValid
-      ? `SFP valido ma score ${compositeScore}/10 sotto soglia ${MIN_SCORE_ENTRY}.`
-      : `Setup valido ma score ${compositeScore}/10 sotto soglia ${MIN_SCORE_ENTRY}.`;
+    // [VERSIONE REATTIVA] Se lo score è già alto (>= MIN_SCORE_ENTRY), ignoriamo i blocchi millimetrici e entriamo nel trend.
+    // Se lo score è invece basso, rimaniamo in HOLD spiegando perché.
+    reason = `Score ${compositeScore}/10 sotto la soglia minima ${MIN_SCORE_ENTRY}. In attesa di segnali più forti.`;
+    if (entryBlockers.length > 0) reason += ` (Blockers primari: ${entryBlockers.slice(0, 1).join(", ")})`;
   } else {
     signal = "BUY candidate";
     action = "BUY";
@@ -987,6 +1002,8 @@ function buildMarketSnapshot(symbol, candleSet) {
     entryBlockers.push(...trendBlockers, ...sfpBlockers);
   }
 
+  const deduplicatedBlockers = Array.from(new Set(entryBlockers));
+
   const explanation = renderDecisionExplanation(
     buildDecisionExplanationObject({
       symbol,
@@ -1000,7 +1017,7 @@ function buildMarketSnapshot(symbol, candleSet) {
       atr14_5m,
       warmingUp,
       missingIndicators,
-      entryBlockers,
+      entryBlockers: deduplicatedBlockers,
       reason,
       positionOpen
     })
@@ -1018,7 +1035,7 @@ function buildMarketSnapshot(symbol, candleSet) {
     reason,
     warmingUp,
     missingIndicators,
-    entryBlockers,
+    entryBlockers: deduplicatedBlockers,
     score: compositeScore,
     compositeScore,
     positionOpen,
@@ -1059,13 +1076,13 @@ function buildMarketSnapshot(symbol, candleSet) {
     rsi: rsi_5m,
     previousClose_5m,
     lastFiveMinuteCandleTime: candles_5m.length > 0 ? candles_5m[candles_5m.length - 1][0] : null,
-    entryPrice: positionOpen ? state.position.entryPrice : null,
-    stopLoss: positionOpen ? state.position.stopLoss : null,
-    takeProfit: positionOpen ? state.position.takeProfit : null,
-    highWaterMark: positionOpen ? state.position.highWaterMark : null,
-    trailingStop: positionOpen ? state.position.trailingStop : null,
-    holdCandles: positionOpen ? state.position.holdCandles : 0,
-    entryCount: positionOpen ? state.position.entryCount : 0
+    entryPrice: positionOpen ? state.positions.find(p => p.symbol === symbol).entryPrice : null,
+    stopLoss: positionOpen ? state.positions.find(p => p.symbol === symbol).stopLoss : null,
+    takeProfit: positionOpen ? state.positions.find(p => p.symbol === symbol).takeProfit : null,
+    highWaterMark: positionOpen ? state.positions.find(p => p.symbol === symbol).highWaterMark : null,
+    trailingStop: positionOpen ? state.positions.find(p => p.symbol === symbol).trailingStop : null,
+    holdCandles: positionOpen ? (state.positions.find(p => p.symbol === symbol).holdCandles || 0) : 0,
+    entryCount: positionOpen ? state.positions.find(p => p.symbol === symbol).entryCount : 0
   };
 }
 
@@ -1075,8 +1092,10 @@ function buildMarketSnapshot(symbol, candleSet) {
  * @returns {number}
  */
 function getPortfolioValue() {
-  const btcValue = state.position && state.position.lastPrice ? state.position.btcAmount * state.position.lastPrice : 0;
-  return state.usdtBalance + btcValue;
+  const positionsValue = state.positions.reduce((sum, pos) => {
+    return sum + (pos.lastPrice ? pos.btcAmount * pos.lastPrice : 0);
+  }, 0);
+  return state.usdtBalance + positionsValue;
 }
 
 /**
@@ -1087,13 +1106,16 @@ function getPortfolioValue() {
 function getPositionBudgetMetrics() {
   const portfolioValue = getPortfolioValue();
   const budgetCap = portfolioValue * MAX_POSITION_EXPOSURE_PCT;
-  const budgetUsed = state.position ? state.position.usdtAllocated : 0;
+  // Calcoliamo il budget totale usato sommando tutte le posizioni attive
+  const budgetUsed = state.positions.reduce((sum, pos) => sum + pos.usdtAllocated, 0);
+  const activeCount = state.positions.length;
 
   return {
     budgetCap,
     budgetUsed,
     budgetRemaining: Math.max(0, budgetCap - budgetUsed),
-    entryCount: state.position ? state.position.entryCount : 0
+    activeCount,
+    perTradeBudget: budgetCap / MAX_CONCURRENT_POSITIONS // Budget teorico per singolo trade
   };
 }
 
@@ -1139,7 +1161,7 @@ function getSessionStats() {
     sessionPnl: getSessionPnl(),
     averageClosedTradePnl,
     lastTrade,
-    hasOpenPosition: state.position !== null
+    hasOpenPosition: state.positions.length > 0
   };
 }
 
@@ -1156,8 +1178,9 @@ function buildSummary() {
     return "Il bot e fermo.";
   }
 
-  if (state.position) {
-    return `Il bot e attivo, sta gestendo una posizione su ${state.position.symbol} e continua a osservare gli altri mercati. Risultato sessione: ${sessionPnlLabel}.`;
+  if (state.positions.length > 0) {
+    const symbolList = state.positions.map(p => p.symbol).join(", ");
+    return `Il bot e attivo e sta gestendo ${state.positions.length} posizioni (${symbolList}). Risultato sessione: ${sessionPnlLabel}.`;
   }
 
   if (state.bestCandidateSymbol) {
@@ -1173,8 +1196,11 @@ function buildSummary() {
  * @returns {object | null}
  */
 function selectFocusMarket() {
-  if (state.position && state.markets[state.position.symbol]) {
-    return state.markets[state.position.symbol];
+  const readyMarkets = Object.values(state.markets).filter((market) => !market.warmingUp);
+
+  const openPos = state.positions[0];
+  if (openPos && state.markets[openPos.symbol]) {
+    return state.markets[openPos.symbol];
   }
 
   if (state.bestCandidateSymbol && state.markets[state.bestCandidateSymbol]) {
@@ -1216,12 +1242,13 @@ function selectFocusMarket() {
  */
 function getStatusPayload() {
   const focusMarket = selectFocusMarket();
-  const focusSymbol = focusMarket ? focusMarket.symbol : state.position ? state.position.symbol : state.bestCandidateSymbol;
+  const activePositionSymbols = state.positions.map(p => p.symbol);
+  const focusSymbol = focusMarket ? focusMarket.symbol : (activePositionSymbols[0] || state.bestCandidateSymbol);
   let focusMode = "no_data";
   let focusReason = "Nessun mercato ha ancora dati sufficienti.";
 
   if (focusMarket) {
-    if (state.position && focusMarket.symbol === state.position.symbol) {
+    if (activePositionSymbols.includes(focusMarket.symbol)) {
       focusMode = "open_position";
       focusReason = `Questo mercato e in focus perche il bot ha gia una posizione aperta su ${focusMarket.symbol}.`;
     } else if (state.bestCandidateSymbol && focusMarket.symbol === state.bestCandidateSymbol) {
@@ -1238,6 +1265,18 @@ function getStatusPayload() {
   const sessionPnlPercent = getSessionPnlPercent();
   const stats = getSessionStats();
   const budget = getPositionBudgetMetrics();
+
+  // Calcolo PnL live per ogni posizione
+  const positionsWithDetails = state.positions.map(pos => {
+    const pnlUsdt = pos.lastPrice ? (pos.btcAmount * pos.lastPrice) - pos.costBasisUsdt : 0;
+    const pnlPercent = (pnlUsdt / pos.costBasisUsdt) * 100;
+    return {
+      ...pos,
+      pnlUsdt,
+      pnlPercent,
+      pnlLabel: `${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}% (${pnlUsdt >= 0 ? "+" : ""}${pnlUsdt.toFixed(2)} USDT)`
+    };
+  });
 
   return {
     bot: {
@@ -1259,14 +1298,15 @@ function getStatusPayload() {
       btcRegime: state.btcRegime,
       portfolioValue,
       sessionPnl,
-      hasOpenPosition: state.position !== null,
+      hasOpenPosition: state.positions.length > 0,
       bestCandidateSymbol: state.bestCandidateSymbol,
-      positionSymbol: state.position ? state.position.symbol : null,
-      entryCount: budget.entryCount
+      positions: positionsWithDetails,
+      activeCount: state.positions.length,
+      entryCount: budget.activeCount
     },
     portfolio: {
       usdtBalance: state.usdtBalance,
-      btcPosition: state.position ? state.position.btcAmount : 0,
+      btcPosition: state.positions.reduce((sum, p) => sum + (p.lastPrice ? p.btcAmount * p.lastPrice : 0), 0),
       estimatedTotalValue: portfolioValue,
       sessionPnl,
       sessionPnlPercent,
@@ -1390,7 +1430,7 @@ function getStatusPayload() {
         emaFast: market.emaFast,
         emaSlow: market.emaSlow,
         isBestCandidate: state.bestCandidateSymbol === market.symbol,
-        isInPosition: state.position ? state.position.symbol === market.symbol : false,
+        isInPosition: state.positions.some(p => p.symbol === market.symbol),
         reason: market.reason
       };
     }),
@@ -1469,7 +1509,7 @@ function sendFile(response, filePath, contentType) {
 function saveStateToDisk() {
   const persistedState = {
     usdtBalance: state.usdtBalance,
-    position: state.position,
+    positions: state.positions,
     trades: state.trades
   };
 
@@ -1497,8 +1537,8 @@ function loadStateFromDisk() {
     state.trades = persistedState.trades;
   }
 
-  if (persistedState.position && typeof persistedState.position === "object") {
-    state.position = persistedState.position;
+  if (persistedState.positions && Array.isArray(persistedState.positions)) {
+    state.positions = persistedState.positions;
   }
 }
 
@@ -1518,7 +1558,7 @@ function clearTradesLog() {
  */
 function resetSession() {
   state.usdtBalance = INITIAL_USDT_BALANCE;
-  state.position = null;
+  state.positions = [];
   state.trades = [];
   state.markets = {};
   state.candleData = {};
@@ -1622,8 +1662,8 @@ function normalizeDynamicSymbols(symbols) {
     normalized.push(symbol);
   };
 
-  if (state.position?.symbol) {
-    pushSymbol(state.position.symbol);
+  for (const pos of state.positions) {
+    pushSymbol(pos.symbol);
   }
 
   pushSymbol("BTC/USDT");
@@ -1636,25 +1676,28 @@ function normalizeDynamicSymbols(symbols) {
 }
 
 /**
- * Select the very small subset of symbols that deserve realtime WS updates.
+ * Select the subset of symbols that deserve realtime WS updates (Limit to 3 to prevent Binance 1008 stream errors).
  *
  * @param {string[]} activeSymbols
  * @returns {Set<string>}
  */
 function selectRealtimeSymbols(activeSymbols) {
   const realtimeSymbols = [];
-  const activeSet = new Set(activeSymbols);
-
   const pushSymbol = (symbol) => {
-    if (!symbol || !activeSet.has(symbol) || realtimeSymbols.includes(symbol) || realtimeSymbols.length >= 2) {
+    if (!symbol || realtimeSymbols.includes(symbol) || realtimeSymbols.length >= 3) {
       return;
     }
-
     realtimeSymbols.push(symbol);
   };
 
-  pushSymbol(state.position ? state.position.symbol : null);
+  for (const pos of state.positions) {
+    pushSymbol(pos.symbol);
+  }
   pushSymbol(state.bestCandidateSymbol);
+
+  for (const symbol of activeSymbols) {
+    pushSymbol(symbol);
+  }
 
   return new Set(realtimeSymbols);
 }
@@ -1759,6 +1802,8 @@ function simulateSellExecution(referencePrice, btcAmount, slippageBps) {
   };
 }
 
+let lastWsSubscribeTime = 0;
+
 /**
  * Record repeated WebSocket remote closes and temporarily disable realtime mode when Binance starts rejecting streams.
  *
@@ -1823,15 +1868,50 @@ async function getCandlesWithRealtimeFallback(restExchange, streamExchange, symb
 
   if (canUseWs) {
     try {
+      const nowMs = Date.now();
+      let delay = 0;
+      if (lastWsSubscribeTime < nowMs) {
+        lastWsSubscribeTime = nowMs;
+      } else {
+        lastWsSubscribeTime += 333; // ~3 richieste al secondo, sicuro e stabile per Binance
+        delay = lastWsSubscribeTime - nowMs;
+      }
+
+      if (delay > 0) {
+        await new Promise(r => setTimeout(r, delay));
+      }
+
       // [UPGRADE v2.4] Prefer ccxt.pro OHLCV streams but fall back to REST on any stream failure.
-      const candles = await withTimeout(
+      let candles = await withTimeout(
         streamExchange.watchOHLCV(symbol, timeframe, undefined, limit),
         `${symbol} ${timeframe} watchOHLCV`,
         WS_WATCH_TIMEOUT_MS
       );
       wsBackoffDelay.delete(backoffKey);
       wsBackoffUntil.delete(backoffKey);
-      return Array.isArray(candles) ? candles.slice(-limit) : [];
+      
+      if (Array.isArray(candles)) {
+        const minRequired = timeframe === "1h" ? 60 : timeframe === "5m" ? 30 : 15;
+        if (candles.length < minRequired) {
+          const cached = state.candleData && state.candleData[symbol] && state.candleData[symbol][`candles_${timeframe}`] ? state.candleData[symbol][`candles_${timeframe}`] : [];
+          if (cached.length > 0) {
+            const mergedMap = new Map();
+            for (const c of cached) mergedMap.set(c[0], c);
+            for (const c of candles) mergedMap.set(c[0], c);
+            candles = Array.from(mergedMap.values()).sort((a, b) => a[0] - b[0]);
+          } else {
+            try {
+              const restCandles = await restExchange.fetchOHLCV(symbol, timeframe, undefined, limit);
+              const mergedMap = new Map();
+              for (const c of restCandles) mergedMap.set(c[0], c);
+              for (const c of candles) mergedMap.set(c[0], c);
+              candles = Array.from(mergedMap.values()).sort((a, b) => a[0] - b[0]);
+            } catch (err) {}
+          }
+        }
+        return candles.slice(-limit);
+      }
+      return [];
     } catch (error) {
       const previousDelay = wsBackoffDelay.get(backoffKey) || WS_BACKOFF_BASE_MS;
       const nextDelay = Math.min(previousDelay * 2, WS_BACKOFF_MAX_MS);
@@ -1855,7 +1935,11 @@ async function getCandlesWithRealtimeFallback(restExchange, streamExchange, symb
  * @returns {void}
  */
 function openPaperPosition(snapshot) {
-  if (state.position && state.position.symbol !== snapshot.symbol) {
+  // Verifichiamo se abbiamo già una posizione aperta su questo specifico simbolo
+  const existingPosition = state.positions.find(p => p.symbol === snapshot.symbol);
+  
+  // Se non abbiamo una posizione su questo simbolo, verifichiamo il limite massimo di mercati contemporanei
+  if (!existingPosition && state.positions.length >= MAX_CONCURRENT_POSITIONS) {
     return;
   }
 
@@ -1871,7 +1955,6 @@ function openPaperPosition(snapshot) {
     return;
   }
 
-  const existingPosition = state.position && state.position.symbol === snapshot.symbol ? state.position : null;
   if (existingPosition && snapshot.lastFiveMinuteCandleTime !== null && existingPosition.lastEntryCandleTime === snapshot.lastFiveMinuteCandleTime) {
     return;
   }
@@ -1909,6 +1992,7 @@ function openPaperPosition(snapshot) {
     Math.min(
       requestedAllocation,
       equity * POSITION_SIZE_MAX,
+      budget.perTradeBudget, // Limitiamo ogni ingresso alla fetta destinata al singolo trade
       budget.budgetRemaining
     )
   );
@@ -1944,6 +2028,7 @@ function openPaperPosition(snapshot) {
     : averageEntryPrice + snapshot.atr14_5m * ATR_TP_MULT;
   const initialRiskPerUnit = averageEntryPrice - stopLoss;
   const nextEntryCount = (existingPosition ? existingPosition.entryCount : 0) + 1;
+  const tradeId = existingPosition ? existingPosition.tradeId : `T-${Date.now().toString(36).toUpperCase()}`;
   const tradeTime = new Date().toISOString();
   const budgetRemainingAfter = Math.max(0, budget.budgetCap - totalNotionalAllocated);
   const explanationShort = existingPosition
@@ -1954,7 +2039,7 @@ function openPaperPosition(snapshot) {
     : snapshot.detailedExplanation;
 
   // [UPGRADE v2.1] Realistic execution and risk-based sizing are now applied on every paper entry.
-  state.position = {
+  const positionData = {
     symbol: snapshot.symbol,
     entryPrice: averageEntryPrice,
     btcAmount: totalBtcAmount,
@@ -1978,9 +2063,17 @@ function openPaperPosition(snapshot) {
     entryCount: nextEntryCount,
     entryTime: existingPosition ? existingPosition.entryTime : Date.now(),
     entryEngine,
+    tradeId,
     lastEntryCandleTime: snapshot.lastFiveMinuteCandleTime,
     lastEntryAt: tradeTime
   };
+
+  if (existingPosition) {
+    const idx = state.positions.findIndex(p => p.symbol === snapshot.symbol);
+    state.positions[idx] = positionData;
+  } else {
+    state.positions.push(positionData);
+  }
 
   state.usdtBalance -= buyExecution.cashOut;
   state.trades.push({
@@ -2001,12 +2094,13 @@ function openPaperPosition(snapshot) {
     entryType: entryEngine,
     entryEngine,
     entryIndex: nextEntryCount,
+    tradeId,
     budgetUsedAfter: totalNotionalAllocated,
     budgetRemainingAfter
   });
 
   appendTradeLog(
-    `BUY | symbol=${snapshot.symbol} | entry=${entryEngine} | price=${formatAmount(buyExecution.executionPrice)} | btc=${formatAmount(buyExecution.btcAmount)} | usdt_spent=${formatAmount(usdtToUse)} | score=${snapshot.compositeScore} | atr=${formatAmount(snapshot.atr14_5m)} | sl=${formatAmount(stopLoss)} | tp=${formatAmount(takeProfit)} | hard_floor_nuclear=${formatAmount(hardFloor)} | feePaid=${formatAmount(buyExecution.feePaid)} | slippagePaid=${formatAmount(buyExecution.slippagePaid)} | netPnlUsdt=null | trend_1h=${snapshot.trendBull_1h ? "bullish" : "neutral"} | entry_count=${nextEntryCount} | reason=${snapshot.reason}`
+    `BUY | symbol=${snapshot.symbol} | tradeId=${tradeId} | entry=${entryEngine} | price=${formatAmount(buyExecution.executionPrice)} | btc=${formatAmount(buyExecution.btcAmount)} | usdt_spent=${formatAmount(usdtToUse)} | score=${snapshot.compositeScore} | atr=${formatAmount(snapshot.atr14_5m)} | sl=${formatAmount(stopLoss)} | tp=${formatAmount(takeProfit)} | hard_floor_nuclear=${formatAmount(hardFloor)} | feePaid=${formatAmount(buyExecution.feePaid)} | slippagePaid=${formatAmount(buyExecution.slippagePaid)} | netPnlUsdt=null | trend_1h=${snapshot.trendBull_1h ? "bullish" : "neutral"} | entry_count=${nextEntryCount} | reason=${snapshot.reason}`
   );
   logScoped(
     "TRADE",
@@ -2022,32 +2116,33 @@ function openPaperPosition(snapshot) {
  * @returns {void}
  */
 function executePartialExit(snapshot) {
-  if (!state.position || !snapshot || snapshot.lastPrice === null || state.position.partialExitDone) {
+  const currentPos = state.positions.find(p => p.symbol === snapshot.symbol);
+  if (!currentPos || !snapshot || snapshot.lastPrice === null || currentPos.partialExitDone) {
     return;
   }
 
-  const exitAmount = state.position.btcAmount * 0.5;
+  const exitAmount = currentPos.btcAmount * 0.5;
   const slippageBps = calcSlippageBps(snapshot.currentVolume_5m, snapshot.volumeSMA20);
   const execution = simulateSellExecution(snapshot.lastPrice, exitAmount, slippageBps);
-  const positionBtcBefore = state.position.btcAmount;
-  const costShare = state.position.costBasisUsdt * (exitAmount / positionBtcBefore);
-  const notionalShare = state.position.usdtAllocated * (exitAmount / positionBtcBefore);
+  const positionBtcBefore = currentPos.btcAmount;
+  const costShare = currentPos.costBasisUsdt * (exitAmount / positionBtcBefore);
+  const notionalShare = currentPos.usdtAllocated * (exitAmount / positionBtcBefore);
   const netPnlUsdt = execution.netProceeds - costShare;
 
-  state.position.btcAmount -= exitAmount;
-  state.position.costBasisUsdt -= costShare;
-  state.position.usdtAllocated -= notionalShare;
-  state.position.partialExitDone = true;
-  state.position.stopLoss = state.position.entryPrice;
-  state.position.trailingActive = true;
-  state.position.trailingStop = state.position.entryPrice;
-  state.position.takeProfit = null;
-  state.position.lastPrice = snapshot.lastPrice;
+  currentPos.btcAmount -= exitAmount;
+  currentPos.costBasisUsdt -= costShare;
+  currentPos.usdtAllocated -= notionalShare;
+  currentPos.partialExitDone = true;
+  currentPos.stopLoss = currentPos.entryPrice;
+  currentPos.trailingActive = true;
+  currentPos.trailingStop = currentPos.entryPrice;
+  currentPos.takeProfit = null;
+  currentPos.lastPrice = snapshot.lastPrice;
   state.usdtBalance += execution.netProceeds;
 
   state.trades.push({
     time: new Date().toISOString(),
-    symbol: state.position.symbol,
+    symbol: currentPos.symbol,
     action: "SELL_PARTIAL",
     price: execution.executionPrice,
     btcAmount: exitAmount,
@@ -2058,20 +2153,21 @@ function executePartialExit(snapshot) {
     slippagePaid: execution.slippagePaid,
     reason: "Partial take profit reached.",
     explanationShort: "Il bot incassa una parte del profitto e lascia correre il resto.",
-    detailedExplanation: `Il trade su ${state.position.symbol} ha raggiunto ${PARTIAL_TP_R}R. Il bot chiude il 50% della posizione e sposta lo stop a breakeven sulla parte restante.`,
+    detailedExplanation: `Il trade su ${currentPos.symbol} ha raggiunto ${PARTIAL_TP_R}R. Il bot chiude il 50% della posizione e sposta lo stop a breakeven sulla parte restante.`,
     reasonList: ["Decisione finale: SELL_PARTIAL", `Motivo: target parziale ${PARTIAL_TP_R}R raggiunto`, "Stop spostato a breakeven"],
-    entryIndex: state.position.entryCount,
-    entryEngine: state.position.entryEngine,
+    entryIndex: currentPos.entryCount,
+    entryEngine: currentPos.entryEngine,
+    tradeId: currentPos.tradeId,
     feePaidTotal: execution.feePaid,
     slippagePaidTotal: execution.slippagePaid
   });
 
   appendTradeLog(
-    `SELL_PARTIAL | symbol=${state.position.symbol} | price=${formatAmount(execution.executionPrice)} | btc=${formatAmount(exitAmount)} | usdt_received=${formatAmount(execution.netProceeds)} | feePaid=${formatAmount(execution.feePaid)} | slippagePaid=${formatAmount(execution.slippagePaid)} | netPnlUsdt=${formatAmount(netPnlUsdt)} | reason=Partial take profit reached.`
+    `SELL_PARTIAL | symbol=${currentPos.symbol} | tradeId=${currentPos.tradeId} | price=${formatAmount(execution.executionPrice)} | btc=${formatAmount(exitAmount)} | usdt_received=${formatAmount(execution.netProceeds)} | feePaid=${formatAmount(execution.feePaid)} | slippagePaid=${formatAmount(execution.slippagePaid)} | netPnlUsdt=${formatAmount(netPnlUsdt)} | reason=Partial take profit reached.`
   );
   logScoped(
     "TRADE",
-    `sell_partial | symbol=${state.position.symbol} | price=${formatLogNumber(execution.executionPrice, 6)} | btc=${formatLogNumber(exitAmount, 6)} | usdt=${formatLogNumber(execution.netProceeds, 2)} | fee=${formatLogNumber(execution.feePaid, 4)} | slip=${formatLogNumber(execution.slippagePaid, 4)} | net_pnl=${formatLogNumber(netPnlUsdt, 2)} | stop=breakeven`
+    `sell_partial | symbol=${currentPos.symbol} | price=${formatLogNumber(execution.executionPrice, 6)} | btc=${formatLogNumber(exitAmount, 6)} | usdt=${formatLogNumber(execution.netProceeds, 2)} | fee=${formatLogNumber(execution.feePaid, 4)} | slip=${formatLogNumber(execution.slippagePaid, 4)} | net_pnl=${formatLogNumber(netPnlUsdt, 2)} | stop=breakeven`
   );
   saveStateToDisk();
 }
@@ -2083,63 +2179,67 @@ function executePartialExit(snapshot) {
  * @returns {{shouldExit: boolean, exitReason: string | null, shouldPartialExit: boolean}}
  */
 function manageOpenPosition(snapshot) {
-  if (!state.position || !snapshot || snapshot.lastPrice === null) {
+  const currentPos = state.positions.find(p => p.symbol === snapshot.symbol);
+  if (!currentPos || !snapshot || snapshot.lastPrice === null) {
     return { shouldExit: false, exitReason: null, shouldPartialExit: false };
   }
 
-  const trailingAtr = snapshot.atr14_5m ?? state.position.atr ?? null;
-  state.position.holdCandles += 1;
-  state.position.lastPrice = snapshot.lastPrice;
-  state.position.highWaterMark = Math.max(state.position.highWaterMark, snapshot.lastPrice);
+  const trailingAtr = snapshot.atr14_5m ?? currentPos.atr ?? null;
+  currentPos.holdCandles = (currentPos.holdCandles || 0) + 1;
+  currentPos.lastPrice = snapshot.lastPrice;
+  currentPos.highWaterMark = Math.max(currentPos.highWaterMark || snapshot.lastPrice, snapshot.lastPrice);
 
-  if (snapshot.lastPrice <= state.position.hardFloor) return { shouldExit: true, exitReason: "Hard stop triggered." };
-  const elapsedSeconds = state.position.entryTime ? (Date.now() - state.position.entryTime) / 1000 : Number.MAX_SAFE_INTEGER;
-  const halfRTarget = state.position.entryPrice + state.position.initialRiskPerUnit * 0.5;
-  const partialTargetHit = !state.position.partialExitDone && snapshot.lastPrice >= state.position.partialTargetPrice;
+  if (snapshot.lastPrice <= currentPos.hardFloor) return { shouldExit: true, exitReason: "Hard stop triggered.", shouldPartialExit: false };
+  const elapsedSeconds = currentPos.entryTime ? (Date.now() - currentPos.entryTime) / 1000 : Number.MAX_SAFE_INTEGER;
+  const halfRTarget = currentPos.entryPrice + currentPos.initialRiskPerUnit * 0.5;
+  const partialTargetPrice = currentPos.partialTargetPrice || (currentPos.entryPrice + currentPos.initialRiskPerUnit * PARTIAL_TP_R);
+  const partialTargetHit = !currentPos.partialExitDone && snapshot.lastPrice >= partialTargetPrice;
 
   if (partialTargetHit) {
-    return { shouldExit: false, exitReason: null, shouldPartialExit: true };
+    return { shouldExit: false, exitReason: "Partial TP reached", shouldPartialExit: true };
   }
 
-  if (state.position.partialExitDone) {
+  if (currentPos.partialExitDone) {
     const trailingCandidate = trailingAtr !== null
-      ? state.position.highWaterMark - trailingAtr * ATR_TRAIL_MULT
+      ? currentPos.highWaterMark - trailingAtr * ATR_TRAIL_MULT
       : snapshot.ema21_5m !== null
-        ? Math.max(snapshot.ema21_5m, state.position.entryPrice)
-        : state.position.highWaterMark * (1 - TRAILING_PCT);
+        ? Math.max(snapshot.ema21_5m, currentPos.entryPrice)
+        : currentPos.highWaterMark * (1 - TRAILING_PCT);
 
-    state.position.trailingActive = true;
-    state.position.trailingStop = Math.max(state.position.trailingStop || trailingCandidate, trailingCandidate, state.position.entryPrice);
-  } else if (!state.position.trailingActive && trailingAtr !== null && snapshot.lastPrice - state.position.entryPrice >= trailingAtr) {
-    state.position.trailingActive = true;
-    state.position.trailingStop = trailingAtr !== null
-      ? state.position.highWaterMark - trailingAtr * ATR_TRAIL_MULT
-      : state.position.highWaterMark * (1 - TRAILING_PCT);
-  } else if (state.position.trailingActive) {
+    currentPos.trailingActive = true;
+    currentPos.trailingStop = Math.max(currentPos.trailingStop || trailingCandidate, trailingCandidate, currentPos.entryPrice);
+  } else if (!currentPos.trailingActive && trailingAtr !== null && snapshot.lastPrice - currentPos.entryPrice >= trailingAtr) {
+    currentPos.trailingActive = true;
+    currentPos.trailingStop = trailingAtr !== null
+      ? currentPos.highWaterMark - trailingAtr * ATR_TRAIL_MULT
+      : currentPos.highWaterMark * (1 - TRAILING_PCT);
+  } else if (currentPos.trailingActive) {
     const candidate = trailingAtr !== null
-      ? state.position.highWaterMark - trailingAtr * ATR_TRAIL_MULT
-      : state.position.highWaterMark * (1 - TRAILING_PCT);
-    state.position.trailingStop = Math.max(state.position.trailingStop || candidate, candidate);
+      ? currentPos.highWaterMark - trailingAtr * ATR_TRAIL_MULT
+      : currentPos.highWaterMark * (1 - TRAILING_PCT);
+    currentPos.trailingStop = Math.max(currentPos.trailingStop || candidate, candidate);
   }
 
-  const trailingStopHit = state.position.trailingActive && state.position.trailingStop !== null && snapshot.lastPrice <= state.position.trailingStop;
-  const stopLossHit = snapshot.lastPrice <= state.position.stopLoss;
-  const takeProfitHit = !state.position.partialExitDone && state.position.takeProfit !== null && snapshot.lastPrice >= state.position.takeProfit;
+  const trailingStopHit = currentPos.trailingActive && currentPos.trailingStop !== null && snapshot.lastPrice <= currentPos.trailingStop;
+  const stopLossHit = snapshot.lastPrice <= currentPos.stopLoss;
+  const takeProfitHit = !currentPos.partialExitDone && currentPos.takeProfit !== null && snapshot.lastPrice >= currentPos.takeProfit;
   const volumeAbsorptionHit =
-    state.position.holdCandles >= MIN_HOLD_CANDLES &&
+    currentPos.holdCandles >= MIN_HOLD_CANDLES &&
     snapshot.currentVolume_5m !== null &&
     snapshot.volumeSMA20 !== null &&
     snapshot.previousClose_5m !== null &&
     snapshot.lastPrice_5m !== null &&
     snapshot.currentVolume_5m > snapshot.volumeSMA20 * 2.5 &&
     snapshot.lastPrice_5m <= snapshot.previousClose_5m;
-  const trendReversalHit = state.position.holdCandles >= MIN_HOLD_CANDLES && snapshot.trendBull_1h === false;
+  const trendReversalHit = currentPos.holdCandles >= MIN_HOLD_CANDLES && snapshot.trendBull_1h === false;
   const timeStopHit =
-    state.position.holdCandles >= TIME_STOP_CANDLES &&
+    currentPos.holdCandles >= TIME_STOP_CANDLES &&
     snapshot.lastPrice < halfRTarget;
 
-  if ((trailingStopHit || stopLossHit || takeProfitHit || volumeAbsorptionHit || trendReversalHit || timeStopHit) && elapsedSeconds < MIN_HOLD_SECONDS) {
-    logScoped("GUARD", `min_hold_not_reached | elapsed=${elapsedSeconds.toFixed(0)}s`);
+  const hardExitHit = trailingStopHit || stopLossHit || takeProfitHit;
+  const softExitHit = volumeAbsorptionHit || trendReversalHit || timeStopHit;
+
+  if (softExitHit && !hardExitHit && elapsedSeconds < MIN_HOLD_SECONDS) {
     return { shouldExit: false, exitReason: null, shouldPartialExit: false };
   }
 
@@ -2163,18 +2263,19 @@ function manageOpenPosition(snapshot) {
  * @returns {void}
  */
 function refreshPositionSnapshot(snapshot, management) {
-  if (!snapshot || !state.position || snapshot.symbol !== state.position.symbol) {
+  const currentPos = state.positions.find(p => p.symbol === snapshot.symbol);
+  if (!snapshot || !currentPos) {
     return;
   }
 
   snapshot.positionOpen = true;
-  snapshot.entryPrice = state.position.entryPrice;
-  snapshot.stopLoss = state.position.stopLoss;
-  snapshot.takeProfit = state.position.takeProfit;
-  snapshot.highWaterMark = state.position.highWaterMark;
-  snapshot.trailingStop = state.position.trailingStop;
-  snapshot.holdCandles = state.position.holdCandles;
-  snapshot.entryCount = state.position.entryCount;
+  snapshot.entryPrice = currentPos.entryPrice;
+  snapshot.stopLoss = currentPos.stopLoss;
+  snapshot.takeProfit = currentPos.takeProfit;
+  snapshot.highWaterMark = currentPos.highWaterMark;
+  snapshot.trailingStop = currentPos.trailingStop;
+  snapshot.holdCandles = currentPos.holdCandles;
+  snapshot.entryCount = currentPos.entryCount;
   snapshot.signal = management.shouldExit ? "SELL candidate" : "HOLD";
   snapshot.action = management.shouldExit ? "SELL" : "HOLD";
   snapshot.displayAction = management.shouldExit ? "SELL" : "HOLD";
@@ -2200,14 +2301,15 @@ function refreshPositionSnapshot(snapshot, management) {
  * @returns {void}
  */
 function closePaperPosition(snapshot, exitReason) {
-  if (!state.position || !snapshot || snapshot.lastPrice === null) {
+  const currentPos = state.positions.find(p => p.symbol === snapshot.symbol);
+  if (!currentPos || !snapshot || snapshot.lastPrice === null) {
     return;
   }
 
-  const closedSymbol = state.position.symbol;
+  const closedSymbol = currentPos.symbol;
   const slippageBps = calcSlippageBps(snapshot.currentVolume_5m, snapshot.volumeSMA20);
-  const execution = simulateSellExecution(snapshot.lastPrice, state.position.btcAmount, slippageBps);
-  const profit = execution.netProceeds - state.position.costBasisUsdt;
+  const execution = simulateSellExecution(snapshot.lastPrice, currentPos.btcAmount, slippageBps);
+  const profit = execution.netProceeds - currentPos.costBasisUsdt;
   const explanation = renderDecisionExplanation(
     buildDecisionExplanationObject({
       ...snapshot,
@@ -2219,10 +2321,10 @@ function closePaperPosition(snapshot, exitReason) {
 
   state.trades.push({
     time: new Date().toISOString(),
-    symbol: state.position.symbol,
+    symbol: currentPos.symbol,
     action: "SELL_FULL",
     price: execution.executionPrice,
-    btcAmount: state.position.btcAmount,
+    btcAmount: currentPos.btcAmount,
     usdtAmount: execution.netProceeds,
     pnlUsdt: profit,
     netPnlUsdt: profit,
@@ -2232,29 +2334,32 @@ function closePaperPosition(snapshot, exitReason) {
     explanationShort: explanation.shortExplanation,
     detailedExplanation: explanation.detailedExplanation,
     reasonList: explanation.reasonList,
-    entryIndex: state.position.entryCount,
-    entryEngine: state.position.entryEngine,
-    budgetUsedAfter: 0,
-    budgetRemainingAfter: (state.usdtBalance + execution.netProceeds) * MAX_POSITION_EXPOSURE_PCT
+    entryIndex: currentPos.entryCount,
+    entryEngine: currentPos.entryEngine,
+    tradeId: currentPos.tradeId,
+    budgetUsedAfter: state.positions.reduce((sum, p) => p.symbol === closedSymbol ? sum : sum + p.usdtAllocated, 0),
+    budgetRemainingAfter: (state.usdtBalance + execution.netProceeds) * MAX_POSITION_EXPOSURE_PCT // Nota: questa formula è una stima dell'esposizione libera
   });
 
   appendTradeLog(
-    `SELL_FULL | symbol=${state.position.symbol} | price=${formatAmount(execution.executionPrice)} | btc=${formatAmount(state.position.btcAmount)} | usdt_received=${formatAmount(execution.netProceeds)} | feePaid=${formatAmount(execution.feePaid)} | slippagePaid=${formatAmount(execution.slippagePaid)} | netPnlUsdt=${formatAmount(profit)} | holdCandles=${state.position.holdCandles} | highWaterMark=${formatAmount(state.position.highWaterMark)} | trailing=${state.position.trailingStop === null ? "null" : formatAmount(state.position.trailingStop)} | reason=${exitReason}`
+    `SELL_FULL | symbol=${currentPos.symbol} | tradeId=${currentPos.tradeId} | price=${formatAmount(execution.executionPrice)} | btc=${formatAmount(currentPos.btcAmount)} | usdt_received=${formatAmount(execution.netProceeds)} | feePaid=${formatAmount(execution.feePaid)} | slippagePaid=${formatAmount(execution.slippagePaid)} | netPnlUsdt=${formatAmount(profit)} | holdCandles=${currentPos.holdCandles} | highWaterMark=${formatAmount(currentPos.highWaterMark)} | trailing=${currentPos.trailingStop === null ? "null" : formatAmount(currentPos.trailingStop)} | reason=${exitReason}`
   );
   logScoped(
     "TRADE",
-    `sell_full | symbol=${state.position.symbol} | price=${formatLogNumber(execution.executionPrice, 6)} | btc=${formatLogNumber(state.position.btcAmount, 6)} | usdt=${formatLogNumber(execution.netProceeds, 2)} | fee=${formatLogNumber(execution.feePaid, 4)} | slip=${formatLogNumber(execution.slippagePaid, 4)} | net_pnl=${formatLogNumber(profit, 2)} | hold=${state.position.holdCandles} | trailing=${state.position.trailingStop === null ? "null" : formatLogNumber(state.position.trailingStop, 6)} | reason=${exitReason}`
+    `sell_full | symbol=${currentPos.symbol} | price=${formatLogNumber(execution.executionPrice, 6)} | btc=${formatLogNumber(currentPos.btcAmount, 6)} | usdt=${formatLogNumber(execution.netProceeds, 2)} | fee=${formatLogNumber(execution.feePaid, 4)} | slip=${formatLogNumber(execution.slippagePaid, 4)} | net_pnl=${formatLogNumber(profit, 2)} | hold=${currentPos.holdCandles} | trailing=${currentPos.trailingStop === null ? "null" : formatLogNumber(currentPos.trailingStop, 6)} | reason=${exitReason}`
   );
 
   state.usdtBalance += execution.netProceeds;
   recentlyExited.add(closedSymbol);
-  recentlyExitedExpiry.set(closedSymbol, currentScanCycle + 3);
+  
+  // Aumentato da 3 cicli a 30 cicli (circa 2.5 min a 5s ping) per impedire il rebuy fulmineo e dare tempo al mercato di respirare
+  recentlyExitedExpiry.set(closedSymbol, currentScanCycle + 30);
 
   if (profit < 0) {
-    symbolCooldown.set(closedSymbol, currentScanCycle + LOSS_COOLDOWN_CYCLES);
+    symbolCooldown.set(closedSymbol, currentScanCycle + Math.max(30, LOSS_COOLDOWN_CYCLES));
   }
 
-  state.position = null;
+  state.positions = state.positions.filter(p => p.symbol !== closedSymbol);
   saveStateToDisk();
 }
 
@@ -2361,12 +2466,16 @@ async function fetchTopSymbols(exchange) {
             ? infoQuoteVolume
             : 0;
 
+      const percentage = Number.isFinite(ticker?.percentage) ? Math.abs(ticker.percentage) : 0;
+      const hotnessScore = volumeScore * (1 + (percentage / 100) * 5); // Boost volume by 5x the percentage change
+
       return {
         symbol: normalizedSymbol,
         baseAsset,
         quoteAsset,
         active: ticker?.active !== false,
         volumeScore,
+        hotnessScore,
         lastPrice,
         openPrice,
         highPrice,
@@ -2376,11 +2485,11 @@ async function fetchTopSymbols(exchange) {
       };
     })
     .filter((ticker) => {
-      if (!ticker.symbol || !ticker.baseAsset || ticker.quoteAsset !== "USDT") {
+      if (!ticker.symbol || !ticker.baseAsset || !["USDT", "USDC", "FDUSD"].includes(ticker.quoteAsset)) {
         return false;
       }
 
-      if (!ticker.symbol.endsWith("/USDT") || !ticker.active) {
+      if (!ticker.active) {
         return false;
       }
 
@@ -2434,7 +2543,7 @@ async function fetchTopSymbols(exchange) {
 
       return true;
     })
-    .sort((left, right) => right.volumeScore - left.volumeScore)
+    .sort((left, right) => right.hotnessScore - left.hotnessScore)
     .slice(0, TOP_SYMBOLS_COUNT)
     .map((ticker) => ticker.symbol);
 }
@@ -2513,7 +2622,7 @@ function rotateWatchlist(currentMarkets, allCandidates) {
   const activeSymbols = new Set(currentSymbols);
   const droppedSymbols = new Set();
   const deadSymbols = currentSymbols.filter((symbol) => {
-    if (state.position?.symbol === symbol) {
+    if (state.positions.some(p => p.symbol === symbol)) {
       return false;
     }
 
@@ -2597,8 +2706,8 @@ async function main() {
   state.botStartedAt = new Date().toISOString();
   // [UPGRADE v2.2] Restore persisted paper state before the dashboard and loop come online.
   loadStateFromDisk();
-  if (state.position) {
-    logScoped("SESSION", `restored | symbol=${state.position.symbol} | usdt_balance=${formatLogNumber(state.usdtBalance, 2)} | trades=${state.trades.length}`);
+  if (state.positions.length > 0) {
+    logScoped("SESSION", `restored | positions=${state.positions.length} | usdt=${formatLogNumber(state.usdtBalance, 2)} | trades=${state.trades.length}`);
   }
 
   startServer();
@@ -2608,6 +2717,7 @@ async function main() {
   let lastCompletedCycleAt = Date.now();
   let lastWatchdogLogAt = 0;
   let lastRealtimeSymbolsLabel = "";
+  let lastWatchlistRefreshTime = Date.now();
 
   setInterval(() => {
     if (!state.botActive) {
@@ -2623,8 +2733,10 @@ async function main() {
 
   if (HAS_STATIC_SYMBOLS) {
     SYMBOLS = [...configuredSymbols];
-    if (state.position && !SYMBOLS.includes(state.position.symbol)) {
-      SYMBOLS = [state.position.symbol, ...SYMBOLS];
+    for (const pos of state.positions) {
+      if (!SYMBOLS.includes(pos.symbol)) {
+        SYMBOLS = [pos.symbol, ...SYMBOLS];
+      }
     }
     SYMBOLS_SOURCE = "SYMBOLS";
     logScoped("WATCHLIST", `loaded | count=${SYMBOLS.length} | source=${SYMBOLS_SOURCE}`);
@@ -2667,7 +2779,8 @@ async function main() {
         }
       }
 
-      if (!HAS_STATIC_SYMBOLS && scanCycle > 0 && scanCycle % SYMBOLS_REFRESH_CYCLES === 0) {
+      if (!HAS_STATIC_SYMBOLS && (Date.now() - lastWatchlistRefreshTime >= 300000)) {
+        lastWatchlistRefreshTime = Date.now();
         const refreshedSymbols = await fetchTopSymbols(exchange);
 
         if (refreshedSymbols.length > 0) {
@@ -2704,8 +2817,9 @@ async function main() {
       state.lastUpdate = new Date().toISOString();
       const btcSnapshot = state.markets["BTC/USDT"];
       const btcRegime = getBtcRegime(btcSnapshot);
+      const openSymbols = new Set(state.positions.map(p => p.symbol));
       const candidateUniverse = HAS_STATIC_SYMBOLS
-        ? SYMBOLS.filter((symbol) => symbol !== (state.position ? state.position.symbol : null))
+        ? SYMBOLS.filter((symbol) => !openSymbols.has(symbol))
         : allCandidates.length > 0
           ? allCandidates
           : SYMBOLS;
@@ -2760,41 +2874,47 @@ async function main() {
 
       let positionClosedThisCycle = false;
 
-      if (state.position) {
-        const positionMarket = state.markets[state.position.symbol];
+      const symbolsToClose = [];
 
-        if (positionMarket) {
-          const management = manageOpenPosition(positionMarket);
-          if (management.shouldPartialExit) {
-            executePartialExit(positionMarket);
-            refreshPositionSnapshot(positionMarket, { shouldExit: false, exitReason: null });
+      for (const pos of state.positions) {
+        const positionMarket = state.markets[pos.symbol];
+        if (!positionMarket) continue;
+
+        const management = manageOpenPosition(positionMarket);
+        if (management.shouldPartialExit) {
+          executePartialExit(positionMarket);
+          refreshPositionSnapshot(positionMarket, { shouldExit: false, exitReason: null });
+        } else {
+          refreshPositionSnapshot(positionMarket, management);
+        }
+
+        if (management.shouldExit && management.exitReason) {
+          symbolsToClose.push({ market: positionMarket, reason: management.exitReason });
+        } else if (
+          !management.shouldPartialExit &&
+          positionMarket.action === "BUY" &&
+          positionMarket.compositeScore >= MIN_SCORE_ENTRY
+        ) {
+          // Re-entry or scaling logic
+          const neutralBlocked = btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(positionMarket.symbol);
+          if (btcFilterEnabled && btcRegime === "risk-off") {
+            logScoped("GUARD", `btc_regime_risk_off | scaling_blocked | symbol=${pos.symbol}`);
+          } else if (neutralBlocked) {
+            logScoped("GUARD", `btc_regime_neutral | scaling_blocked | symbol=${pos.symbol} | top_limit=${NEUTRAL_TOP_N}`);
           } else {
-            refreshPositionSnapshot(positionMarket, management);
-          }
-
-          if (management.shouldExit && management.exitReason) {
-            closePaperPosition(positionMarket, management.exitReason);
-            positionClosedThisCycle = true;
-          } else if (
-            !management.shouldPartialExit &&
-            positionMarket.action === "BUY" &&
-            positionMarket.compositeScore >= MIN_SCORE_ENTRY
-          ) {
-            const neutralBlocked = btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(positionMarket.symbol);
-            if (btcFilterEnabled && btcRegime === "risk-off") {
-              logScoped("GUARD", "btc_regime_risk_off | no_new_entries");
-            } else if (neutralBlocked) {
-              logScoped("GUARD", `btc_regime_neutral | symbol=${positionMarket.symbol} | top_limit=${NEUTRAL_TOP_N} | no_new_entries`);
-            } else {
-              const previousEntryCount = state.position.entryCount;
-              openPaperPosition(positionMarket);
-
-              if (state.position && state.position.entryCount !== previousEntryCount) {
-                refreshPositionSnapshot(positionMarket, { shouldExit: false, exitReason: null });
-              }
+            const previousEntryCount = pos.entryCount;
+            openPaperPosition(positionMarket);
+            const updatedPos = state.positions.find(p => p.symbol === pos.symbol);
+            if (updatedPos && updatedPos.entryCount !== previousEntryCount) {
+              refreshPositionSnapshot(positionMarket, { shouldExit: false, exitReason: null });
             }
           }
         }
+      }
+
+      for (const { market, reason } of symbolsToClose) {
+        closePaperPosition(market, reason);
+        positionClosedThisCycle = true;
       }
 
       const tradableBuyCandidate = Object.values(state.markets)
@@ -2826,21 +2946,22 @@ async function main() {
 
       state.bestCandidateSymbol = tradableBuyCandidate ? tradableBuyCandidate.symbol : pickBestCandidateSymbol(Object.values(state.markets));
 
-      if (!state.position && !positionClosedThisCycle && state.bestCandidateSymbol) {
+      if (state.positions.length < MAX_CONCURRENT_POSITIONS && !positionClosedThisCycle && state.bestCandidateSymbol) {
         const bestMarket = state.markets[state.bestCandidateSymbol];
         if (bestMarket && bestMarket.action === "BUY" && bestMarket.compositeScore >= MIN_SCORE_ENTRY) {
           const neutralBlocked = btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(bestMarket.symbol);
           if (btcFilterEnabled && btcRegime === "risk-off") {
-            logScoped("GUARD", "btc_regime_risk_off | no_new_entries");
+            logScoped("GUARD", "btc_regime_risk_off | entry_blocked");
           } else if (neutralBlocked) {
-            logScoped("GUARD", `btc_regime_neutral | symbol=${bestMarket.symbol} | top_limit=${NEUTRAL_TOP_N} | no_new_entries`);
+            logScoped("GUARD", `btc_regime_neutral | entry_blocked | symbol=${bestMarket.symbol} | top_limit=${NEUTRAL_TOP_N}`);
           } else {
-            const positionBefore = state.position;
+            const countBefore = state.positions.length;
             openPaperPosition(bestMarket);
 
-            if (state.position && state.position.symbol === bestMarket.symbol) {
+            const newPos = state.positions.find(p => p.symbol === bestMarket.symbol);
+            if (newPos && state.positions.length > countBefore) {
               refreshPositionSnapshot(bestMarket, { shouldExit: false, exitReason: null });
-            } else if (!positionBefore) {
+            } else if (state.positions.length === countBefore && !state.positions.some(p => p.symbol === bestMarket.symbol)) {
               logScoped(
                 "ENTRY",
                 `blocked_internal | symbol=${bestMarket.symbol} | score=${bestMarket.compositeScore} | volume=${formatLogNumber(bestMarket.currentVolume_5m, 2)} | volume_sma=${formatLogNumber(bestMarket.volumeSMA20, 2)} | action=${bestMarket.action}`
