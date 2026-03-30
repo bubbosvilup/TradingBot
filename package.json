@@ -1,19 +1,21 @@
 {
   "name": "tradingbot",
   "version": "1.0.0",
-  "description": "Minimal BTC/USDT paper trading bot using ccxt",
+  "description": "Multi-market paper trading bot with local dashboard, persistence, and strategy modules",
   "main": "bot.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "test": "node tests/run-tests.js"
   },
   "keywords": [
     "trading",
     "bot",
     "paper-trading",
     "ccxt",
-    "btc",
-    "usdt"
+    "dashboard",
+    "multi-market",
+    "binance"
   ],
   "author": "",
   "license": "MIT",

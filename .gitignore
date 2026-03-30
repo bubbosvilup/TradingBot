@@ -1,0 +1,5 @@
+.env
+state.json
+trades.log
+node_modules/
+*.log

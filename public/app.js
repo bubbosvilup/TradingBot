@@ -237,6 +237,10 @@ function groupTrades(trades) {
 }
 
 function renderTrades(trades) {
+  if (!tradesBody) {
+    return;
+  }
+
   if (!trades.length) {
     tradesBody.innerHTML = '<tr><td colspan="6">Nessuna operazione completata disponibile.</td></tr>';
     return;
@@ -314,7 +318,7 @@ async function loadDashboard() {
   ]);
 
   currentActionElement.textContent = statusData.decision.action || "HOLD";
-  currentActionElement.className = `big-action ${statusData.decision.action === "BUY" ? "value-positive" : statusData.decision.action === "SELL" ? "value-negative" : ""}`;
+  currentActionElement.className = `big-action ${statusData.decision.action === "BUY" ? "value-positive" : statusData.decision.action === "SELL" ? "value-negative" : statusData.decision.action === "WAIT" ? "value-wait" : ""}`;
   currentSymbolBadge.textContent = statusData.decision.symbol || "n/a";
 
   renderFacts(decisionMainFacts, [
