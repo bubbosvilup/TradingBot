@@ -1,11 +1,3 @@
-[2026-03-29T19:04:05.577Z] BUY | symbol=BTC/USDT | price=66410.03000000 | btc=0.00015058 | usdt_spent=10.00000000 | score=2
-[2026-03-29T19:08:36.084Z] BUY | symbol=BTC/USDT | price=66440.67000000 | btc=0.00015051 | usdt_spent=10.00000000 | score=3
-[2026-03-29T19:09:12.967Z] SELL | symbol=BTC/USDT | price=66438.99000000 | btc=0.00015051 | usdt_received=9.99974714 | pnl_usdt=-0.00025286 | score=-2
-[2026-03-29T19:21:08.593Z] BUY | symbol=BTC/USDT | price=66423.43000000 | btc=0.00015055 | usdt_spent=10.00000000 | score=3
-[2026-03-29T19:22:53.893Z] SELL | symbol=BTC/USDT | price=66449.62000000 | btc=0.00015055 | usdt_received=10.00394289 | pnl_usdt=0.00394289 | score=-3
-[2026-03-29T19:24:28.694Z] BUY | symbol=BTC/USDT | price=66426.84000000 | btc=0.00015060 | usdt_spent=10.00394289 | score=3
-[2026-03-29T19:29:01.036Z] BUY | symbol=BTC/USDT | price=66419.64000000 | btc=0.00015056 | usdt_spent=10.00000000 | score=2
-[2026-03-29T21:07:46.483Z] BUY | symbol=ETH/USDT | price=2002.87000000 | btc=0.00249642 | usdt_spent=5.00000000 | stop_loss=1982.84130000 | take_profit=2042.92740000 | reason=Trend favorevole, RSI sano e prezzo vicino alla media veloce.
-[2026-03-29T21:10:05.048Z] SELL | symbol=ETH/USDT | price=2001.51000000 | btc=0.00249642 | usdt_received=4.99660487 | pnl_usdt=-0.00339513 | reason=EMA9 crossed below EMA21.
-[2026-03-29T22:41:50.063Z] BUY | symbol=U/USDT | price=1.00070000 | btc=3.99720196 | usdt_spent=4.00000000 | score=9 | atr=0.00012192 | sl=1.00051711 | tp=1.00106577 | trend_1h=bullish | reason=Tutti i livelli sono allineati e il punteggio e sufficiente per entrare.
-[2026-03-29T22:43:47.394Z] SELL | symbol=U/USDT | price=1.00050000 | btc=3.99720196 | usdt_received=3.99920056 | pnl_usdt=-0.00079944 | holdCandles=9 | highWaterMark=1.00070000 | trailing=null | reason=ATR stop loss reached.
+
+[2026-03-30T11:28:28.722Z] BUY | symbol=GRT/USDT | entry=trend_continuation | price=0.02432215 | btc=287.80344505 | usdt_spent=7.00000000 | score=8 | atr=0.00005455 | sl=0.02424032 | tp=0.02448582 | hard_floor_nuclear=0.02310605 | feePaid=0.00700000 | slippagePaid=0.00349825 | netPnlUsdt=null | trend_1h=bullish | entry_count=1 | reason=Trend continuation valido: trend 1h inclinato al rialzo, pullback pulito e trigger confermato.
+[2026-03-30T11:34:16.732Z] BUY | symbol=ERN/USDT | entry=trend_continuation | price=2.18409150 | btc=3.20499393 | usdt_spent=7.00000000 | score=6 | atr=0.03111640 | sl=2.15600000 | tp=2.26836600 | hard_floor_nuclear=2.07488692 | feePaid=0.00700000 | slippagePaid=0.00349825 | netPnlUsdt=null | trend_1h=bullish | entry_count=1 | reason=Trend continuation valido: trend 1h inclinato al rialzo, pullback pulito e trigger confermato.

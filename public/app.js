@@ -10,6 +10,7 @@ const detailedExplanationElement = document.getElementById("decision-detailed-ex
 const reasonListElement = document.getElementById("decision-reason-list");
 const resetButton = document.getElementById("reset-button");
 const resetResult = document.getElementById("reset-result");
+const btcFilterToggle = document.getElementById("btc-filter-toggle");
 
 function formatPrice(value) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) {
@@ -166,7 +167,7 @@ function renderTrades(trades) {
         ? `<ul>${trade.reasonList.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
         : "";
       const budgetLine = trade.budgetUsedAfter !== undefined && trade.budgetRemainingAfter !== undefined
-        ? `<p>Budget usato: ${formatUsdt(trade.budgetUsedAfter)} | Budget disponibile: ${formatUsdt(trade.budgetRemainingAfter)}</p>`
+        ? `<p>Capitale impegnato: ${formatUsdt(trade.budgetUsedAfter)} | Spazio residuo per nuove entrate: ${formatUsdt(trade.budgetRemainingAfter)}</p>`
         : "";
       const entryLabel = trade.entryIndex && trade.action === "BUY" ? `Ingresso ${trade.entryIndex}` : trade.action;
 
@@ -210,12 +211,15 @@ async function loadDashboard() {
   const statusData = await statusResponse.json();
   const tradesData = await tradesResponse.json();
 
+  btcFilterToggle.checked = Boolean(statusData.overview?.btcFilterEnabled);
+
   summaryElement.textContent = statusData.bot.summary;
 
   renderSummaryCards([
     { label: "Bot", value: statusData.overview.botActive ? "Attivo" : "Fermo" },
     { label: "Paper trading", value: statusData.overview.paperTrading ? "Attivo" : "Disattivato" },
-    { label: "Valore portafoglio", value: formatUsdt(statusData.overview.portfolioValue) },
+    { label: "Saldo USDT", value: formatUsdt(statusData.portfolio.usdtBalance) },
+    { label: "Valore totale", value: formatUsdt(statusData.overview.portfolioValue) },
     {
       label: "PnL sessione",
       value: formatSignedUsdt(statusData.overview.sessionPnl),
@@ -233,8 +237,9 @@ async function loadDashboard() {
     ["Perche guardiamo questo mercato", statusData.decision.focusReason || "n/a"],
     ["Motivo principale", statusData.decision.reason || "n/a"],
     ["Entrate aperte", statusData.portfolio.entryCount ?? 0],
-    ["Budget usato", formatUsdt(statusData.portfolio.budgetUsed)],
-    ["Budget disponibile", formatUsdt(statusData.portfolio.budgetRemaining)],
+    ["Saldo USDT disponibile", formatUsdt(statusData.portfolio.usdtBalance)],
+    ["Capitale gia impegnato", formatUsdt(statusData.portfolio.budgetUsed)],
+    ["Spazio residuo per nuove entrate", formatUsdt(statusData.portfolio.budgetRemaining)],
     ["RSI", formatIndicator(statusData.decision.rsi)],
     ["EMA veloce", formatPrice(statusData.decision.ema9)],
     ["EMA lenta", formatPrice(statusData.decision.ema21)]
@@ -266,9 +271,39 @@ async function resetSession() {
   await loadDashboard();
 }
 
+async function updateBtcFilter() {
+  const nextValue = !btcFilterToggle.checked;
+  btcFilterToggle.disabled = true;
+
+  const response = await fetch("/api/btc-filter", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ enabled: nextValue })
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || "BTC filter update failed.");
+  }
+
+  btcFilterToggle.checked = Boolean(data.btcFilterEnabled);
+  btcFilterToggle.disabled = false;
+}
+
 resetButton.addEventListener("click", () => {
   resetSession().catch(() => {
     resetResult.textContent = "Errore durante il reset.";
+  });
+});
+
+btcFilterToggle.addEventListener("click", (event) => {
+  event.preventDefault();
+
+  updateBtcFilter().catch(() => {
+    btcFilterToggle.disabled = false;
+    resetResult.textContent = "Errore durante l'aggiornamento del Filtro BTC.";
   });
 });
 

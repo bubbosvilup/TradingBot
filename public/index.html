@@ -80,7 +80,14 @@
       <section class="card controls-card">
         <h2>Controlli</h2>
         <p>Usa il reset per riportare il paper trading allo stato iniziale.</p>
-        <button id="reset-button" type="button">Reset sessione</button>
+        <div class="controls-row">
+          <label class="toggle-control" for="btc-filter-toggle">
+            <span>Filtro BTC</span>
+            <input id="btc-filter-toggle" type="checkbox" />
+            <span class="toggle-pill" aria-hidden="true"></span>
+          </label>
+          <button id="reset-button" type="button">Reset sessione</button>
+        </div>
         <p class="note" id="reset-result"></p>
       </section>
     </main>
