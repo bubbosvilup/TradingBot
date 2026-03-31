@@ -17,6 +17,8 @@ const activeWatchlist = document.getElementById("active-watchlist");
 const hotPool = document.getElementById("hot-pool");
 const swapTimeline = document.getElementById("swap-timeline");
 const runtimeFacts = document.getElementById("runtime-facts");
+const performanceFacts = document.getElementById("performance-facts");
+const engineBreakdownBody = document.getElementById("engine-breakdown-body");
 const heroStatusStrip = document.getElementById("hero-status-strip");
 const refreshButton = document.getElementById("refresh-button");
 const refreshStatus = document.getElementById("refresh-status");
@@ -277,8 +279,8 @@ function renderMarkets(markets) {
           <td>${formatPrice(market.lastPrice)}</td>
           <td>${escapeHtml(market.trend || "n/a")}</td>
           <td>${escapeHtml(market.signal || "HOLD")}</td>
-          <td>${escapeHtml(market.decisionState || "n/a")}</td>
-          <td>${market.score === null || market.score === undefined ? "n/a" : market.score}</td>
+          <td>${escapeHtml(market.decisionState || "n/a")} / ${escapeHtml(market.marketRegime || "n/a")}</td>
+          <td>${market.score === null || market.score === undefined ? "n/a" : `${market.score} / ${formatIndicator(market.opportunityScore)}`}</td>
           <td>${formatIndicator(market.rsi)}</td>
           <td>${escapeHtml(market.entryEngine || "n/a")}</td>
           <td class="reason-cell">${escapeHtml(market.reason || "n/a")}</td>
@@ -387,12 +389,13 @@ function renderActiveWatchlist(items) {
       </div>
       <div class="token-meta-row">
         <span>${escapeHtml(item.signal || "HOLD")}</span>
-        <span>${escapeHtml(item.decisionState || "n/a")}</span>
+        <span>Opp ${formatIndicator(item.opportunityScore)}</span>
       </div>
       <div class="token-badges">
         ${item.isFocus ? '<span class="badge badge-focus">Focus</span>' : ""}
         ${item.isInPosition ? '<span class="badge badge-position">Open</span>' : ""}
         ${item.isWeak ? '<span class="badge badge-weak">Weak</span>' : ""}
+        <span class="badge">${escapeHtml(item.marketRegime || "n/a")}</span>
       </div>
     </article>
   `).join("");
@@ -414,7 +417,7 @@ function renderHotPool(items) {
         </div>
         <div class="token-meta-row">
           <span>RSI ${formatIndicator(item.rsi)}</span>
-          <span>Score ${item.score ?? "n/a"}</span>
+          <span>Opp ${formatIndicator(item.opportunityScore)}</span>
         </div>
         <div class="token-badges">
           ${item.isActive ? '<span class="badge badge-position">Attivo</span>' : ""}
@@ -477,6 +480,42 @@ function renderRuntimePanel(statusData) {
   ]);
 }
 
+function renderPerformancePanel(statusData) {
+  const stats = statusData.stats || {};
+  renderFacts(performanceFacts, [
+    ["Trade chiusi", String(stats.totalClosedRounds ?? 0)],
+    ["Win rate", `${formatIndicator(stats.winRatePct)}%`],
+    ["Profit factor", formatIndicator(stats.profitFactor)],
+    ["Expectancy", formatSignedUsdt(stats.expectancyUsdt)],
+    ["Avg winner", formatSignedUsdt(stats.avgWinnerUsdt)],
+    ["Avg loser", formatSignedUsdt(stats.avgLoserUsdt)],
+    ["Max drawdown", `${formatSignedUsdt(-Math.abs(stats.maxDrawdownUsdt || 0))} (${formatIndicator(stats.maxDrawdownPct)}%)`, getValueClass(-Math.abs(stats.maxDrawdownUsdt || 0))],
+    ["Fees pagate", formatUsdt(stats.totalFeesPaid)],
+    ["Slippage pagata", formatUsdt(stats.totalSlippagePaid)],
+    ["Turnover", formatUsdt(stats.turnoverUsdt)],
+    ["Avg hold", `${formatIndicator(stats.averageHoldMinutes)} min`]
+  ]);
+
+  const engineBreakdown = Array.isArray(stats.engineBreakdown) ? stats.engineBreakdown : [];
+  if (!engineBreakdown.length) {
+    engineBreakdownBody.innerHTML = '<tr><td colspan="5">Nessun dato performance disponibile.</td></tr>';
+    return;
+  }
+
+  engineBreakdownBody.innerHTML = engineBreakdown
+    .sort((left, right) => right.grossPnlUsdt - left.grossPnlUsdt)
+    .map((entry) => `
+      <tr>
+        <td>${escapeHtml(entry.engine)}</td>
+        <td>${entry.count}</td>
+        <td>${formatIndicator(entry.winRatePct)}%</td>
+        <td class="${getValueClass(entry.grossPnlUsdt)}">${formatSignedUsdt(entry.grossPnlUsdt)}</td>
+        <td class="${getValueClass(entry.avgPnlUsdt)}">${formatSignedUsdt(entry.avgPnlUsdt)}</td>
+      </tr>
+    `)
+    .join("");
+}
+
 function renderDecision(statusData) {
   currentActionElement.textContent = statusData.decision.action || "HOLD";
   currentActionElement.className = `big-action ${getActionClass(statusData.decision.action)}`;
@@ -488,6 +527,10 @@ function renderDecision(statusData) {
     ["Motivo principale", escapeHtml(statusData.decision.reason || "n/a")],
     ["Decision state", escapeHtml(statusData.decision.decisionState || "n/a")],
     ["Entry engine", escapeHtml(statusData.decision.entryEngine || "n/a")],
+    ["Regime", escapeHtml(statusData.decision.marketRegime || "n/a")],
+    ["Focus score", formatIndicator(statusData.decision.focusScore)],
+    ["Opportunity score", formatIndicator(statusData.decision.opportunityScore)],
+    ["Setup quality", formatIndicator(statusData.decision.setupQualityScore)],
     ["Entrate aperte", String(statusData.portfolio.entryCount ?? 0)],
     ["Saldo USDT disponibile", formatUsdt(statusData.portfolio.usdtBalance)],
     ["Capitale impegnato", formatUsdt(statusData.portfolio.budgetUsed)],
@@ -497,7 +540,9 @@ function renderDecision(statusData) {
     ["EMA lenta", formatPrice(statusData.decision.ema21)],
     ["Edge netta attesa", formatBps(statusData.decision.projectedNetEdgeBps)],
     ["R/R atteso", formatIndicator(statusData.decision.projectedRiskRewardRatio)],
-    ["Profitto netto atteso", formatUsdt(statusData.decision.expectedNetProfitUsdt)]
+    ["Profitto netto atteso", formatUsdt(statusData.decision.expectedNetProfitUsdt)],
+    ["Stop pianificato", formatPrice(statusData.decision.plannedStopLoss)],
+    ["Target pianificato", formatPrice(statusData.decision.plannedTakeProfit)]
   ]);
 
   shortExplanationElement.textContent = statusData.decision.shortExplanation || "Spiegazione non disponibile.";
@@ -531,6 +576,7 @@ function renderDashboard(statusData, tradesData) {
   }));
   renderWatchlistSidebar(statusData);
   renderRuntimePanel(statusData);
+  renderPerformancePanel(statusData);
   renderTrades(Array.isArray(tradesData.trades) ? tradesData.trades : []);
   refreshStatus.textContent = `Ultimo refresh ${formatRelativeTime(clientState.lastRefreshAt)}`;
 }

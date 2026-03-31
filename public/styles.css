@@ -486,6 +486,10 @@ input[type="search"] {
   overflow-x: auto;
 }
 
+.compact-table-wrap {
+  margin-top: 14px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

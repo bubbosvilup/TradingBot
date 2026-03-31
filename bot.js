@@ -50,6 +50,7 @@ const config = {
   FETCH_LIMIT_1M: Math.max(20, Math.min(Math.max(Number(process.env.OHLCV_LIMIT || 100), 100), 100)),
   FETCH_LIMIT_5M: Math.max(100, Math.min(Math.max(Number(process.env.OHLCV_LIMIT || 100), 100), 300)),
   FETCH_TIMEOUT_MS: Math.max(Number(process.env.FETCH_TIMEOUT_MS || 15000), 1000),
+  FOCUS_MIN_SCORE: Math.max(Number(process.env.FOCUS_MIN_SCORE || 4), 0),
   HARD_STOP_PCT: Number(process.env.HARD_STOP_PCT || 0.05),
   HAS_STATIC_SYMBOLS: configuredSymbols.length > 0,
   HOT_SYMBOLS_POOL_COUNT: Math.max(
@@ -80,6 +81,12 @@ const config = {
   POSITION_SIZE_MAX: Number(process.env.POSITION_SIZE_MAX || 0.7),
   POSITION_SIZE_MIN: Number(process.env.POSITION_SIZE_MIN || 0.2),
   PUBLIC_DIR: path.join(__dirname, "public"),
+  RANGE_BB_PERIOD: Math.max(Number(process.env.RANGE_BB_PERIOD || 20), 10),
+  RANGE_BB_STDDEV: Math.max(Number(process.env.RANGE_BB_STDDEV || 2), 1),
+  RANGE_EMA_GAP_MAX: Math.max(Number(process.env.RANGE_EMA_GAP_MAX || 0.006), 0.0001),
+  RANGE_ENTRY_MIN_SCORE: Math.max(Number(process.env.RANGE_ENTRY_MIN_SCORE || process.env.MIN_SCORE_ENTRY || 6), Number(process.env.MIN_SCORE_ENTRY || 6)),
+  RANGE_RSI_MAX: Math.max(Number(process.env.RANGE_RSI_MAX || 40), 1),
+  RANGE_SLOPE_MAX: Math.max(Number(process.env.RANGE_SLOPE_MAX || 0.0009), 0.00001),
   RECENTLY_DROPPED_TTL_CYCLES: 10,
   RISK_PCT_PER_TRADE: Math.max(Number(process.env.RISK_PCT_PER_TRADE || 0.01), 0),
   RSI_MAX: Number(process.env.RSI_MAX || 62),
@@ -91,7 +98,10 @@ const config = {
   SFP_ENTRY_MIN_SCORE: Math.max(Number(process.env.SFP_ENTRY_MIN_SCORE || process.env.MIN_SCORE_ENTRY || 7), Number(process.env.MIN_SCORE_ENTRY || 6)),
   SPREAD_MAX_PCT: Math.max(Number(process.env.SPREAD_MAX_PCT || 0.001), 0),
   STATE_FILE: path.join(__dirname, "state.json"),
-  STRATEGY_NAME: "mtf-trend-following-1h-5m-1m",
+  STRATEGY_MODE: ["adaptive", "trend", "range_grid"].includes(String(process.env.STRATEGY_MODE || "adaptive").toLowerCase())
+    ? String(process.env.STRATEGY_MODE || "adaptive").toLowerCase()
+    : "adaptive",
+  STRATEGY_NAME: `multi-engine-${String(process.env.STRATEGY_MODE || "adaptive").toLowerCase()}-1h-5m-1m`,
   TIME_STOP_CANDLES: Math.max(Number(process.env.TIME_STOP_CANDLES || 12), 1),
   TOP_SYMBOLS_COUNT: Math.max(Number(process.env.TOP_SYMBOLS_COUNT || 10), 1),
   TARGET_NET_EDGE_BPS_FOR_MAX_SIZE: Math.max(Number(process.env.TARGET_NET_EDGE_BPS_FOR_MAX_SIZE || 120), 1),
@@ -233,6 +243,9 @@ function summarizeMarketForLog(market) {
     `symbol=${market.symbol}`,
     `action=${market.displayAction || market.action || "HOLD"}`,
     `score=${market.compositeScore ?? "n/a"}`,
+    `focus=${formatLogNumber(market.focusScore, 2)}`,
+    `opp=${formatLogNumber(market.opportunityScore, 2)}`,
+    `regime=${market.marketRegime || "n/a"}`,
     `trend=${market.trendBull_1h === true ? "bull" : market.trendBull_1h === false ? "bear" : "n/a"}`,
     `price=${formatLogNumber(market.lastPrice, 6)}`,
     `reason=${market.reason || "n/a"}`,
@@ -450,7 +463,15 @@ async function main() {
 
       const tradableBuyCandidate = Object.values(state.markets)
         .filter((market) => market.signal === "BUY candidate")
-        .sort((left, right) => right.compositeScore !== left.compositeScore ? right.compositeScore - left.compositeScore : Number(right.triggerFired) - Number(left.triggerFired))
+        .sort((left, right) => {
+          if ((right.opportunityScore || 0) !== (left.opportunityScore || 0)) {
+            return (right.opportunityScore || 0) - (left.opportunityScore || 0);
+          }
+          if ((right.compositeScore || 0) !== (left.compositeScore || 0)) {
+            return (right.compositeScore || 0) - (left.compositeScore || 0);
+          }
+          return Number(right.triggerFired) - Number(left.triggerFired);
+        })
         .find((market) => !(btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(market.symbol)));
 
       state.bestCandidateSymbol = tradableBuyCandidate ? tradableBuyCandidate.symbol : context.strategy.pickBestCandidateSymbol(Object.values(state.markets));

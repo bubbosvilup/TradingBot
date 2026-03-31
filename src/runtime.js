@@ -149,6 +149,8 @@ function createRuntime(context) {
   function calculateProfitabilityAllocation(snapshot, equity, budget, availableUsdt) {
     const scoreFloor = snapshot.entryEngine === context.strategy.ENTRY_ENGINES.SFP_REVERSAL
       ? config.SFP_ENTRY_MIN_SCORE
+      : snapshot.entryEngine === context.strategy.ENTRY_ENGINES.RANGE_GRID
+        ? config.RANGE_ENTRY_MIN_SCORE
       : config.TREND_ENTRY_MIN_SCORE;
     const scoreFactor = clamp((snapshot.compositeScore - scoreFloor) / Math.max(1, 10 - scoreFloor), 0, 1);
     const edgeFactor = clamp((snapshot.projectedNetEdgeBps || 0) / config.TARGET_NET_EDGE_BPS_FOR_MAX_SIZE, 0, 1);
@@ -298,10 +300,10 @@ function createRuntime(context) {
       return;
     }
 
-    if (snapshot.currentVolume_5m === null || snapshot.volumeSMA20 === null || snapshot.currentVolume_5m < snapshot.volumeSMA20 * config.ENTRY_VOLUME_MULT) {
+    if (snapshot.executionReady === false) {
       context.logScoped(
         "ENTRY",
-        `rejected | symbol=${snapshot.symbol} | reason=volume_too_low | volume=${context.formatLogNumber(snapshot.currentVolume_5m, 2)} | sma=${context.formatLogNumber(snapshot.volumeSMA20, 2)} | required=${config.ENTRY_VOLUME_MULT}x`
+        `rejected | symbol=${snapshot.symbol} | reason=execution_not_ready | engine=${snapshot.entryEngine || snapshot.entryType || "none"} | volume=${context.formatLogNumber(snapshot.currentVolume_5m, 2)} | sma=${context.formatLogNumber(snapshot.volumeSMA20, 2)}`
       );
       return;
     }
@@ -312,7 +314,11 @@ function createRuntime(context) {
 
     const equity = context.serverApi.getPortfolioValue();
     const entryEngine = snapshot.entryType || context.strategy.ENTRY_ENGINES.TREND_CONTINUATION;
-    const plannedStopLoss = snapshot.sfpValid && snapshot.sfpStopLevel !== null ? snapshot.sfpStopLevel : snapshot.lastPrice - snapshot.atr14_5m * config.ATR_STOP_MULT;
+    const plannedStopLoss = Number.isFinite(snapshot.plannedStopLoss)
+      ? snapshot.plannedStopLoss
+      : snapshot.sfpValid && snapshot.sfpStopLevel !== null
+        ? snapshot.sfpStopLevel
+        : snapshot.lastPrice - snapshot.atr14_5m * config.ATR_STOP_MULT;
     const riskSizing = calculateRiskPositionSize(equity, snapshot.lastPrice, plannedStopLoss, snapshot.sfpValid === true);
     const budget = context.serverApi.getPositionBudgetMetrics();
     const feeRate = config.ENTRY_FEE_BPS / 10000;
@@ -350,12 +356,19 @@ function createRuntime(context) {
     const totalEntryFeesPaid = (existingPosition ? existingPosition.entryFeesPaid : 0) + buyExecution.feePaid;
     const totalEntrySlippagePaid = (existingPosition ? existingPosition.entrySlippagePaid : 0) + buyExecution.slippagePaid;
     const averageEntryPrice = totalNotionalAllocated / totalBtcAmount;
-    const stopLoss = snapshot.sfpValid && snapshot.sfpStopLevel !== null ? snapshot.sfpStopLevel : averageEntryPrice - snapshot.atr14_5m * config.ATR_STOP_MULT;
+    const plannedTakeProfit = Number.isFinite(snapshot.plannedTakeProfit)
+      ? snapshot.plannedTakeProfit
+      : snapshot.sfpValid && snapshot.sfpStopLevel !== null
+        ? averageEntryPrice + (averageEntryPrice - snapshot.sfpStopLevel) * config.ATR_TP_MULT
+        : averageEntryPrice + snapshot.atr14_5m * config.ATR_TP_MULT;
+    const stopLoss = Number.isFinite(snapshot.plannedStopLoss)
+      ? snapshot.plannedStopLoss
+      : snapshot.sfpValid && snapshot.sfpStopLevel !== null
+        ? snapshot.sfpStopLevel
+        : averageEntryPrice - snapshot.atr14_5m * config.ATR_STOP_MULT;
     const hardFloor = averageEntryPrice * (1 - config.HARD_STOP_PCT);
     const minimumTakeProfit = averageEntryPrice * (1 + (config.MIN_TAKE_PROFIT_BPS / 10000));
-    const takeProfit = snapshot.sfpValid && snapshot.sfpStopLevel !== null
-      ? Math.max(averageEntryPrice + (averageEntryPrice - snapshot.sfpStopLevel) * config.ATR_TP_MULT, minimumTakeProfit)
-      : Math.max(averageEntryPrice + snapshot.atr14_5m * config.ATR_TP_MULT, minimumTakeProfit);
+    const takeProfit = Math.max(plannedTakeProfit, minimumTakeProfit);
     const initialRiskPerUnit = averageEntryPrice - stopLoss;
     const nextEntryCount = (existingPosition ? existingPosition.entryCount : 0) + 1;
     const tradeId = existingPosition ? existingPosition.tradeId : `T-${Date.now().toString(36).toUpperCase()}`;

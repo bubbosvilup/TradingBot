@@ -52,17 +52,23 @@ async function runServerTests() {
         entryEngine: "trend_continuation",
         entryPrice: null,
         exitReasonCode: null,
+        focusScore: 11.2,
         highWaterMark: null,
         holdCandles: 0,
         lastPrice: 7.03,
         macdHistogram: 0.1,
         macdLine: 0.2,
+        marketRegime: "trend",
         missingIndicators: [],
+        opportunityScore: 8.5,
+        plannedStopLoss: 6.85,
+        plannedTakeProfit: 7.45,
         reason: "Setup valido ma ingresso bloccato.",
         reasonList: ["Decision state: wait_volume"],
         rsi: 53.3,
         rsi_5m: 53.3,
         score: 7,
+        setupQualityScore: 8.1,
         shortExplanation: "Spiegazione breve.",
         signal: "BUY candidate",
         signalLine: 0.1,
@@ -75,6 +81,7 @@ async function runServerTests() {
         trendLateral: false,
         trendSlope_1h: 0.002,
         triggerFired: true,
+        volumeRatio_5m: 0.8,
         volumeSMA20: 100,
         warmingUp: false
       }
@@ -113,7 +120,8 @@ async function runServerTests() {
       MAX_POSITION_EXPOSURE_PCT: 0.85,
       PUBLIC_DIR: path.join(process.cwd(), "public"),
       SERVER_HOST: "127.0.0.1",
-      SERVER_PORT: 0
+      SERVER_PORT: 0,
+      WEAK_SYMBOL_RSI_MAX: 45
     },
     getBtcFilterEnabled: () => btcFilterEnabled,
     getSymbols: () => ["RNDR/USDT"],
@@ -139,9 +147,11 @@ async function runServerTests() {
     assert.equal(response.body.bot.active, true);
     assert.equal(response.body.decision.decisionState, "wait_volume");
     assert.equal(response.body.decision.entryEngine, "trend_continuation");
+    assert.equal(response.body.decision.marketRegime, "trend");
     assert.equal(response.body.overview.btcFilterEnabled, true);
     assert.equal(response.body.watchlist.active.length, 1);
     assert.equal(response.body.runtime.scanCycle, 12);
+    assert.equal(response.body.stats.totalClosedRounds, 0);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

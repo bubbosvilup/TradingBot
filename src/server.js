@@ -7,6 +7,48 @@ const path = require("path");
 function createServerApi(context) {
   const { config, state } = context;
 
+  function groupTradeRounds() {
+    const groups = new Map();
+    for (const trade of state.trades) {
+      const tradeId = trade.tradeId || `legacy-${trade.time}-${trade.symbol}`;
+      if (!groups.has(tradeId)) {
+        groups.set(tradeId, []);
+      }
+      groups.get(tradeId).push(trade);
+    }
+
+    return Array.from(groups.values())
+      .map((events) => {
+        const sortedEvents = [...events].sort((left, right) => new Date(left.time) - new Date(right.time));
+        const first = sortedEvents[0];
+        const last = sortedEvents[sortedEvents.length - 1];
+        const isClosed = sortedEvents.some((event) => event.action === "SELL_FULL");
+        const buys = sortedEvents.filter((event) => event.action === "BUY");
+        const totalFees = sortedEvents.reduce((sum, event) => sum + (event.feePaid || 0), 0);
+        const totalSlippage = sortedEvents.reduce((sum, event) => sum + (event.slippagePaid || 0), 0);
+        const turnoverUsdt = sortedEvents.reduce((sum, event) => sum + Math.abs(event.usdtAmount || 0), 0);
+        const realizedPnl = sortedEvents.reduce((sum, event) => sum + (event.netPnlUsdt || 0), 0);
+        const durationMs = last?.time && first?.time ? Math.max(0, new Date(last.time).getTime() - new Date(first.time).getTime()) : 0;
+
+        return {
+          closed: isClosed,
+          durationMs,
+          endTime: last?.time || first?.time || null,
+          entryEngine: first?.entryEngine || first?.entryType || null,
+          equityAfter: realizedPnl,
+          eventCount: sortedEvents.length,
+          realizedPnl,
+          startTime: first?.time || null,
+          symbol: first?.symbol || "n/a",
+          totalFees,
+          totalSlippage,
+          turnoverUsdt,
+          tradeId
+        };
+      })
+      .sort((left, right) => new Date(left.startTime || 0) - new Date(right.startTime || 0));
+  }
+
   function getWatchlistPayload(focusSymbol) {
     const activeSymbols = Array.isArray(state.watchlist?.activeSymbols) && state.watchlist.activeSymbols.length > 0
       ? state.watchlist.activeSymbols
@@ -28,13 +70,17 @@ function createServerApi(context) {
         return {
           decisionState: market?.decisionState || "warmup",
           entryEngine: market?.entryEngine || null,
+          focusScore: market?.focusScore ?? null,
           isFocus: symbol === focusSymbol,
           isInPosition: positionSymbols.has(symbol),
           isWeak: weakSymbolMap.has(symbol),
           lastPrice: market?.lastPrice ?? null,
+          marketRegime: market?.marketRegime || "n/a",
+          opportunityScore: market?.opportunityScore ?? null,
           reason: market?.reason || "In attesa di dati.",
           rsi: market?.rsi_5m ?? null,
           score: market?.compositeScore ?? null,
+          setupQualityScore: market?.setupQualityScore ?? null,
           signal: market?.signal || "HOLD",
           symbol,
           trend: market?.trend || "non disponibile",
@@ -49,6 +95,8 @@ function createServerApi(context) {
           isBestCandidate: symbol === state.bestCandidateSymbol,
           isFocus: symbol === focusSymbol,
           lastPrice: market?.lastPrice ?? null,
+          marketRegime: market?.marketRegime || "n/a",
+          opportunityScore: market?.opportunityScore ?? null,
           rsi: market?.rsi_5m ?? null,
           score: market?.compositeScore ?? null,
           symbol,
@@ -98,21 +146,87 @@ function createServerApi(context) {
   }
 
   function getSessionStats() {
-    const closedTrades = state.trades.filter((trade) => trade.action === "SELL_FULL" || trade.action === "SELL_PARTIAL");
-    const profitableTrades = closedTrades.filter((trade) => trade.netPnlUsdt !== null && trade.netPnlUsdt > 0);
-    const losingTrades = closedTrades.filter((trade) => trade.netPnlUsdt !== null && trade.netPnlUsdt < 0);
-    const totalClosedPnl = closedTrades.reduce((total, trade) => total + (trade.netPnlUsdt || 0), 0);
-    const averageClosedTradePnl = closedTrades.length === 0 ? 0 : totalClosedPnl / closedTrades.length;
+    const tradeRounds = groupTradeRounds();
+    const closedRounds = tradeRounds.filter((round) => round.closed);
+    const profitableTrades = closedRounds.filter((round) => round.realizedPnl > 0);
+    const losingTrades = closedRounds.filter((round) => round.realizedPnl < 0);
+    const breakEvenTrades = closedRounds.filter((round) => round.realizedPnl === 0);
+    const totalClosedPnl = closedRounds.reduce((total, round) => total + round.realizedPnl, 0);
+    const averageClosedTradePnl = closedRounds.length === 0 ? 0 : totalClosedPnl / closedRounds.length;
+    const totalFeesPaid = state.trades.reduce((sum, trade) => sum + (trade.feePaid || 0), 0);
+    const totalSlippagePaid = state.trades.reduce((sum, trade) => sum + (trade.slippagePaid || 0), 0);
+    const grossProfit = profitableTrades.reduce((sum, trade) => sum + trade.realizedPnl, 0);
+    const grossLossAbs = Math.abs(losingTrades.reduce((sum, trade) => sum + trade.realizedPnl, 0));
+    const profitFactor = grossLossAbs > 0 ? grossProfit / grossLossAbs : (grossProfit > 0 ? grossProfit : 0);
+    const expectancyUsdt = closedRounds.length > 0 ? totalClosedPnl / closedRounds.length : 0;
+    const avgWinnerUsdt = profitableTrades.length > 0 ? grossProfit / profitableTrades.length : 0;
+    const avgLoserUsdt = losingTrades.length > 0 ? losingTrades.reduce((sum, trade) => sum + trade.realizedPnl, 0) / losingTrades.length : 0;
+    const turnoverUsdt = state.trades.reduce((sum, trade) => sum + Math.abs(trade.usdtAmount || 0), 0);
+    const averageHoldMinutes = closedRounds.length > 0
+      ? closedRounds.reduce((sum, round) => sum + (round.durationMs / 60000), 0) / closedRounds.length
+      : 0;
+    let cumulativePnl = 0;
+    let equityPeak = 0;
+    let maxDrawdownUsdt = 0;
+    for (const round of closedRounds) {
+      cumulativePnl += round.realizedPnl;
+      equityPeak = Math.max(equityPeak, cumulativePnl);
+      maxDrawdownUsdt = Math.max(maxDrawdownUsdt, equityPeak - cumulativePnl);
+    }
+    const maxDrawdownPct = config.INITIAL_USDT_BALANCE > 0 ? (maxDrawdownUsdt / config.INITIAL_USDT_BALANCE) * 100 : 0;
+    const engineBreakdownMap = new Map();
+    for (const round of closedRounds) {
+      const key = round.entryEngine || "unknown";
+      if (!engineBreakdownMap.has(key)) {
+        engineBreakdownMap.set(key, {
+          avgPnlUsdt: 0,
+          count: 0,
+          grossPnlUsdt: 0,
+          wins: 0
+        });
+      }
+      const bucket = engineBreakdownMap.get(key);
+      bucket.count += 1;
+      bucket.grossPnlUsdt += round.realizedPnl;
+      if (round.realizedPnl > 0) {
+        bucket.wins += 1;
+      }
+    }
+    const engineBreakdown = Array.from(engineBreakdownMap.entries()).map(([engine, bucket]) => ({
+      avgPnlUsdt: bucket.count > 0 ? bucket.grossPnlUsdt / bucket.count : 0,
+      count: bucket.count,
+      engine,
+      grossPnlUsdt: bucket.grossPnlUsdt,
+      winRatePct: bucket.count > 0 ? (bucket.wins / bucket.count) * 100 : 0,
+      wins: bucket.wins
+    }));
     const lastTrade = state.trades.length === 0 ? null : state.trades[state.trades.length - 1];
 
     return {
       averageClosedTradePnl,
+      averageHoldMinutes,
+      avgLoserUsdt,
+      avgWinnerUsdt,
+      breakEvenTrades: breakEvenTrades.length,
+      closedRounds,
+      engineBreakdown,
+      expectancyUsdt,
+      grossLossAbs,
+      grossProfit,
       hasOpenPosition: state.positions.length > 0,
       lastTrade,
       losingTrades: losingTrades.length,
+      maxDrawdownPct,
+      maxDrawdownUsdt,
+      profitFactor,
       profitableTrades: profitableTrades.length,
       sessionPnl: getSessionPnl(),
-      totalTrades: state.trades.length
+      totalFeesPaid,
+      totalSlippagePaid,
+      totalClosedRounds: closedRounds.length,
+      totalTrades: state.trades.length,
+      turnoverUsdt,
+      winRatePct: closedRounds.length > 0 ? (profitableTrades.length / closedRounds.length) * 100 : 0
     };
   }
 
@@ -151,8 +265,16 @@ function createServerApi(context) {
     const scoredMarkets = availableMarkets.filter((market) => market.score !== null && market.score !== undefined);
     if (scoredMarkets.length > 0) {
       scoredMarkets.sort((left, right) => {
-        if (right.score !== left.score) {
-          return right.score - left.score;
+        const leftTier = left.positionOpen ? 4 : left.action === "BUY" ? 3 : left.displayAction === "WAIT" ? 2 : left.signal === "BUY candidate" ? 1 : 0;
+        const rightTier = right.positionOpen ? 4 : right.action === "BUY" ? 3 : right.displayAction === "WAIT" ? 2 : right.signal === "BUY candidate" ? 1 : 0;
+        if (rightTier !== leftTier) {
+          return rightTier - leftTier;
+        }
+        if ((right.focusScore || 0) !== (left.focusScore || 0)) {
+          return (right.focusScore || 0) - (left.focusScore || 0);
+        }
+        if ((right.opportunityScore || 0) !== (left.opportunityScore || 0)) {
+          return (right.opportunityScore || 0) - (left.opportunityScore || 0);
         }
         return Number(right.trend === "rialzista") - Number(left.trend === "rialzista");
       });
@@ -234,6 +356,7 @@ function createServerApi(context) {
         entryPrice: focusMarket.entryPrice,
         expectedNetProfitUsdt: focusMarket.expectedNetProfitUsdt ?? null,
         exitReasonCode: focusMarket.exitReasonCode,
+        focusScore: focusMarket.focusScore,
         focusMode,
         focusReason,
         highWaterMark: focusMarket.highWaterMark,
@@ -241,7 +364,11 @@ function createServerApi(context) {
         longMa: focusMarket.ema21_5m,
         macdHistogram: focusMarket.macdHistogram,
         macdLine: focusMarket.macdLine,
+        marketRegime: focusMarket.marketRegime,
         missingIndicators: focusMarket.missingIndicators,
+        opportunityScore: focusMarket.opportunityScore,
+        plannedStopLoss: focusMarket.plannedStopLoss,
+        plannedTakeProfit: focusMarket.plannedTakeProfit,
         projectedNetEdgeBps: focusMarket.projectedNetEdgeBps,
         projectedRiskRewardRatio: focusMarket.projectedRiskRewardRatio,
         projectedRoundTripFeeBps: focusMarket.projectedRoundTripFeeBps,
@@ -250,6 +377,7 @@ function createServerApi(context) {
         rsi: focusMarket.rsi_5m,
         rsi_5m: focusMarket.rsi_5m,
         score: focusMarket.compositeScore,
+        setupQualityScore: focusMarket.setupQualityScore,
         shortExplanation: focusMarket.shortExplanation,
         shortMa: focusMarket.ema9_5m,
         signalLine: focusMarket.signalLine,
@@ -262,6 +390,7 @@ function createServerApi(context) {
         trendLateral: focusMarket.trendLateral,
         trendSlope_1h: focusMarket.trendSlope_1h,
         triggerFired: focusMarket.triggerFired,
+        volumeRatio_5m: focusMarket.volumeRatio_5m,
         volumeSMA20: focusMarket.volumeSMA20,
         warmingUp: focusMarket.warmingUp
       } : {
@@ -281,6 +410,7 @@ function createServerApi(context) {
         entryPrice: null,
         expectedNetProfitUsdt: null,
         exitReasonCode: null,
+        focusScore: null,
         focusMode,
         focusReason,
         highWaterMark: null,
@@ -288,7 +418,11 @@ function createServerApi(context) {
         longMa: null,
         macdHistogram: null,
         macdLine: null,
+        marketRegime: "warmup",
         missingIndicators: ["OHLCV"],
+        opportunityScore: null,
+        plannedStopLoss: null,
+        plannedTakeProfit: null,
         projectedNetEdgeBps: null,
         projectedRiskRewardRatio: null,
         projectedRoundTripFeeBps: null,
@@ -297,6 +431,7 @@ function createServerApi(context) {
         rsi: null,
         rsi_5m: null,
         score: null,
+        setupQualityScore: null,
         shortExplanation: "Il bot non ha ancora dati da mostrare.",
         shortMa: null,
         signalLine: null,
@@ -309,6 +444,7 @@ function createServerApi(context) {
         trendLateral: null,
         trendSlope_1h: null,
         triggerFired: null,
+        volumeRatio_5m: null,
         volumeSMA20: null,
         warmingUp: true
       },
@@ -337,12 +473,16 @@ function createServerApi(context) {
           emaSlow: market.emaSlow,
           entryEngine: market.entryEngine,
           exitReasonCode: market.exitReasonCode,
+          focusScore: market.focusScore,
           isBestCandidate: state.bestCandidateSymbol === market.symbol,
           isInPosition: state.positions.some((position) => position.symbol === market.symbol),
           lastPrice: market.lastPrice,
+          marketRegime: market.marketRegime,
+          opportunityScore: market.opportunityScore,
           reason: market.reason,
           rsi: market.rsi,
           score: market.score,
+          setupQualityScore: market.setupQualityScore,
           signal: market.signal,
           symbol: market.symbol,
           trend: market.trend
