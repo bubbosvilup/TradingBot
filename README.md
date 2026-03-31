@@ -4,7 +4,11 @@ TradingBot e un paper trading bot multi-market in Node.js con dashboard locale, 
 
 Il motore supporta `STRATEGY_MODE=adaptive|trend|range_grid`. In `adaptive` il bot tratta i mercati direzionali con continuation / SFP e prova setup di tipo range-grid long-only quando il regime e laterale; in `range_grid` forza solo la logica di mean reversion sul bordo basso del range.
 
+Il profilo di esecuzione puo inoltre passare da `normal` a `aggressive`: in quel caso il bot abbassa in modo controllato le soglie di score, slope, volume, edge netto e risk/reward. La modalita aggressiva e attivabile sia in live dalla dashboard sia nel replay di Strategy Lab.
+
 Oltre al loop live, il progetto include anche un laboratorio di ricerca: `npm run backtest` scarica dati OHLCV recenti, confronta `adaptive`, `trend` e `range_grid` sugli stessi simboli e salva un report locale in `backtest-report.json`, che la dashboard mostra nella sezione Strategy Lab.
+
+Lo stesso laboratorio puo essere avviato anche dalla dashboard principale: il bot espone un job di backtest in background, salva il report su disco e mostra sia il riepilogo sia i round simulati per ogni modalita.
 
 ## Architettura
 
@@ -56,9 +60,22 @@ Il repository include un `.gitignore` per tenerli fuori dall'indice git.
 3. Esegui `npm run backtest`.
 4. Riavvia o aggiorna la dashboard per vedere il report in Strategy Lab.
 
+## Strategy Lab in UI
+
+Dalla dashboard puoi:
+
+- avviare una ricerca direttamente dal browser
+- scegliere giorni, numero simboli e simboli custom
+- usare la watchlist attuale come base del replay
+- spuntare un replay aggressivo per confrontare le stesse modalita con soglie piu spinte
+- confrontare le modalita `adaptive`, `trend` e `range_grid`
+- ispezionare i round simulati e gli eventi che il bot avrebbe eseguito
+- attivare o disattivare la modalita aggressiva live senza riavviare il bot
+
 ## API locali
 
 - `GET /api/status`: stato completo per la dashboard.
 - `GET /api/trades`: lista trade della sessione.
 - `POST /api/reset`: resetta la sessione paper.
 - `POST /api/btc-filter`: abilita o disabilita il filtro BTC.
+- `POST /api/aggressive-mode`: abilita o disabilita il profilo aggressivo live.

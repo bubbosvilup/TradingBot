@@ -220,6 +220,42 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function getStrategyThresholds(config, state) {
+  const aggressiveModeEnabled = state?.aggressiveModeEnabled === true || config.AGGRESSIVE_MODE_ENABLED === true;
+  const scoreDelta = aggressiveModeEnabled ? Math.max(Number(config.AGGRESSIVE_ENTRY_MIN_SCORE_DELTA || 1), 0) : 0;
+
+  return {
+    aggressiveModeEnabled,
+    entryVolumeMult: aggressiveModeEnabled
+      ? Math.max(0.55, Number(config.ENTRY_VOLUME_MULT || 0.8) - Number(config.AGGRESSIVE_ENTRY_VOLUME_DELTA || 0.15))
+      : Number(config.ENTRY_VOLUME_MULT || 0.8),
+    minExpectedNetEdgeBps: aggressiveModeEnabled
+      ? Math.max(0, Number(config.MIN_EXPECTED_NET_EDGE_BPS || 0) * Number(config.AGGRESSIVE_EDGE_MULT || 0.72))
+      : Number(config.MIN_EXPECTED_NET_EDGE_BPS || 0),
+    minRiskRewardRatio: aggressiveModeEnabled
+      ? Math.max(0.8, Number(config.MIN_RISK_REWARD_RATIO || 1) * Number(config.AGGRESSIVE_RISK_REWARD_MULT || 0.85))
+      : Number(config.MIN_RISK_REWARD_RATIO || 1),
+    minScoreEntry: aggressiveModeEnabled
+      ? Math.max(4, Number(config.MIN_SCORE_ENTRY || 6) - scoreDelta)
+      : Number(config.MIN_SCORE_ENTRY || 6),
+    rangeEntryMinScore: aggressiveModeEnabled
+      ? Math.max(4, Number(config.RANGE_ENTRY_MIN_SCORE || config.MIN_SCORE_ENTRY || 6) - scoreDelta)
+      : Number(config.RANGE_ENTRY_MIN_SCORE || config.MIN_SCORE_ENTRY || 6),
+    rangeRsiMax: aggressiveModeEnabled
+      ? Math.min(60, Number(config.RANGE_RSI_MAX || 40) + Number(config.AGGRESSIVE_RANGE_RSI_BONUS || 6))
+      : Number(config.RANGE_RSI_MAX || 40),
+    sfpEntryMinScore: aggressiveModeEnabled
+      ? Math.max(4, Number(config.SFP_ENTRY_MIN_SCORE || config.MIN_SCORE_ENTRY || 6) - scoreDelta)
+      : Number(config.SFP_ENTRY_MIN_SCORE || config.MIN_SCORE_ENTRY || 6),
+    trendEntryMinScore: aggressiveModeEnabled
+      ? Math.max(4, Number(config.TREND_ENTRY_MIN_SCORE || config.MIN_SCORE_ENTRY || 6) - scoreDelta)
+      : Number(config.TREND_ENTRY_MIN_SCORE || config.MIN_SCORE_ENTRY || 6),
+    trendSlopeMin: aggressiveModeEnabled
+      ? Math.max(0.0001, Number(config.TREND_SLOPE_MIN || 0.001) * Number(config.AGGRESSIVE_TREND_SLOPE_MULT || 0.65))
+      : Number(config.TREND_SLOPE_MIN || 0.001)
+  };
+}
+
 function findSwingLow(candles, lookback = 30, strength = 3) {
   if (!Array.isArray(candles) || candles.length < strength * 2 + 1) {
     return null;
@@ -535,6 +571,7 @@ function createStrategy(context) {
   }
 
   function buildMarketSnapshot(symbol, candleSet) {
+    const thresholds = getStrategyThresholds(config, state);
     const candles_1h = Array.isArray(candleSet?.candles_1h) ? candleSet.candles_1h : [];
     const candles_5m = Array.isArray(candleSet?.candles_5m) ? candleSet.candles_5m : [];
     const candles_1m = Array.isArray(candleSet?.candles_1m) ? candleSet.candles_1m : [];
@@ -553,7 +590,7 @@ function createStrategy(context) {
     const trendBull_1h = ema20_1h !== null && ema50_1h !== null ? ema20_1h > ema50_1h : false;
     const ema20_1h_3ago = ema20Series_1h.length >= 4 ? ema20Series_1h[ema20Series_1h.length - 4] : null;
     const trendSlope_1h = ema20_1h !== null && ema20_1h_3ago !== null && ema20_1h !== 0 ? (ema20_1h - ema20_1h_3ago) / ema20_1h : null;
-    const trendLateral = trendSlope_1h !== null ? trendSlope_1h <= config.TREND_SLOPE_MIN : false;
+    const trendLateral = trendSlope_1h !== null ? trendSlope_1h <= thresholds.trendSlopeMin : false;
     const ema9_5m = calculateEma(closes_5m, config.EMA9_5M_PERIOD);
     const ema21_5m = calculateEma(closes_5m, config.EMA21_5M_PERIOD);
     const rsi_5m = wilderRsi(closes_5m, config.RSI_PERIOD);
@@ -578,7 +615,7 @@ function createStrategy(context) {
 
     const warmingUp = missingIndicators.length > 0;
     const pullbackZoneOk = lastPrice_5m !== null && ema21_5m !== null && atr14_5m !== null ? Math.abs(lastPrice_5m - ema21_5m) <= atr14_5m * 1.0 : false;
-    const entryVolumeReady = currentVolume_5m !== null && volumeSMA20 !== null ? currentVolume_5m >= volumeSMA20 * config.ENTRY_VOLUME_MULT : false;
+    const entryVolumeReady = currentVolume_5m !== null && volumeSMA20 !== null ? currentVolume_5m >= volumeSMA20 * thresholds.entryVolumeMult : false;
     const macdPositive = macd !== null ? macd.histogram > 0 : false;
     const macdImproving = macd !== null && macd.prevHistogram !== null ? macd.histogram >= macd.prevHistogram : false;
     const latestOneMinuteTimestamp = candles_1m.length > 0 ? Number(candles_1m[candles_1m.length - 1][0]) : null;
@@ -593,12 +630,12 @@ function createStrategy(context) {
     const sfpValid = !warmingUp && swingLow !== null && sfpSweep && sfpReclaim && sfpStrongClose && sfpVolumeConfirm;
     const sfpStopLevel = sfpValid ? previousOneMinuteLow : null;
     const triggerFired = previousOneMinuteTimestamp !== null && latestOneMinuteTimestamp !== null && latestOneMinuteTimestamp > previousOneMinuteTimestamp && previousOneMinuteClose !== null && ema9_1m !== null ? (previousOneMinuteClose > ema9_1m || (lastPrice_5m !== null && lastPrice_5m > ema9_1m)) : false;
-    const setupValid = !warmingUp && trendBull_1h && trendSlope_1h !== null && trendSlope_1h > config.TREND_SLOPE_MIN && ema9_5m > ema21_5m && rsi_5m >= config.RSI_MIN && rsi_5m <= config.RSI_MAX && triggerFired;
+    const setupValid = !warmingUp && trendBull_1h && trendSlope_1h !== null && trendSlope_1h > thresholds.trendSlopeMin && ema9_5m > ema21_5m && rsi_5m >= config.RSI_MIN && rsi_5m <= config.RSI_MAX && triggerFired;
     const volumeRatio_5m = currentVolume_5m !== null && volumeSMA20 !== null && volumeSMA20 > 0 ? currentVolume_5m / volumeSMA20 : null;
     const emaGapPct_1h = ema20_1h !== null && ema50_1h !== null && currentPrice ? Math.abs(ema20_1h - ema50_1h) / currentPrice : null;
     const marketRegime = warmingUp
       ? "warmup"
-      : trendBull_1h && trendSlope_1h !== null && trendSlope_1h > config.TREND_SLOPE_MIN
+      : trendBull_1h && trendSlope_1h !== null && trendSlope_1h > thresholds.trendSlopeMin
         ? "trend"
         : trendSlope_1h !== null && Math.abs(trendSlope_1h) <= config.RANGE_SLOPE_MAX && emaGapPct_1h !== null && emaGapPct_1h <= config.RANGE_EMA_GAP_MAX
           ? "range"
@@ -614,11 +651,11 @@ function createStrategy(context) {
     const nearLowerBand = lastPrice_5m !== null && bollinger_5m !== null && atr14_5m !== null
       ? lastPrice_5m <= (bollinger_5m.lower + atr14_5m * 0.35)
       : false;
-    const rangeRsiReady = rsi_5m !== null ? rsi_5m <= config.RANGE_RSI_MAX : false;
+    const rangeRsiReady = rsi_5m !== null ? rsi_5m <= thresholds.rangeRsiMax : false;
     const rangeBounceReady = previousOneMinuteClose !== null && ema9_1m !== null && lastPrice_5m !== null
       ? previousOneMinuteClose > ema9_1m || lastPrice_5m >= previousClose_5m
       : false;
-    const rangeVolumeReady = currentVolume_5m !== null && volumeSMA20 !== null ? currentVolume_5m >= volumeSMA20 * Math.max(0.55, config.ENTRY_VOLUME_MULT - 0.2) : false;
+    const rangeVolumeReady = currentVolume_5m !== null && volumeSMA20 !== null ? currentVolume_5m >= volumeSMA20 * Math.max(0.5, thresholds.entryVolumeMult - 0.2) : false;
     const projectedRangeStopLoss = projectedEntryPrice !== null && atr14_5m !== null
       ? projectedEntryPrice - atr14_5m * Math.max(1.05, config.ATR_STOP_MULT * 0.9)
       : null;
@@ -633,7 +670,7 @@ function createStrategy(context) {
 
     let trendContinuationScore = 0;
     if (trendBull_1h) trendContinuationScore += 2;
-    if (trendSlope_1h !== null && trendSlope_1h > config.TREND_SLOPE_MIN) trendContinuationScore += 1;
+    if (trendSlope_1h !== null && trendSlope_1h > thresholds.trendSlopeMin) trendContinuationScore += 1;
     if (ema9_5m !== null && ema21_5m !== null && ema9_5m > ema21_5m) trendContinuationScore += 1;
     if (rsi_5m !== null && rsi_5m >= config.RSI_MIN && rsi_5m <= config.RSI_MAX) trendContinuationScore += 1;
     if (pullbackZoneOk) trendContinuationScore += 1;
@@ -687,19 +724,19 @@ function createStrategy(context) {
     const trendMetrics = calculateProjectedMetrics(projectedEntryPrice, projectedTrendStopLoss, projectedTrendTakeProfit);
     const sfpMetrics = calculateProjectedMetrics(projectedEntryPrice, projectedSfpStopLoss, projectedSfpTakeProfit);
     const rangeMetrics = calculateProjectedMetrics(projectedEntryPrice, projectedRangeStopLoss, projectedRangeTakeProfit);
-    const trendRiskRewardOk = trendMetrics.riskRewardRatio >= config.MIN_RISK_REWARD_RATIO;
-    const sfpRiskRewardOk = sfpMetrics.riskRewardRatio >= config.MIN_RISK_REWARD_RATIO;
-    const rangeRiskRewardOk = rangeMetrics.riskRewardRatio >= config.MIN_RISK_REWARD_RATIO;
-    const trendNetEdgeOk = trendMetrics.netEdgeBps >= config.MIN_EXPECTED_NET_EDGE_BPS;
-    const sfpNetEdgeOk = sfpMetrics.netEdgeBps >= config.MIN_EXPECTED_NET_EDGE_BPS;
-    const rangeNetEdgeOk = rangeMetrics.netEdgeBps >= config.MIN_EXPECTED_NET_EDGE_BPS;
+    const trendRiskRewardOk = trendMetrics.riskRewardRatio >= thresholds.minRiskRewardRatio;
+    const sfpRiskRewardOk = sfpMetrics.riskRewardRatio >= thresholds.minRiskRewardRatio;
+    const rangeRiskRewardOk = rangeMetrics.riskRewardRatio >= thresholds.minRiskRewardRatio;
+    const trendNetEdgeOk = trendMetrics.netEdgeBps >= thresholds.minExpectedNetEdgeBps;
+    const sfpNetEdgeOk = sfpMetrics.netEdgeBps >= thresholds.minExpectedNetEdgeBps;
+    const rangeNetEdgeOk = rangeMetrics.netEdgeBps >= thresholds.minExpectedNetEdgeBps;
     const trendContinuationValid = setupValid && pullbackZoneOk && macdPositive;
     const strategyMode = config.STRATEGY_MODE || "adaptive";
     const trendModeEnabled = strategyMode !== "range_grid";
     const rangeModeEnabled = strategyMode !== "trend";
-    const trendContinuationEligible = trendModeEnabled && trendContinuationValid && trendRiskRewardOk && trendNetEdgeOk && trendContinuationScore >= config.TREND_ENTRY_MIN_SCORE;
-    const sfpEligible = trendModeEnabled && sfpValid && sfpRiskRewardOk && sfpNetEdgeOk && sfpScore >= config.SFP_ENTRY_MIN_SCORE;
-    const rangeGridEligible = rangeModeEnabled && rangeGridValid && rangeRiskRewardOk && rangeNetEdgeOk && rangeGridScore >= config.RANGE_ENTRY_MIN_SCORE;
+    const trendContinuationEligible = trendModeEnabled && trendContinuationValid && trendRiskRewardOk && trendNetEdgeOk && trendContinuationScore >= thresholds.trendEntryMinScore;
+    const sfpEligible = trendModeEnabled && sfpValid && sfpRiskRewardOk && sfpNetEdgeOk && sfpScore >= thresholds.sfpEntryMinScore;
+    const rangeGridEligible = rangeModeEnabled && rangeGridValid && rangeRiskRewardOk && rangeNetEdgeOk && rangeGridScore >= thresholds.rangeEntryMinScore;
     const hasEligibleEntryPath = trendContinuationEligible || sfpEligible || rangeGridEligible;
 
     const entryCandidates = [];
@@ -731,18 +768,18 @@ function createStrategy(context) {
       rangeBlockers.push(warmupMessage);
     } else {
       if (!trendBull_1h && !positionOpen) trendBlockers.push("Trend 1h non rialzista");
-      if (trendSlope_1h !== null && trendSlope_1h <= config.TREND_SLOPE_MIN) trendBlockers.push(`Trend 1h laterale (slope=${trendSlope_1h.toFixed(4)})`);
+      if (trendSlope_1h !== null && trendSlope_1h <= thresholds.trendSlopeMin) trendBlockers.push(`Trend 1h laterale (slope=${trendSlope_1h.toFixed(4)})`);
       if (!(ema9_5m > ema21_5m)) trendBlockers.push("EMA 5m non allineate al rialzo");
       if (rsi_5m !== null && (rsi_5m < config.RSI_MIN || rsi_5m > config.RSI_MAX)) trendBlockers.push(`RSI fuori range operativo (${rsi_5m.toFixed(2)})`);
       if (!pullbackZoneOk) trendBlockers.push("Prezzo fuori zona di pullback 5m");
       if (!entryVolumeReady) {
-        const volumeBlocker = `Volume 5m insufficiente per ingresso reale (${config.ENTRY_VOLUME_MULT}x SMA richiesto)`;
+        const volumeBlocker = `Volume 5m insufficiente per ingresso reale (${thresholds.entryVolumeMult}x SMA richiesto)`;
         trendBlockers.push(volumeBlocker);
         sfpBlockers.push(volumeBlocker);
       }
       if (!macdPositive) trendBlockers.push("MACD 5m non conferma il trend");
-      if (!trendRiskRewardOk) trendBlockers.push(`Risk/reward insufficiente (${trendMetrics.riskRewardRatio.toFixed(2)}x < ${config.MIN_RISK_REWARD_RATIO}x)`);
-      if (!trendNetEdgeOk) trendBlockers.push(`Edge netto atteso insufficiente (${trendMetrics.netEdgeBps.toFixed(1)}bps < ${config.MIN_EXPECTED_NET_EDGE_BPS}bps)`);
+      if (!trendRiskRewardOk) trendBlockers.push(`Risk/reward insufficiente (${trendMetrics.riskRewardRatio.toFixed(2)}x < ${thresholds.minRiskRewardRatio}x)`);
+      if (!trendNetEdgeOk) trendBlockers.push(`Edge netto atteso insufficiente (${trendMetrics.netEdgeBps.toFixed(1)}bps < ${thresholds.minExpectedNetEdgeBps}bps)`);
       if (!triggerFired) trendBlockers.push("Trigger 1m non confermato su candela chiusa");
       if (!sfpValid) {
         if (swingLow === null) sfpBlockers.push("Nessun swing low 5m valido per SFP");
@@ -751,16 +788,16 @@ function createStrategy(context) {
         else if (!sfpStrongClose) sfpBlockers.push("SFP debole: close 1m non forte");
         else if (!sfpVolumeConfirm) sfpBlockers.push("SFP debole: reclaim senza volume");
       }
-      if (!sfpRiskRewardOk) sfpBlockers.push(`Risk/reward insufficiente (${sfpMetrics.riskRewardRatio.toFixed(2)}x < ${config.MIN_RISK_REWARD_RATIO}x)`);
-      if (!sfpNetEdgeOk) sfpBlockers.push(`Edge netto atteso insufficiente (${sfpMetrics.netEdgeBps.toFixed(1)}bps < ${config.MIN_EXPECTED_NET_EDGE_BPS}bps)`);
+      if (!sfpRiskRewardOk) sfpBlockers.push(`Risk/reward insufficiente (${sfpMetrics.riskRewardRatio.toFixed(2)}x < ${thresholds.minRiskRewardRatio}x)`);
+      if (!sfpNetEdgeOk) sfpBlockers.push(`Edge netto atteso insufficiente (${sfpMetrics.netEdgeBps.toFixed(1)}bps < ${thresholds.minExpectedNetEdgeBps}bps)`);
 
       if (marketRegime !== "range") rangeBlockers.push(`Regime non laterale (${marketRegime})`);
       if (!nearLowerBand) rangeBlockers.push("Prezzo non vicino alla banda bassa di range");
       if (!rangeRsiReady && rsi_5m !== null) rangeBlockers.push(`RSI non abbastanza scarico per range (${rsi_5m.toFixed(2)})`);
       if (!rangeBounceReady) rangeBlockers.push("Range: manca rebound sul trigger corto");
       if (!rangeVolumeReady) rangeBlockers.push("Range: volume di rimbalzo insufficiente");
-      if (!rangeRiskRewardOk) rangeBlockers.push(`Risk/reward insufficiente (${rangeMetrics.riskRewardRatio.toFixed(2)}x < ${config.MIN_RISK_REWARD_RATIO}x)`);
-      if (!rangeNetEdgeOk) rangeBlockers.push(`Edge netto atteso insufficiente (${rangeMetrics.netEdgeBps.toFixed(1)}bps < ${config.MIN_EXPECTED_NET_EDGE_BPS}bps)`);
+      if (!rangeRiskRewardOk) rangeBlockers.push(`Risk/reward insufficiente (${rangeMetrics.riskRewardRatio.toFixed(2)}x < ${thresholds.minRiskRewardRatio}x)`);
+      if (!rangeNetEdgeOk) rangeBlockers.push(`Edge netto atteso insufficiente (${rangeMetrics.netEdgeBps.toFixed(1)}bps < ${thresholds.minExpectedNetEdgeBps}bps)`);
     }
 
     let signal = DECISION_ACTIONS.HOLD;
@@ -776,7 +813,7 @@ function createStrategy(context) {
       decisionState = DECISION_STATES.POSITION_OPEN;
     } else if (marketRegime === "bear") {
       decisionState = DECISION_STATES.TREND_FILTER;
-    } else if (!hasEligibleEntryPath && compositeScore < config.MIN_SCORE_ENTRY) {
+    } else if (!hasEligibleEntryPath && compositeScore < thresholds.minScoreEntry) {
       decisionState = DECISION_STATES.LOW_SCORE;
     } else if (!hasEligibleEntryPath) {
       decisionState = DECISION_STATES.INCOMPLETE_SETUP;
@@ -811,8 +848,8 @@ function createStrategy(context) {
     let reason = getDecisionReason(decisionState, {
       compositeScore,
       entryEngine: entryType,
-      entryVolumeMult: config.ENTRY_VOLUME_MULT,
-      minScoreEntry: config.MIN_SCORE_ENTRY,
+      entryVolumeMult: thresholds.entryVolumeMult,
+      minScoreEntry: thresholds.minScoreEntry,
       missingIndicators
     });
     if ((decisionState === DECISION_STATES.LOW_SCORE || decisionState === DECISION_STATES.INCOMPLETE_SETUP) && entryBlockers.length > 0) {
@@ -898,6 +935,7 @@ function createStrategy(context) {
       entryPrice: currentPosition ? currentPosition.entryPrice : null,
       entryType,
       entryVolumeReady,
+      aggressiveModeEnabled: thresholds.aggressiveModeEnabled,
       executionReady,
       exitReasonCode: null,
       focusScore,
@@ -941,6 +979,7 @@ function createStrategy(context) {
       signal,
       signalLine: macd ? macd.signalLine : null,
       stopLoss: currentPosition ? currentPosition.stopLoss : null,
+      strategyProfile: thresholds.aggressiveModeEnabled ? "aggressive" : "normal",
       swingLow,
       symbol,
       takeProfit: currentPosition ? currentPosition.takeProfit : null,

@@ -25,8 +25,38 @@ function readJson(url) {
   });
 }
 
+function postJson(url, payload) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const request = http.request({
+      hostname: parsedUrl.hostname,
+      method: "POST",
+      path: parsedUrl.pathname,
+      port: parsedUrl.port
+    }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+      });
+      response.on("end", () => {
+        try {
+          resolve({ body: JSON.parse(body), statusCode: response.statusCode });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    request.on("error", reject);
+    request.write(JSON.stringify(payload));
+    request.end();
+  });
+}
+
 async function runServerTests() {
   const state = {
+    aggressiveModeEnabled: false,
     bestCandidateSymbol: "RNDR/USDT",
     botActive: true,
     botStartedAt: "2026-03-30T10:00:00.000Z",
@@ -37,6 +67,7 @@ async function runServerTests() {
     markets: {
       "RNDR/USDT": {
         action: "WAIT",
+        aggressiveModeEnabled: false,
         atr14_5m: 0.12,
         compositeScore: 7,
         currentVolume_5m: 80,
@@ -73,6 +104,7 @@ async function runServerTests() {
         signal: "BUY candidate",
         signalLine: 0.1,
         stopLoss: null,
+        strategyProfile: "normal",
         symbol: "RNDR/USDT",
         takeProfit: null,
         trailingStop: null,
@@ -88,6 +120,21 @@ async function runServerTests() {
     },
     paperTrading: true,
     positions: [],
+    research: {
+      backtestJob: {
+        active: false,
+        error: null,
+        finishedAt: null,
+        logs: [],
+        progressPct: 0,
+        request: null,
+        resultSummary: null,
+        stage: "idle",
+        startedAt: null,
+        symbol: null
+      },
+      backtestReport: null
+    },
     runtime: {
       lastCompletedCycleAt: "2026-03-30T10:05:05.000Z",
       lastCycleDurationMs: 250,
@@ -110,7 +157,8 @@ async function runServerTests() {
     }
   };
 
-  let btcFilterEnabled = true;
+    let btcFilterEnabled = true;
+  let aggressiveModeEnabled = false;
   const context = {
     config: {
       DEFAULT_SYMBOL: "BTC/USDT",
@@ -123,12 +171,33 @@ async function runServerTests() {
       SERVER_PORT: 0,
       WEAK_SYMBOL_RSI_MAX: 45
     },
+    getAggressiveModeEnabled: () => aggressiveModeEnabled,
     getBtcFilterEnabled: () => btcFilterEnabled,
     getSymbols: () => ["RNDR/USDT"],
     logScoped: () => {},
     persistence: { resetSession: () => {} },
+    researchApi: {
+      getBacktestJobStatus: () => ({
+        active: false,
+        progressPct: 0,
+        stage: "idle"
+      }),
+      startBacktest: async () => ({
+        accepted: true,
+        job: {
+          active: true,
+          progressPct: 0,
+          stage: "queued"
+        },
+        ok: true
+      })
+    },
     setBtcFilterEnabled: (value) => {
       btcFilterEnabled = value;
+    },
+    setAggressiveModeEnabled: (value) => {
+      aggressiveModeEnabled = value;
+      state.aggressiveModeEnabled = value;
     },
     state
   };
@@ -148,10 +217,23 @@ async function runServerTests() {
     assert.equal(response.body.decision.decisionState, "wait_volume");
     assert.equal(response.body.decision.entryEngine, "trend_continuation");
     assert.equal(response.body.decision.marketRegime, "trend");
+    assert.equal(response.body.decision.strategyProfile, "normal");
+    assert.equal(response.body.overview.aggressiveModeEnabled, false);
     assert.equal(response.body.overview.btcFilterEnabled, true);
     assert.equal(response.body.watchlist.active.length, 1);
     assert.equal(response.body.runtime.scanCycle, 12);
     assert.equal(response.body.stats.totalClosedRounds, 0);
+    assert.equal(response.body.research.backtestJob.stage, "idle");
+
+    const backtestResponse = await postJson(`http://127.0.0.1:${address.port}/api/backtest/run`, { days: 2 });
+    assert.equal(backtestResponse.statusCode, 202);
+    assert.equal(backtestResponse.body.ok, true);
+    assert.equal(backtestResponse.body.job.stage, "queued");
+
+    const aggressiveResponse = await postJson(`http://127.0.0.1:${address.port}/api/aggressive-mode`, { enabled: true });
+    assert.equal(aggressiveResponse.statusCode, 200);
+    assert.equal(aggressiveResponse.body.ok, true);
+    assert.equal(aggressiveResponse.body.aggressiveModeEnabled, true);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

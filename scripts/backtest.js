@@ -2,10 +2,8 @@ require("dotenv").config();
 
 const fs = require("fs");
 const path = require("path");
-const ccxt = require("ccxt");
 
-const { compareStrategyModes } = require("../src/backtest");
-const { createRuntime } = require("../src/runtime");
+const { printBacktestReport, runBacktestJob } = require("../src/backtest_runner");
 
 function parseSymbols(rawValue) {
   if (!rawValue || typeof rawValue !== "string") {
@@ -25,12 +23,15 @@ function parseSymbols(rawValue) {
   )];
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function buildConfig() {
   return {
+    AGGRESSIVE_EDGE_MULT: Math.max(Number(process.env.AGGRESSIVE_EDGE_MULT || 0.72), 0.1),
+    AGGRESSIVE_ENTRY_MIN_SCORE_DELTA: Math.max(Number(process.env.AGGRESSIVE_ENTRY_MIN_SCORE_DELTA || 1), 0),
+    AGGRESSIVE_ENTRY_VOLUME_DELTA: Math.max(Number(process.env.AGGRESSIVE_ENTRY_VOLUME_DELTA || 0.15), 0),
+    AGGRESSIVE_MODE_ENABLED: (process.env.AGGRESSIVE_MODE_ENABLED || "false").toLowerCase() === "true",
+    AGGRESSIVE_RANGE_RSI_BONUS: Math.max(Number(process.env.AGGRESSIVE_RANGE_RSI_BONUS || 6), 0),
+    AGGRESSIVE_RISK_REWARD_MULT: Math.max(Number(process.env.AGGRESSIVE_RISK_REWARD_MULT || 0.85), 0.1),
+    AGGRESSIVE_TREND_SLOPE_MULT: Math.max(Number(process.env.AGGRESSIVE_TREND_SLOPE_MULT || 0.65), 0.1),
     ATR_PERIOD: 14,
     ATR_STOP_MULT: Number(process.env.ATR_STOP_MULT || 1.5),
     ATR_TP_MULT: Number(process.env.ATR_TP_MULT || 3.0),
@@ -107,129 +108,24 @@ function buildConfig() {
   };
 }
 
-function buildFetchLimits(config) {
-  const days = config.BACKTEST_DAYS;
-  return {
-    candles_1h: Math.max(config.FETCH_LIMIT_1H, Math.ceil(days * 24) + 60),
-    candles_1m: Math.max(config.FETCH_LIMIT_1M, Math.ceil(days * 24 * 60) + 180),
-    candles_5m: Math.max(config.FETCH_LIMIT_5M, Math.ceil(days * 24 * 12) + 80)
-  };
-}
-
-async function resolveSymbols(exchange, config) {
-  const explicitSymbols = parseSymbols(process.env.BACKTEST_SYMBOLS || process.env.SYMBOLS);
-  if (explicitSymbols.length > 0) {
-    return explicitSymbols.slice(0, config.BACKTEST_SYMBOL_LIMIT);
-  }
-
-  const runtime = createRuntime({
-    config,
-    logScoped: () => {},
-    state: { positions: [], watchlist: { recentSwaps: [] } },
-    withTimeout: async (value) => value
-  });
-  const topSymbols = await runtime.fetchTopSymbols(exchange);
-  return topSymbols.slice(0, config.BACKTEST_SYMBOL_LIMIT);
-}
-
-async function fetchSymbolHistories(exchange, symbols, config) {
-  const limits = buildFetchLimits(config);
-  const histories = {};
-
-  for (let index = 0; index < symbols.length; index += config.BACKTEST_FETCH_BATCH_SIZE) {
-    const batch = symbols.slice(index, index + config.BACKTEST_FETCH_BATCH_SIZE);
-    const batchResults = await Promise.all(batch.map(async (symbol) => {
-      const [candles_1h, candles_5m, candles_1m] = await Promise.all([
-        exchange.fetchOHLCV(symbol, "1h", undefined, limits.candles_1h),
-        exchange.fetchOHLCV(symbol, "5m", undefined, limits.candles_5m),
-        exchange.fetchOHLCV(symbol, "1m", undefined, limits.candles_1m)
-      ]);
-
-      return {
-        candles_1h,
-        candles_1m,
-        candles_5m,
-        symbol
-      };
-    }));
-
-    for (const result of batchResults) {
-      histories[result.symbol] = {
-        candles_1h: result.candles_1h,
-        candles_1m: result.candles_1m,
-        candles_5m: result.candles_5m
-      };
-      console.log(`fetched ${result.symbol} | 1h=${result.candles_1h.length} 5m=${result.candles_5m.length} 1m=${result.candles_1m.length}`);
-    }
-
-    if (index + config.BACKTEST_FETCH_BATCH_SIZE < symbols.length && config.BACKTEST_FETCH_DELAY_MS > 0) {
-      await sleep(config.BACKTEST_FETCH_DELAY_MS);
-    }
-  }
-
-  return histories;
-}
-
-function printReport(report) {
-  console.log("");
-  console.log(`Backtest generated: ${report.generatedAt}`);
-  console.log(`Symbols: ${report.symbols.join(", ")}`);
-  console.log(`Recommended mode: ${report.recommendedMode}`);
-  for (const mode of report.modes) {
-    console.log(
-      [
-        `${mode.strategyMode}:`,
-        `pnl=${mode.summary.sessionPnl.toFixed(2)} USDT`,
-        `pnl_pct=${mode.summary.pnlPct.toFixed(2)}%`,
-        `win_rate=${mode.stats.winRatePct.toFixed(2)}%`,
-        `pf=${mode.stats.profitFactor.toFixed(2)}`,
-        `drawdown=${mode.stats.maxDrawdownPct.toFixed(2)}%`,
-        `rounds=${mode.stats.totalClosedRounds}`,
-        `score=${mode.recommendationScore.toFixed(2)}`
-      ].join(" | ")
-    );
-  }
-}
-
 async function main() {
   const config = buildConfig();
-  const exchangeClass = ccxt[config.EXCHANGE_ID];
-  if (!exchangeClass) {
-    throw new Error(`Unsupported exchange: ${config.EXCHANGE_ID}`);
-  }
-
-  const exchange = new exchangeClass({
-    enableRateLimit: true,
-    options: {
-      defaultType: "spot"
+  const activeSymbols = parseSymbols(process.env.BACKTEST_SYMBOLS || process.env.SYMBOLS);
+  const report = await runBacktestJob({
+    activeSymbols,
+    baseConfig: config,
+    hotPool: [],
+    log: (message) => console.log(message),
+    request: {
+      aggressiveMode: config.AGGRESSIVE_MODE_ENABLED,
+      symbols: activeSymbols.join(","),
+      useActiveWatchlist: activeSymbols.length > 0
     }
   });
 
-  try {
-    await exchange.loadMarkets();
-    let symbols = await resolveSymbols(exchange, config);
-    if (config.BACKTEST_BTC_FILTER_ENABLED && !symbols.includes("BTC/USDT")) {
-      symbols = ["BTC/USDT", ...symbols].slice(0, Math.max(config.BACKTEST_SYMBOL_LIMIT, 2));
-    }
-    if (symbols.length === 0) {
-      throw new Error("No symbols available for backtest.");
-    }
-
-    console.log(`Running backtest on ${symbols.length} symbols for ~${config.BACKTEST_DAYS} day(s)...`);
-    const symbolHistories = await fetchSymbolHistories(exchange, symbols, config);
-    const report = compareStrategyModes({
-      baseConfig: config,
-      symbolHistories
-    });
-
-    fs.writeFileSync(config.BACKTEST_REPORT_FILE, JSON.stringify(report, null, 2));
-    printReport(report);
-    console.log(`Saved report to ${config.BACKTEST_REPORT_FILE}`);
-  } finally {
-    if (typeof exchange.close === "function") {
-      await exchange.close();
-    }
-  }
+  fs.writeFileSync(config.BACKTEST_REPORT_FILE, JSON.stringify(report, null, 2));
+  printBacktestReport(report);
+  console.log(`Saved report to ${config.BACKTEST_REPORT_FILE}`);
 }
 
 main().catch((error) => {

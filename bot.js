@@ -4,6 +4,7 @@ const path = require("path");
 const ccxt = require("ccxt");
 
 const { createPersistence } = require("./src/persistence");
+const { createResearchApi } = require("./src/research");
 const { createRuntime } = require("./src/runtime");
 const { createServerApi } = require("./src/server");
 const { createStrategy } = require("./src/strategy");
@@ -28,11 +29,23 @@ function parseSymbols(rawValue) {
 
 const configuredSymbols = parseSymbols(process.env.SYMBOLS);
 const config = {
+  AGGRESSIVE_EDGE_MULT: Math.max(Number(process.env.AGGRESSIVE_EDGE_MULT || 0.72), 0.1),
+  AGGRESSIVE_ENTRY_MIN_SCORE_DELTA: Math.max(Number(process.env.AGGRESSIVE_ENTRY_MIN_SCORE_DELTA || 1), 0),
+  AGGRESSIVE_ENTRY_VOLUME_DELTA: Math.max(Number(process.env.AGGRESSIVE_ENTRY_VOLUME_DELTA || 0.15), 0),
+  AGGRESSIVE_MODE_ENABLED: (process.env.AGGRESSIVE_MODE_ENABLED || "false").toLowerCase() === "true",
+  AGGRESSIVE_RANGE_RSI_BONUS: Math.max(Number(process.env.AGGRESSIVE_RANGE_RSI_BONUS || 6), 0),
+  AGGRESSIVE_RISK_REWARD_MULT: Math.max(Number(process.env.AGGRESSIVE_RISK_REWARD_MULT || 0.85), 0.1),
+  AGGRESSIVE_TREND_SLOPE_MULT: Math.max(Number(process.env.AGGRESSIVE_TREND_SLOPE_MULT || 0.65), 0.1),
   ATR_PERIOD: 14,
   ATR_STOP_MULT: Number(process.env.ATR_STOP_MULT || 1.5),
   ATR_TP_MULT: Number(process.env.ATR_TP_MULT || 3.0),
   ATR_TRAIL_MULT: Number(process.env.ATR_TRAIL_MULT || 2.0),
+  BACKTEST_BTC_FILTER_ENABLED: (process.env.BACKTEST_BTC_FILTER_ENABLED || process.env.BTC_FILTER_ENABLED || "true").toLowerCase() === "true",
+  BACKTEST_DAYS: Math.max(Number(process.env.BACKTEST_DAYS || 3), 1),
+  BACKTEST_FETCH_BATCH_SIZE: Math.max(Number(process.env.BACKTEST_FETCH_BATCH_SIZE || 2), 1),
+  BACKTEST_FETCH_DELAY_MS: Math.max(Number(process.env.BACKTEST_FETCH_DELAY_MS || 800), 0),
   BACKTEST_REPORT_FILE: path.join(__dirname, "backtest-report.json"),
+  BACKTEST_SYMBOL_LIMIT: Math.max(Number(process.env.BACKTEST_SYMBOL_LIMIT || 6), 1),
   BATCH_DELAY_MS: Math.max(Number(process.env.BATCH_DELAY_MS || 500), 0),
   BATCH_SIZE: Math.max(Number(process.env.BATCH_SIZE || 5), 1),
   DEFAULT_SYMBOL: (process.env.SYMBOL || "BTC/USDT").trim(),
@@ -134,6 +147,7 @@ let lastConsoleLogAt = 0;
 let lastConsoleLogMessage = "";
 
 const state = {
+  aggressiveModeEnabled: config.AGGRESSIVE_MODE_ENABLED,
   bestCandidateSymbol: null,
   botActive: false,
   botStartedAt: null,
@@ -152,6 +166,18 @@ const state = {
     scanCycle: 0
   },
   research: {
+    backtestJob: {
+      active: false,
+      error: null,
+      finishedAt: null,
+      logs: [],
+      progressPct: 0,
+      request: null,
+      resultSummary: null,
+      stage: "idle",
+      startedAt: null,
+      symbol: null
+    },
     backtestReport: null
   },
   strategyName: config.STRATEGY_NAME,
@@ -215,9 +241,15 @@ const context = {
   config,
   formatAmount,
   formatLogNumber,
+  getAggressiveModeEnabled: () => state.aggressiveModeEnabled === true,
   getBtcFilterEnabled: () => btcFilterEnabled,
+  getNowIso: () => new Date().toISOString(),
+  getNowMs: () => Date.now(),
   getSymbols: () => SYMBOLS,
   logScoped,
+  setAggressiveModeEnabled: (value) => {
+    state.aggressiveModeEnabled = value === true;
+  },
   setBtcFilterEnabled: (value) => {
     btcFilterEnabled = value;
   },
@@ -229,6 +261,7 @@ context.strategy = createStrategy(context);
 context.persistence = createPersistence(context);
 context.serverApi = createServerApi(context);
 context.runtime = createRuntime(context);
+context.researchApi = createResearchApi(context);
 context.onReset = context.runtime.resetTransientState;
 
 function getBlockerPreview(market, limit = 2) {
@@ -318,7 +351,6 @@ async function main() {
   let allCandidates = [];
   let lastCompletedCycleAt = Date.now();
   let lastHotPoolRefreshAt = Date.now();
-  let lastWeakRotationAt = Date.now();
   let lastRealtimeSymbolsLabel = "";
   let lastWatchdogLogAt = 0;
 
@@ -356,6 +388,43 @@ async function main() {
     logScoped("WATCHLIST", `pool_loaded | count=${allCandidates.length}`);
     logScoped("WATCHLIST", `dynamic_loaded | count=${SYMBOLS.length}`);
     logScoped("WATCHLIST", `symbols | ${SYMBOLS.join(", ")}`);
+  }
+
+  const rotateWeakWatchlist = () => {
+    if (config.HAS_STATIC_SYMBOLS || !state.botActive || SYMBOLS.length === 0 || allCandidates.length === 0) {
+      return;
+    }
+
+    const focusMarket = context.serverApi.selectFocusMarket();
+    const nextSymbols = context.runtime.rotateWeakSymbols(
+      state.markets,
+      allCandidates,
+      SYMBOLS,
+      focusMarket ? focusMarket.symbol : null,
+      {
+        includeBtc: btcFilterEnabled,
+        weakRsiMax: config.WEAK_SYMBOL_RSI_MAX
+      }
+    );
+
+    if (Array.isArray(nextSymbols) && nextSymbols.length > 0) {
+      SYMBOLS = nextSymbols;
+      state.watchlist.activeSymbols = [...SYMBOLS];
+      state.watchlist.source = SYMBOLS_SOURCE;
+    }
+  };
+
+  if (!config.HAS_STATIC_SYMBOLS) {
+    const weakRotationTimer = setInterval(() => {
+      try {
+        rotateWeakWatchlist();
+      } catch (error) {
+        logScoped("WATCHLIST", `rotate_error | message=${error.message}`, { dedupe: false });
+      }
+    }, config.WEAK_SYMBOL_ROTATION_MS);
+    if (typeof weakRotationTimer.unref === "function") {
+      weakRotationTimer.unref();
+    }
   }
 
   const initialRealtimeSymbols = [...context.runtime.selectRealtimeSymbols(SYMBOLS)];
@@ -444,7 +513,7 @@ async function main() {
 
         if (management.shouldExit && management.exitReasonCode) {
           symbolsToClose.push({ exitReasonCode: management.exitReasonCode, market: positionMarket });
-        } else if (!management.shouldPartialExit && positionMarket.action === "BUY" && positionMarket.compositeScore >= config.MIN_SCORE_ENTRY) {
+        } else if (!management.shouldPartialExit && positionMarket.action === "BUY") {
           const neutralBlocked = btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(positionMarket.symbol);
           if (btcFilterEnabled && btcRegime === "risk-off") {
             logScoped("GUARD", `btc_regime_risk_off | scaling_blocked | symbol=${position.symbol}`);
@@ -483,7 +552,7 @@ async function main() {
 
       if (state.positions.length < config.MAX_CONCURRENT_POSITIONS && !positionClosedThisCycle && state.bestCandidateSymbol) {
         const bestMarket = state.markets[state.bestCandidateSymbol];
-        if (bestMarket && bestMarket.action === "BUY" && bestMarket.compositeScore >= config.MIN_SCORE_ENTRY) {
+        if (bestMarket && bestMarket.action === "BUY") {
           const neutralBlocked = btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(bestMarket.symbol);
           if (btcFilterEnabled && btcRegime === "risk-off") {
             logScoped("GUARD", "btc_regime_risk_off | entry_blocked");
@@ -503,21 +572,6 @@ async function main() {
       }
 
       logCycleSummary(scanCycle, realtimeSymbols);
-
-      if (!config.HAS_STATIC_SYMBOLS && Date.now() - lastWeakRotationAt >= config.WEAK_SYMBOL_ROTATION_MS) {
-        lastWeakRotationAt = Date.now();
-        const focusMarket = context.serverApi.selectFocusMarket();
-        SYMBOLS = context.runtime.rotateWeakSymbols(
-          state.markets,
-          allCandidates,
-          SYMBOLS,
-          focusMarket ? focusMarket.symbol : null,
-          {
-            includeBtc: btcFilterEnabled,
-            weakRsiMax: config.WEAK_SYMBOL_RSI_MAX
-          }
-        );
-      }
       state.watchlist.activeSymbols = [...SYMBOLS];
       state.watchlist.source = SYMBOLS_SOURCE;
     } catch (error) {

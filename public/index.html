@@ -221,6 +221,32 @@
                 <h2>Ricerca modalita</h2>
               </div>
             </div>
+            <div class="research-toolbar">
+              <label class="inline-field" for="backtest-days">
+                <span>Giorni</span>
+                <input id="backtest-days" type="number" min="1" max="30" value="3" />
+              </label>
+              <label class="inline-field" for="backtest-symbol-limit">
+                <span>Simboli</span>
+                <input id="backtest-symbol-limit" type="number" min="2" max="20" value="6" />
+              </label>
+              <label class="inline-field inline-field-wide" for="backtest-symbols">
+                <span>Simboli custom</span>
+                <input id="backtest-symbols" type="text" placeholder="BTC/USDT,ETH/USDT" />
+              </label>
+              <label class="toggle-control" for="backtest-use-watchlist-toggle">
+                <span>Usa watchlist attuale</span>
+                <input id="backtest-use-watchlist-toggle" type="checkbox" checked />
+                <span class="toggle-pill" aria-hidden="true"></span>
+              </label>
+              <label class="toggle-control" for="backtest-aggressive-toggle">
+                <span>Replay aggressivo</span>
+                <input id="backtest-aggressive-toggle" type="checkbox" />
+                <span class="toggle-pill" aria-hidden="true"></span>
+              </label>
+              <button id="run-backtest-button" type="button" class="secondary-button">Esegui ricerca</button>
+            </div>
+            <p class="note" id="backtest-run-status">La ricerca strategica puo essere avviata direttamente da qui.</p>
             <dl class="facts compact-facts" id="research-summary"></dl>
             <div class="table-wrap compact-table-wrap">
               <table>
@@ -241,6 +267,28 @@
                 </tbody>
               </table>
             </div>
+            <div class="research-mode-strip">
+              <div class="chip-row chip-row-left" id="research-mode-chips"></div>
+            </div>
+            <div class="table-wrap compact-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Apertura</th>
+                    <th>Simbolo</th>
+                    <th>Engine</th>
+                    <th>Durata</th>
+                    <th>PnL</th>
+                    <th>Dettagli</th>
+                  </tr>
+                </thead>
+                <tbody id="simulated-rounds-body">
+                  <tr>
+                    <td colspan="6">Esegui una ricerca per vedere i round simulati.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <div class="table-wrap compact-table-wrap">
               <table>
                 <thead>
@@ -253,10 +301,13 @@
                 </thead>
                 <tbody id="research-symbols-body">
                   <tr>
-                    <td colspan="4">Esegui `npm run backtest` per popolare questa vista.</td>
+                    <td colspan="4">Esegui una ricerca per vedere i simboli migliori.</td>
                   </tr>
                 </tbody>
               </table>
+            </div>
+            <div class="timeline research-log" id="backtest-log">
+              <p class="empty-state">Nessun log di ricerca disponibile.</p>
             </div>
           </section>
 
@@ -272,6 +323,11 @@
               <label class="toggle-control" for="btc-filter-toggle">
                 <span>Filtro BTC</span>
                 <input id="btc-filter-toggle" type="checkbox" />
+                <span class="toggle-pill" aria-hidden="true"></span>
+              </label>
+              <label class="toggle-control" for="aggressive-mode-toggle">
+                <span>Modalita aggressiva</span>
+                <input id="aggressive-mode-toggle" type="checkbox" />
                 <span class="toggle-pill" aria-hidden="true"></span>
               </label>
               <button id="reset-button" type="button">Reset sessione</button>

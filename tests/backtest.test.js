@@ -86,6 +86,13 @@ function buildReplayEligibleHistories(symbol, startPrice, hourlyDrift) {
 
 function runBacktestTests() {
   const config = {
+    AGGRESSIVE_EDGE_MULT: 0.72,
+    AGGRESSIVE_ENTRY_MIN_SCORE_DELTA: 1,
+    AGGRESSIVE_ENTRY_VOLUME_DELTA: 0.15,
+    AGGRESSIVE_MODE_ENABLED: false,
+    AGGRESSIVE_RANGE_RSI_BONUS: 6,
+    AGGRESSIVE_RISK_REWARD_MULT: 0.85,
+    AGGRESSIVE_TREND_SLOPE_MULT: 0.65,
     ATR_PERIOD: 14,
     ATR_STOP_MULT: 1.5,
     ATR_TP_MULT: 3.0,
@@ -158,11 +165,19 @@ function runBacktestTests() {
   });
 
   assert.equal(report.symbolCount, 2);
+  assert.equal(report.strategyProfile, "normal");
   assert.equal(report.modes.length, 3);
   assert.ok(["adaptive", "trend", "range_grid"].includes(report.recommendedMode));
   assert.ok(report.modes.some((mode) => mode.stats.totalClosedRounds > 0));
   assert.ok(report.modes.some((mode) => mode.summary.buyReadyCount > 0));
+  assert.ok(report.modes.some((mode) => Array.isArray(mode.rounds) && mode.rounds.length > 0));
   assert.ok(report.modes[0].timeline.points > 0);
+
+  const aggressiveReport = compareStrategyModes({
+    baseConfig: { ...config, AGGRESSIVE_MODE_ENABLED: true },
+    symbolHistories: histories
+  });
+  assert.equal(aggressiveReport.strategyProfile, "aggressive");
 }
 
 module.exports = {

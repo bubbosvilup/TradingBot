@@ -107,6 +107,7 @@ function createServerApi(context) {
       lastPoolRefreshAt: state.watchlist?.lastPoolRefreshAt || null,
       lastRotationAt: state.watchlist?.lastRotationAt || null,
       recentSwaps: Array.isArray(state.watchlist?.recentSwaps) ? state.watchlist.recentSwaps : [],
+      rotationCadenceMs: config.WEAK_SYMBOL_ROTATION_MS,
       source: state.watchlist?.source || "dynamic",
       weakThresholdRsi: state.watchlist?.weakThresholdRsi ?? config.WEAK_SYMBOL_RSI_MAX
     };
@@ -345,6 +346,7 @@ function createServerApi(context) {
       },
       decision: focusMarket ? {
         action: focusMarket.displayAction,
+        aggressiveModeEnabled: state.aggressiveModeEnabled === true,
         atr14_5m: focusMarket.atr14_5m,
         compositeScore: focusMarket.compositeScore,
         currentVolume_5m: focusMarket.currentVolume_5m,
@@ -388,6 +390,7 @@ function createServerApi(context) {
         signalLine: focusMarket.signalLine,
         stopLoss: focusMarket.stopLoss,
         strategy: state.strategyName,
+        strategyProfile: focusMarket.strategyProfile || (state.aggressiveModeEnabled === true ? "aggressive" : "normal"),
         symbol: focusMarket.symbol,
         takeProfit: focusMarket.takeProfit,
         trailingStop: focusMarket.trailingStop,
@@ -400,6 +403,7 @@ function createServerApi(context) {
         warmingUp: focusMarket.warmingUp
       } : {
         action: "HOLD",
+        aggressiveModeEnabled: state.aggressiveModeEnabled === true,
         compositeScore: null,
         currentVolume_5m: null,
         decisionState: "warmup",
@@ -442,6 +446,7 @@ function createServerApi(context) {
         signalLine: null,
         stopLoss: null,
         strategy: state.strategyName,
+        strategyProfile: state.aggressiveModeEnabled === true ? "aggressive" : "normal",
         symbol: null,
         takeProfit: null,
         trailingStop: null,
@@ -473,6 +478,7 @@ function createServerApi(context) {
         }
 
         return {
+          aggressiveModeEnabled: state.aggressiveModeEnabled === true,
           decisionState: market.decisionState,
           emaFast: market.emaFast,
           emaSlow: market.emaSlow,
@@ -489,12 +495,14 @@ function createServerApi(context) {
           score: market.score,
           setupQualityScore: market.setupQualityScore,
           signal: market.signal,
+          strategyProfile: market.strategyProfile || (state.aggressiveModeEnabled === true ? "aggressive" : "normal"),
           symbol: market.symbol,
           trend: market.trend
         };
       }),
       overview: {
         activeCount: state.positions.length,
+        aggressiveModeEnabled: state.aggressiveModeEnabled === true,
         bestCandidateSymbol: state.bestCandidateSymbol,
         botActive: state.botActive,
         btcFilterEnabled: context.getBtcFilterEnabled(),
@@ -518,6 +526,7 @@ function createServerApi(context) {
         usdtBalance: state.usdtBalance
       },
       runtime: {
+        aggressiveModeEnabled: state.aggressiveModeEnabled === true,
         lastCompletedCycleAt: state.runtime?.lastCompletedCycleAt || null,
         lastCycleDurationMs: state.runtime?.lastCycleDurationMs ?? null,
         realtimeSymbols: state.runtime?.realtimeSymbols || [],
@@ -525,6 +534,7 @@ function createServerApi(context) {
         scanCycle: state.runtime?.scanCycle ?? 0
       },
       research: {
+        backtestJob: context.researchApi?.getBacktestJobStatus ? context.researchApi.getBacktestJobStatus() : null,
         backtestReport: state.research?.backtestReport || null
       },
       stats,
@@ -590,6 +600,48 @@ function createServerApi(context) {
       }
       if (request.method === "GET" && url.pathname === "/api/trades") {
         sendJson(response, 200, { trades: state.trades });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/backtest/status") {
+        sendJson(response, 200, {
+          job: context.researchApi?.getBacktestJobStatus ? context.researchApi.getBacktestJobStatus() : null,
+          report: state.research?.backtestReport || null
+        });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/backtest/run") {
+        try {
+          const body = await readJsonBody(request);
+          const result = await context.researchApi.startBacktest(body || {});
+          if (!result.ok && result.reason === "already_running") {
+            sendJson(response, 409, result);
+            return;
+          }
+          sendJson(response, 202, result);
+        } catch (error) {
+          sendJson(response, 400, { message: error.message, ok: false });
+        }
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/aggressive-mode") {
+        try {
+          const body = await readJsonBody(request);
+          if (typeof body.enabled !== "boolean") {
+            sendJson(response, 400, { ok: false, message: "Field 'enabled' must be boolean." });
+            return;
+          }
+          if (typeof context.setAggressiveModeEnabled !== "function") {
+            sendJson(response, 500, { ok: false, message: "Aggressive mode control unavailable." });
+            return;
+          }
+          context.setAggressiveModeEnabled(body.enabled);
+          sendJson(response, 200, {
+            aggressiveModeEnabled: typeof context.getAggressiveModeEnabled === "function" ? context.getAggressiveModeEnabled() : state.aggressiveModeEnabled === true,
+            ok: true
+          });
+        } catch (error) {
+          sendJson(response, 400, { ok: false, message: error.message });
+        }
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/reset") {

@@ -334,6 +334,7 @@ body {
 .token-meta-row,
 .timeline-title-row,
 .controls-row,
+.research-toolbar,
 .symbol-cell,
 .trade-action-cell,
 .market-filters,
@@ -364,6 +365,10 @@ body {
 
 .chip-row {
   justify-content: flex-end;
+}
+
+.chip-row-left {
+  justify-content: flex-start;
 }
 
 .chip-button {
@@ -418,6 +423,59 @@ input[type="search"] {
   border-radius: 12px;
   border: 1px solid var(--line-strong);
   background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+}
+
+input[type="number"],
+input[type="text"] {
+  min-width: 0;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+}
+
+.research-toolbar {
+  margin-bottom: 14px;
+  align-items: end;
+}
+
+.research-mode-strip {
+  margin-top: 14px;
+}
+
+.inline-field {
+  display: grid;
+  gap: 6px;
+  min-width: 92px;
+  flex: 0 0 auto;
+}
+
+.inline-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inline-field-wide {
+  flex: 1 1 280px;
+}
+
+.research-log {
+  margin-top: 14px;
+}
+
+.log-line {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.log-line strong {
   color: var(--text);
 }
 

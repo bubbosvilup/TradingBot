@@ -18,6 +18,7 @@ function uniqueSortedTimestamps(histories) {
 
 function createReplayState(config, symbols) {
   return {
+    aggressiveModeEnabled: config.AGGRESSIVE_MODE_ENABLED === true,
     bestCandidateSymbol: null,
     botActive: true,
     botStartedAt: null,
@@ -145,18 +146,46 @@ function summarizeRounds(trades) {
 
   return Array.from(grouped.values()).map((events) => {
     const sorted = [...events].sort((left, right) => new Date(left.time) - new Date(right.time));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const buys = sorted.filter((event) => event.action === "BUY");
+    const totalBtc = buys.reduce((sum, event) => sum + (event.btcAmount || 0), 0);
+    const totalUsdt = buys.reduce((sum, event) => sum + (event.usdtAmount || ((event.price || 0) * (event.btcAmount || 0))), 0);
     const realizedPnl = sorted.reduce((sum, event) => sum + (event.netPnlUsdt || 0), 0);
     const totalFees = sorted.reduce((sum, event) => sum + (event.feePaid || 0), 0);
     const totalSlippage = sorted.reduce((sum, event) => sum + (event.slippagePaid || 0), 0);
     const closed = sorted.some((event) => event.action === "SELL_FULL");
+    const startTime = first?.time || null;
+    const endTime = last?.time || null;
+    const durationMs = startTime && endTime ? Math.max(0, new Date(endTime).getTime() - new Date(startTime).getTime()) : 0;
     return {
       closed,
-      entryEngine: sorted[0]?.entryEngine || sorted[0]?.entryType || "unknown",
+      durationMinutes: durationMs / 60000,
+      endTime,
+      entryEngine: first?.entryEngine || first?.entryType || "unknown",
+      entryReason: first?.reason || null,
+      entryShortExplanation: first?.explanationShort || null,
+      eventCount: sorted.length,
+      events: sorted.map((event) => ({
+        action: event.action,
+        decisionState: event.decisionState || null,
+        expectedNetProfitUsdt: event.expectedNetProfitUsdt ?? null,
+        feePaid: event.feePaid || 0,
+        netPnlUsdt: event.netPnlUsdt ?? null,
+        price: event.price ?? null,
+        reason: event.reason || null,
+        slippagePaid: event.slippagePaid || 0,
+        time: event.time
+      })),
+      exitPrice: closed ? (last?.price ?? null) : null,
+      lastReason: last?.reason || null,
       realizedPnl,
-      symbol: sorted[0]?.symbol || "n/a",
+      startTime,
+      symbol: first?.symbol || "n/a",
       totalFees,
       totalSlippage,
-      tradeId: sorted[0]?.tradeId || null
+      tradeId: first?.tradeId || null,
+      weightedEntryPrice: totalBtc > 0 ? totalUsdt / totalBtc : (first?.price ?? null)
     };
   });
 }
@@ -283,7 +312,7 @@ function replayStrategyMode(options) {
 
       if (management.shouldExit && management.exitReasonCode) {
         symbolsToClose.push({ exitReasonCode: management.exitReasonCode, market: positionMarket });
-      } else if (!management.shouldPartialExit && positionMarket.action === "BUY" && positionMarket.compositeScore >= context.config.MIN_SCORE_ENTRY) {
+      } else if (!management.shouldPartialExit && positionMarket.action === "BUY") {
         const neutralBlocked = context.getBtcFilterEnabled() && btcRegime === "neutral" && !neutralEligibleSymbols.has(positionMarket.symbol);
         if (!(context.getBtcFilterEnabled() && btcRegime === "risk-off") && !neutralBlocked) {
           const previousEntryCount = position.entryCount;
@@ -310,7 +339,7 @@ function replayStrategyMode(options) {
 
     if (context.state.positions.length < context.config.MAX_CONCURRENT_POSITIONS && !positionClosedThisCycle && context.state.bestCandidateSymbol) {
       const bestMarket = markets[context.state.bestCandidateSymbol];
-      if (bestMarket && bestMarket.action === "BUY" && bestMarket.compositeScore >= context.config.MIN_SCORE_ENTRY) {
+      if (bestMarket && bestMarket.action === "BUY") {
         const neutralBlocked = context.getBtcFilterEnabled() && btcRegime === "neutral" && !neutralEligibleSymbols.has(bestMarket.symbol);
         if (!(context.getBtcFilterEnabled() && btcRegime === "risk-off") && !neutralBlocked) {
           const countBefore = context.state.positions.length;
@@ -339,6 +368,8 @@ function replayStrategyMode(options) {
   const stats = context.serverApi.getSessionStats();
   const portfolioValue = context.serverApi.getPortfolioValue();
   const symbolBreakdown = buildSymbolBreakdown(context.state.trades);
+  const rounds = summarizeRounds(context.state.trades)
+    .sort((left, right) => new Date(right.startTime || 0) - new Date(left.startTime || 0));
   const initialBalance = context.config.INITIAL_USDT_BALANCE;
 
   return {
@@ -371,6 +402,8 @@ function replayStrategyMode(options) {
       sessionPnl: portfolioValue - initialBalance,
       waitCount
     },
+    rounds,
+    strategyProfile: context.state.aggressiveModeEnabled ? "aggressive" : "normal",
     symbolBreakdown,
     symbols: [...symbols],
     timeline: {
@@ -407,6 +440,7 @@ function compareStrategyModes(options) {
       recommendedModeScore: recommended?.recommendationScore ?? null
     },
     recommendedMode: recommended?.strategyMode || null,
+    strategyProfile: baseConfig.AGGRESSIVE_MODE_ENABLED === true ? "aggressive" : "normal",
     symbolCount: symbols.length,
     symbols,
     timeframe: "1h/5m/1m replay",
