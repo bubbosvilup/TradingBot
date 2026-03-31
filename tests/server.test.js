@@ -81,15 +81,33 @@ async function runServerTests() {
     },
     paperTrading: true,
     positions: [],
+    runtime: {
+      lastCompletedCycleAt: "2026-03-30T10:05:05.000Z",
+      lastCycleDurationMs: 250,
+      realtimeSymbols: ["RNDR/USDT"],
+      restSymbolCount: 0,
+      scanCycle: 12
+    },
     strategyName: "mtf-trend-following-1h-5m-1m",
     trades: [],
-    usdtBalance: 100
+    usdtBalance: 100,
+    watchlist: {
+      activeSymbols: ["RNDR/USDT"],
+      hotPool: ["RNDR/USDT", "BTC/USDT"],
+      lastPoolRefreshAt: "2026-03-30T10:04:00.000Z",
+      lastRotationAt: "2026-03-30T10:04:30.000Z",
+      lastRotationSummary: null,
+      recentSwaps: [],
+      source: "dynamic",
+      weakThresholdRsi: 45
+    }
   };
 
   let btcFilterEnabled = true;
   const context = {
     config: {
       DEFAULT_SYMBOL: "BTC/USDT",
+      EXIT_FEE_BPS: 10,
       INITIAL_USDT_BALANCE: 100,
       MAX_CONCURRENT_POSITIONS: 3,
       MAX_POSITION_EXPOSURE_PCT: 0.85,
@@ -122,6 +140,8 @@ async function runServerTests() {
     assert.equal(response.body.decision.decisionState, "wait_volume");
     assert.equal(response.body.decision.entryEngine, "trend_continuation");
     assert.equal(response.body.overview.btcFilterEnabled, true);
+    assert.equal(response.body.watchlist.active.length, 1);
+    assert.equal(response.body.runtime.scanCycle, 12);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

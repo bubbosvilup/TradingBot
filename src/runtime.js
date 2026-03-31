@@ -2,8 +2,6 @@
 
 function createRuntime(context) {
   const { config, state } = context;
-  const recentlyDropped = new Set();
-  const recentlyDroppedExpiry = new Map();
   const symbolCooldown = new Map();
   const recentlyExited = new Set();
   const recentlyExitedExpiry = new Map();
@@ -14,6 +12,7 @@ function createRuntime(context) {
   let wsDisabledUntil = 0;
   let wsLastDisabledLogAt = 0;
   let watchlistRotationCycle = 0;
+  let hotPoolCursor = 0;
   let currentScanCycle = 0;
   let lastWsSubscribeTime = 0;
 
@@ -22,8 +21,6 @@ function createRuntime(context) {
   }
 
   function resetTransientState() {
-    recentlyDropped.clear();
-    recentlyDroppedExpiry.clear();
     symbolCooldown.clear();
     recentlyExited.clear();
     recentlyExitedExpiry.clear();
@@ -33,16 +30,18 @@ function createRuntime(context) {
     wsDisabledUntil = 0;
     wsLastDisabledLogAt = 0;
     watchlistRotationCycle = 0;
+    hotPoolCursor = 0;
     currentScanCycle = 0;
     lastWsSubscribeTime = 0;
   }
 
-  function normalizeDynamicSymbols(symbols) {
+  function normalizeDynamicSymbols(symbols, options = {}) {
+    const { includeBtc = true, maxCount = config.TOP_SYMBOLS_COUNT } = options;
     const normalized = [];
     const seen = new Set();
 
     const pushSymbol = (symbol) => {
-      if (!symbol || seen.has(symbol) || normalized.length >= config.TOP_SYMBOLS_COUNT) {
+      if (!symbol || seen.has(symbol) || normalized.length >= maxCount) {
         return;
       }
       seen.add(symbol);
@@ -52,7 +51,9 @@ function createRuntime(context) {
     for (const position of state.positions) {
       pushSymbol(position.symbol);
     }
-    pushSymbol("BTC/USDT");
+    if (includeBtc) {
+      pushSymbol("BTC/USDT");
+    }
     for (const symbol of symbols) {
       pushSymbol(symbol);
     }
@@ -114,7 +115,7 @@ function createRuntime(context) {
   function simulateBuyExecution(referencePrice, notionalUsdt, slippageBps) {
     const executionPrice = referencePrice * (1 + slippageBps / 10000);
     const btcAmount = executionPrice > 0 ? notionalUsdt / executionPrice : 0;
-    const feePaid = notionalUsdt * (config.FEE_BPS / 10000);
+    const feePaid = notionalUsdt * (config.ENTRY_FEE_BPS / 10000);
     const slippagePaid = btcAmount * Math.max(0, executionPrice - referencePrice);
 
     return {
@@ -129,7 +130,7 @@ function createRuntime(context) {
   function simulateSellExecution(referencePrice, btcAmount, slippageBps) {
     const executionPrice = referencePrice * (1 - slippageBps / 10000);
     const grossProceeds = btcAmount * executionPrice;
-    const feePaid = grossProceeds * (config.FEE_BPS / 10000);
+    const feePaid = grossProceeds * (config.EXIT_FEE_BPS / 10000);
     const slippagePaid = btcAmount * Math.max(0, referencePrice - executionPrice);
 
     return {
@@ -138,6 +139,36 @@ function createRuntime(context) {
       grossProceeds,
       netProceeds: grossProceeds - feePaid,
       slippagePaid
+    };
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function calculateProfitabilityAllocation(snapshot, equity, budget, availableUsdt) {
+    const scoreFloor = snapshot.entryEngine === context.strategy.ENTRY_ENGINES.SFP_REVERSAL
+      ? config.SFP_ENTRY_MIN_SCORE
+      : config.TREND_ENTRY_MIN_SCORE;
+    const scoreFactor = clamp((snapshot.compositeScore - scoreFloor) / Math.max(1, 10 - scoreFloor), 0, 1);
+    const edgeFactor = clamp((snapshot.projectedNetEdgeBps || 0) / config.TARGET_NET_EDGE_BPS_FOR_MAX_SIZE, 0, 1);
+    const riskRewardExcess = Math.max(0, (snapshot.projectedRiskRewardRatio || 0) - config.MIN_RISK_REWARD_RATIO);
+    const riskRewardRange = Math.max(0.25, config.TARGET_RISK_REWARD_RATIO_FOR_MAX_SIZE - config.MIN_RISK_REWARD_RATIO);
+    const riskRewardFactor = clamp(riskRewardExcess / riskRewardRange, 0, 1);
+    const blendedConfidence = (scoreFactor * 0.3) + (edgeFactor * 0.45) + (riskRewardFactor * 0.25);
+    const targetAllocationPct = config.POSITION_SIZE_MIN + ((config.POSITION_SIZE_MAX - config.POSITION_SIZE_MIN) * blendedConfidence);
+    const targetAllocationUsdt = equity * targetAllocationPct;
+    const cappedAllocationUsdt = Math.min(targetAllocationUsdt, budget.perTradeBudget, budget.budgetRemaining, availableUsdt);
+    const expectedNetProfitUsdt = cappedAllocationUsdt * ((snapshot.projectedNetEdgeBps || 0) / 10000);
+
+    return {
+      blendedConfidence,
+      cappedAllocationUsdt,
+      edgeFactor,
+      expectedNetProfitUsdt,
+      riskRewardFactor,
+      scoreFactor,
+      targetAllocationPct
     };
   }
 
@@ -284,16 +315,26 @@ function createRuntime(context) {
     const plannedStopLoss = snapshot.sfpValid && snapshot.sfpStopLevel !== null ? snapshot.sfpStopLevel : snapshot.lastPrice - snapshot.atr14_5m * config.ATR_STOP_MULT;
     const riskSizing = calculateRiskPositionSize(equity, snapshot.lastPrice, plannedStopLoss, snapshot.sfpValid === true);
     const budget = context.serverApi.getPositionBudgetMetrics();
-    const feeRate = config.FEE_BPS / 10000;
-    const requestedAllocation = Math.min(riskSizing.sizeFromRiskUsdt, state.usdtBalance / (1 + feeRate));
-    const usdtToUse = Math.max(0, Math.min(requestedAllocation, equity * config.POSITION_SIZE_MAX, budget.perTradeBudget, budget.budgetRemaining));
+    const feeRate = config.ENTRY_FEE_BPS / 10000;
+    const maxAffordableUsdt = state.usdtBalance / (1 + feeRate);
+    const profitabilityAllocation = calculateProfitabilityAllocation(snapshot, equity, budget, maxAffordableUsdt);
+    const requestedAllocation = Math.min(riskSizing.sizeFromRiskUsdt, profitabilityAllocation.cappedAllocationUsdt);
+    const usdtToUse = Math.max(0, requestedAllocation);
 
     context.logScoped(
       "ENTRY",
-      `sizing | symbol=${snapshot.symbol} | size_pct=${riskSizing.positionSizePct.toFixed(3)} | score=${snapshot.compositeScore} | sfp=${snapshot.sfpValid === true} | risk_pct=${config.RISK_PCT_PER_TRADE.toFixed(3)} | stop_distance=${context.formatLogNumber(riskSizing.stopDistanceUsdt, 4)} | size_from_risk=${context.formatLogNumber(riskSizing.sizeFromRiskUsdt, 2)}`
+      `sizing | symbol=${snapshot.symbol} | size_pct=${riskSizing.positionSizePct.toFixed(3)} | target_alloc_pct=${profitabilityAllocation.targetAllocationPct.toFixed(3)} | score=${snapshot.compositeScore} | edge_bps=${context.formatLogNumber(snapshot.projectedNetEdgeBps, 1)} | rr=${context.formatLogNumber(snapshot.projectedRiskRewardRatio, 2)} | exp_net=${context.formatLogNumber(profitabilityAllocation.expectedNetProfitUsdt, 2)} | sfp=${snapshot.sfpValid === true} | risk_pct=${config.RISK_PCT_PER_TRADE.toFixed(3)} | stop_distance=${context.formatLogNumber(riskSizing.stopDistanceUsdt, 4)} | size_from_risk=${context.formatLogNumber(riskSizing.sizeFromRiskUsdt, 2)}`
     );
 
     if (usdtToUse <= 0 || snapshot.lastPrice === null || snapshot.atr14_5m === null) {
+      return;
+    }
+
+    if (usdtToUse < config.MIN_POSITION_NOTIONAL_USDT) {
+      context.logScoped(
+        "ENTRY",
+        `rejected | symbol=${snapshot.symbol} | reason=notional_too_small | notional=${context.formatLogNumber(usdtToUse, 2)} | min_required=${context.formatLogNumber(config.MIN_POSITION_NOTIONAL_USDT, 2)} | edge_bps=${context.formatLogNumber(snapshot.projectedNetEdgeBps, 1)}`
+      );
       return;
     }
 
@@ -311,7 +352,10 @@ function createRuntime(context) {
     const averageEntryPrice = totalNotionalAllocated / totalBtcAmount;
     const stopLoss = snapshot.sfpValid && snapshot.sfpStopLevel !== null ? snapshot.sfpStopLevel : averageEntryPrice - snapshot.atr14_5m * config.ATR_STOP_MULT;
     const hardFloor = averageEntryPrice * (1 - config.HARD_STOP_PCT);
-    const takeProfit = snapshot.sfpValid && snapshot.sfpStopLevel !== null ? averageEntryPrice + (averageEntryPrice - snapshot.sfpStopLevel) * config.ATR_TP_MULT : averageEntryPrice + snapshot.atr14_5m * config.ATR_TP_MULT;
+    const minimumTakeProfit = averageEntryPrice * (1 + (config.MIN_TAKE_PROFIT_BPS / 10000));
+    const takeProfit = snapshot.sfpValid && snapshot.sfpStopLevel !== null
+      ? Math.max(averageEntryPrice + (averageEntryPrice - snapshot.sfpStopLevel) * config.ATR_TP_MULT, minimumTakeProfit)
+      : Math.max(averageEntryPrice + snapshot.atr14_5m * config.ATR_TP_MULT, minimumTakeProfit);
     const initialRiskPerUnit = averageEntryPrice - stopLoss;
     const nextEntryCount = (existingPosition ? existingPosition.entryCount : 0) + 1;
     const tradeId = existingPosition ? existingPosition.tradeId : `T-${Date.now().toString(36).toUpperCase()}`;
@@ -327,6 +371,7 @@ function createRuntime(context) {
       entryCount: nextEntryCount,
       entryEMA20_1h: snapshot.ema20_1h,
       entryEngine,
+      expectedNetProfitUsdt: profitabilityAllocation.expectedNetProfitUsdt,
       entryFeesPaid: totalEntryFeesPaid,
       entryPrice: averageEntryPrice,
       entrySlippagePaid: totalEntrySlippagePaid,
@@ -366,6 +411,7 @@ function createRuntime(context) {
       entryEngine,
       entryIndex: nextEntryCount,
       entryType: entryEngine,
+      expectedNetProfitUsdt: profitabilityAllocation.expectedNetProfitUsdt,
       exitReasonCode: null,
       explanationShort,
       feePaid: buyExecution.feePaid,
@@ -382,9 +428,9 @@ function createRuntime(context) {
     });
 
     context.persistence.appendTradeLog(
-      `BUY | symbol=${snapshot.symbol} | tradeId=${tradeId} | entry=${entryEngine} | price=${context.formatAmount(buyExecution.executionPrice)} | btc=${context.formatAmount(buyExecution.btcAmount)} | usdt_spent=${context.formatAmount(usdtToUse)} | score=${snapshot.compositeScore} | atr=${context.formatAmount(snapshot.atr14_5m)} | sl=${context.formatAmount(stopLoss)} | tp=${context.formatAmount(takeProfit)} | hard_floor_nuclear=${context.formatAmount(hardFloor)} | feePaid=${context.formatAmount(buyExecution.feePaid)} | slippagePaid=${context.formatAmount(buyExecution.slippagePaid)} | netPnlUsdt=null | trend_1h=${snapshot.trendBull_1h ? "bullish" : "neutral"} | entry_count=${nextEntryCount} | reason=${snapshot.reason}`
+      `BUY | symbol=${snapshot.symbol} | tradeId=${tradeId} | entry=${entryEngine} | price=${context.formatAmount(buyExecution.executionPrice)} | btc=${context.formatAmount(buyExecution.btcAmount)} | usdt_spent=${context.formatAmount(usdtToUse)} | expected_net_profit=${context.formatAmount(profitabilityAllocation.expectedNetProfitUsdt)} | edge_bps=${context.formatAmount(snapshot.projectedNetEdgeBps || 0)} | rr=${context.formatAmount(snapshot.projectedRiskRewardRatio || 0)} | score=${snapshot.compositeScore} | atr=${context.formatAmount(snapshot.atr14_5m)} | sl=${context.formatAmount(stopLoss)} | tp=${context.formatAmount(takeProfit)} | hard_floor_nuclear=${context.formatAmount(hardFloor)} | feePaid=${context.formatAmount(buyExecution.feePaid)} | slippagePaid=${context.formatAmount(buyExecution.slippagePaid)} | netPnlUsdt=null | trend_1h=${snapshot.trendBull_1h ? "bullish" : "neutral"} | entry_count=${nextEntryCount} | reason=${snapshot.reason}`
     );
-    context.logScoped("TRADE", `${existingPosition ? "buy_add" : "buy"} | symbol=${snapshot.symbol} | engine=${entryEngine} | price=${context.formatLogNumber(buyExecution.executionPrice, 6)} | btc=${context.formatLogNumber(buyExecution.btcAmount, 6)} | usdt=${context.formatLogNumber(usdtToUse, 2)} | fee=${context.formatLogNumber(buyExecution.feePaid, 4)} | slip=${context.formatLogNumber(buyExecution.slippagePaid, 4)} | score=${snapshot.compositeScore} | sl=${context.formatLogNumber(stopLoss, 6)} | tp=${context.formatLogNumber(takeProfit, 6)} | entry_count=${nextEntryCount}`);
+    context.logScoped("TRADE", `${existingPosition ? "buy_add" : "buy"} | symbol=${snapshot.symbol} | engine=${entryEngine} | price=${context.formatLogNumber(buyExecution.executionPrice, 6)} | btc=${context.formatLogNumber(buyExecution.btcAmount, 6)} | usdt=${context.formatLogNumber(usdtToUse, 2)} | exp_net=${context.formatLogNumber(profitabilityAllocation.expectedNetProfitUsdt, 2)} | fee=${context.formatLogNumber(buyExecution.feePaid, 4)} | slip=${context.formatLogNumber(buyExecution.slippagePaid, 4)} | score=${snapshot.compositeScore} | sl=${context.formatLogNumber(stopLoss, 6)} | tp=${context.formatLogNumber(takeProfit, 6)} | entry_count=${nextEntryCount}`);
     context.persistence.saveStateToDisk();
   }
 
@@ -661,7 +707,7 @@ function createRuntime(context) {
         return selected;
       }, { seenBaseAssets: new Set(), symbols: [] })
       .symbols
-      .slice(0, config.TOP_SYMBOLS_COUNT);
+      .slice(0, config.HOT_SYMBOLS_POOL_COUNT);
   }
 
   async function fetchCandlesBatched(restExchange, streamExchange, symbols, realtimeSymbols) {
@@ -694,45 +740,129 @@ function createRuntime(context) {
     return results;
   }
 
-  function rotateWatchlist(currentMarkets, allCandidates, currentSymbols) {
+  function rotateWeakSymbols(currentMarkets, allCandidates, currentSymbols, focusSymbol = null, options = {}) {
+    const { includeBtc = true, weakRsiMax = 45 } = options;
     watchlistRotationCycle = currentScanCycle;
-    for (const symbol of [...recentlyDropped]) {
-      const expiryCycle = recentlyDroppedExpiry.get(symbol);
-      if (expiryCycle === undefined || expiryCycle <= watchlistRotationCycle) {
-        recentlyDropped.delete(symbol);
-        recentlyDroppedExpiry.delete(symbol);
-      }
-    }
-
-    const activeSymbols = new Set(currentSymbols);
-    const droppedSymbols = new Set();
-    const deadSymbols = currentSymbols.filter((symbol) => {
-      if (state.positions.some((position) => position.symbol === symbol)) return false;
-      const market = currentMarkets[symbol];
-      if (!market) return false;
-      return market.trendBull_1h === false && market.setupValid === false && market.compositeScore <= 2;
-    });
-    if (deadSymbols.length === 0 || !Array.isArray(allCandidates) || allCandidates.length === 0) {
+    if (!Array.isArray(allCandidates) || allCandidates.length === 0) {
       return currentSymbols;
     }
 
-    const rotatedSymbols = [...currentSymbols];
-    for (const deadSymbol of deadSymbols) {
-      const replacement = allCandidates.find((candidateSymbol) => !activeSymbols.has(candidateSymbol) && !droppedSymbols.has(candidateSymbol) && !recentlyDropped.has(candidateSymbol));
-      if (!replacement) continue;
+    const anchoredSymbols = [];
+    const anchoredSet = new Set();
+    const pushAnchored = (symbol) => {
+      if (!symbol || anchoredSet.has(symbol)) {
+        return;
+      }
+      anchoredSet.add(symbol);
+      anchoredSymbols.push(symbol);
+    };
 
-      const deadIndex = rotatedSymbols.indexOf(deadSymbol);
-      if (deadIndex === -1) continue;
-
-      rotatedSymbols[deadIndex] = replacement;
-      activeSymbols.delete(deadSymbol);
-      activeSymbols.add(replacement);
-      droppedSymbols.add(deadSymbol);
-      recentlyDropped.add(deadSymbol);
-      recentlyDroppedExpiry.set(deadSymbol, watchlistRotationCycle + config.RECENTLY_DROPPED_TTL_CYCLES);
-      context.logScoped("WATCHLIST", `rotate | dropped=${deadSymbol} | reason=dead | added=${replacement}`);
+    for (const position of state.positions) {
+      pushAnchored(position.symbol);
     }
-    return rotatedSymbols;
+    pushAnchored(focusSymbol);
+    if (includeBtc) {
+      pushAnchored("BTC/USDT");
+    }
+
+    const nextSymbols = [...currentSymbols];
+    const activeSet = new Set(currentSymbols);
+    const candidatePool = allCandidates.filter((candidateSymbol) => !activeSet.has(candidateSymbol) && !anchoredSet.has(candidateSymbol));
+    const weakSymbols = currentSymbols
+      .filter((symbol) => {
+        if (anchoredSet.has(symbol)) {
+          return false;
+        }
+        const market = currentMarkets[symbol];
+        if (!market || market.positionOpen) {
+          return false;
+        }
+        const rsi = Number(market.rsi_5m);
+        return !Number.isFinite(rsi) || rsi <= weakRsiMax;
+      })
+      .sort((left, right) => {
+        const leftRsi = Number(currentMarkets[left]?.rsi_5m);
+        const rightRsi = Number(currentMarkets[right]?.rsi_5m);
+        const normalizedLeft = Number.isFinite(leftRsi) ? leftRsi : Number.NEGATIVE_INFINITY;
+        const normalizedRight = Number.isFinite(rightRsi) ? rightRsi : Number.NEGATIVE_INFINITY;
+        return normalizedLeft - normalizedRight;
+      });
+
+    const replacements = [];
+    for (const weakSymbol of weakSymbols) {
+      if (candidatePool.length === 0) {
+        break;
+      }
+
+      let replacementIndex = -1;
+      for (let offset = 0; offset < candidatePool.length; offset += 1) {
+        const candidateIndex = (hotPoolCursor + offset) % candidatePool.length;
+        const candidateSymbol = candidatePool[candidateIndex];
+        if (activeSet.has(candidateSymbol) || anchoredSet.has(candidateSymbol)) {
+          continue;
+        }
+        replacementIndex = candidateIndex;
+        break;
+      }
+
+      if (replacementIndex === -1) {
+        break;
+      }
+
+      const replacement = candidatePool.splice(replacementIndex, 1)[0];
+      hotPoolCursor = candidatePool.length > 0 ? replacementIndex % candidatePool.length : 0;
+      const weakIndex = nextSymbols.indexOf(weakSymbol);
+      if (weakIndex === -1) {
+        continue;
+      }
+
+      const weakRsi = Number(currentMarkets[weakSymbol]?.rsi_5m);
+      nextSymbols[weakIndex] = replacement;
+      activeSet.delete(weakSymbol);
+      activeSet.add(replacement);
+      replacements.push({
+        added: replacement,
+        dropped: weakSymbol,
+        weakRsi: Number.isFinite(weakRsi) ? weakRsi : null
+      });
+    }
+
+    const previousLabel = currentSymbols.join(",");
+    const nextLabel = nextSymbols.join(",");
+    state.watchlist.lastRotationAt = new Date().toISOString();
+    state.watchlist.weakThresholdRsi = weakRsiMax;
+    state.watchlist.lastRotationSummary = {
+      anchoredSymbols: [...anchoredSymbols],
+      focusSymbol,
+      replacedCount: replacements.length,
+      thresholdRsi: weakRsiMax,
+      weakSymbols: weakSymbols.map((symbol) => ({
+        rsi: Number.isFinite(Number(currentMarkets[symbol]?.rsi_5m)) ? Number(currentMarkets[symbol].rsi_5m) : null,
+        symbol
+      }))
+    };
+    if (replacements.length > 0) {
+      const stampedReplacements = replacements.map((replacement) => ({
+        ...replacement,
+        time: new Date().toISOString()
+      }));
+      state.watchlist.recentSwaps = [...stampedReplacements, ...(state.watchlist.recentSwaps || [])].slice(0, 20);
+    }
+    if (replacements.length > 0 && previousLabel !== nextLabel) {
+      context.logScoped(
+        "WATCHLIST",
+        `rotate_weak | focus=${focusSymbol || "none"} | anchors=${anchoredSymbols.join(",") || "none"} | weak=${replacements.length} | threshold_rsi=${weakRsiMax}`
+      );
+      for (const replacement of replacements) {
+        context.logScoped(
+          "WATCHLIST",
+          `swap | dropped=${replacement.dropped} | weak_rsi=${replacement.weakRsi === null ? "n/a" : replacement.weakRsi.toFixed(2)} | added=${replacement.added}`
+        );
+      }
+      context.logScoped("WATCHLIST", `symbols | ${nextLabel}`);
+    }
+
+    return nextSymbols;
   }
 
   function pruneExpiringState() {
@@ -761,7 +891,7 @@ function createRuntime(context) {
     pruneExpiringState,
     refreshPositionSnapshot,
     resetTransientState,
-    rotateWatchlist,
+    rotateWeakSymbols,
     selectRealtimeSymbols,
     setCurrentScanCycle
   };

@@ -11,21 +11,33 @@ function makeCandle(timestamp, open, high, low, close, volume) {
 function buildContext() {
   const config = {
     ATR_PERIOD: 14,
+    ATR_STOP_MULT: 1.5,
+    ATR_TP_MULT: 3.0,
     EMA20_1H_PERIOD: 20,
     EMA21_5M_PERIOD: 21,
     EMA50_1H_PERIOD: 50,
     EMA9_1M_PERIOD: 9,
     EMA9_5M_PERIOD: 9,
+    ENTRY_FEE_BPS: 10,
     ENTRY_VOLUME_MULT: 0.8,
+    EXIT_FEE_BPS: 10,
+    MIN_POSITION_NOTIONAL_USDT: 10,
     MACD_FAST: 12,
     MACD_SIGNAL: 9,
     MACD_SLOW: 26,
+    MIN_EXPECTED_NET_EDGE_BPS: 10,
+    MIN_RISK_REWARD_RATIO: 1.5,
+    MIN_TAKE_PROFIT_BPS: 30,
     MIN_SCORE_ENTRY: 6,
     NEUTRAL_TOP_N: 5,
     RSI_MAX: 100,
     RSI_MIN: 0,
     RSI_PERIOD: 14,
+    SFP_ENTRY_MIN_SCORE: 6,
+    TARGET_NET_EDGE_BPS_FOR_MAX_SIZE: 120,
+    TARGET_RISK_REWARD_RATIO_FOR_MAX_SIZE: 3,
     TREND_SLOPE_MIN: 0.001,
+    TREND_ENTRY_MIN_SCORE: 6,
     VOLUME_MULT: 1.15,
     VOLUME_SMA_PERIOD: 20
   };
@@ -48,9 +60,9 @@ function buildSnapshot(secondLastVolume) {
   }
 
   for (let index = 0; index < 50; index += 1) {
-    const close = 100 + index * 0.08 + Math.sin(index / 4) * 0.05;
+    const close = 100 + index * 0.08;
     const volume = index === 48 ? secondLastVolume : index === 49 ? 120 : 100;
-    candles_5m.push(makeCandle(baseTime + index * 300000, close - 0.05, close + 0.3, close - 0.3, close, volume));
+    candles_5m.push(makeCandle(baseTime + index * 300000, close - 0.3, close + 0.6, close - 0.6, close, volume));
   }
 
   for (let index = 0; index < 20; index += 1) {

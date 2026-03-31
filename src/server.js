@@ -7,6 +7,62 @@ const path = require("path");
 function createServerApi(context) {
   const { config, state } = context;
 
+  function getWatchlistPayload(focusSymbol) {
+    const activeSymbols = Array.isArray(state.watchlist?.activeSymbols) && state.watchlist.activeSymbols.length > 0
+      ? state.watchlist.activeSymbols
+      : context.getSymbols();
+    const hotPool = Array.isArray(state.watchlist?.hotPool) ? state.watchlist.hotPool : [];
+    const activeSet = new Set(activeSymbols);
+    const positionSymbols = new Set(state.positions.map((position) => position.symbol));
+    const lastRotationSummary = state.watchlist?.lastRotationSummary || null;
+    const weakSymbolMap = new Map(
+      Array.isArray(lastRotationSummary?.weakSymbols)
+        ? lastRotationSummary.weakSymbols.map((item) => [item.symbol, item])
+        : []
+    );
+
+    return {
+      active: activeSymbols.map((symbol) => {
+        const market = state.markets[symbol];
+        const weakInfo = weakSymbolMap.get(symbol);
+        return {
+          decisionState: market?.decisionState || "warmup",
+          entryEngine: market?.entryEngine || null,
+          isFocus: symbol === focusSymbol,
+          isInPosition: positionSymbols.has(symbol),
+          isWeak: weakSymbolMap.has(symbol),
+          lastPrice: market?.lastPrice ?? null,
+          reason: market?.reason || "In attesa di dati.",
+          rsi: market?.rsi_5m ?? null,
+          score: market?.compositeScore ?? null,
+          signal: market?.signal || "HOLD",
+          symbol,
+          trend: market?.trend || "non disponibile",
+          weakRsi: weakInfo?.rsi ?? null
+        };
+      }),
+      hotPool: hotPool.map((symbol, index) => {
+        const market = state.markets[symbol];
+        return {
+          index: index + 1,
+          isActive: activeSet.has(symbol),
+          isBestCandidate: symbol === state.bestCandidateSymbol,
+          isFocus: symbol === focusSymbol,
+          lastPrice: market?.lastPrice ?? null,
+          rsi: market?.rsi_5m ?? null,
+          score: market?.compositeScore ?? null,
+          symbol,
+          trend: market?.trend || "non disponibile"
+        };
+      }),
+      lastPoolRefreshAt: state.watchlist?.lastPoolRefreshAt || null,
+      lastRotationAt: state.watchlist?.lastRotationAt || null,
+      recentSwaps: Array.isArray(state.watchlist?.recentSwaps) ? state.watchlist.recentSwaps : [],
+      source: state.watchlist?.source || "dynamic",
+      weakThresholdRsi: state.watchlist?.weakThresholdRsi ?? config.WEAK_SYMBOL_RSI_MAX
+    };
+  }
+
   function getPortfolioValue() {
     const positionsValue = state.positions.reduce((sum, position) => {
       return sum + (position.lastPrice ? position.btcAmount * position.lastPrice : 0);
@@ -131,15 +187,21 @@ function createServerApi(context) {
     const stats = getSessionStats();
     const budget = getPositionBudgetMetrics();
     const positionsWithDetails = state.positions.map((position) => {
-      const pnlUsdt = position.lastPrice ? (position.btcAmount * position.lastPrice) - position.costBasisUsdt : 0;
+      const grossExitValue = position.lastPrice ? position.btcAmount * position.lastPrice : 0;
+      const estimatedExitFeeUsdt = grossExitValue * (config.EXIT_FEE_BPS / 10000);
+      const netExitValue = Math.max(0, grossExitValue - estimatedExitFeeUsdt);
+      const pnlUsdt = netExitValue - position.costBasisUsdt;
       const pnlPercent = position.costBasisUsdt > 0 ? (pnlUsdt / position.costBasisUsdt) * 100 : 0;
       return {
         ...position,
+        estimatedExitFeeUsdt,
+        netExitValue,
         pnlLabel: `${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}% (${pnlUsdt >= 0 ? "+" : ""}${pnlUsdt.toFixed(2)} USDT)`,
         pnlPercent,
         pnlUsdt
       };
     });
+    const watchlist = getWatchlistPayload(focusSymbol);
 
     return {
       bot: {
@@ -170,6 +232,7 @@ function createServerApi(context) {
         entryCount: focusMarket.entryCount,
         entryEngine: focusMarket.entryEngine,
         entryPrice: focusMarket.entryPrice,
+        expectedNetProfitUsdt: focusMarket.expectedNetProfitUsdt ?? null,
         exitReasonCode: focusMarket.exitReasonCode,
         focusMode,
         focusReason,
@@ -179,6 +242,9 @@ function createServerApi(context) {
         macdHistogram: focusMarket.macdHistogram,
         macdLine: focusMarket.macdLine,
         missingIndicators: focusMarket.missingIndicators,
+        projectedNetEdgeBps: focusMarket.projectedNetEdgeBps,
+        projectedRiskRewardRatio: focusMarket.projectedRiskRewardRatio,
+        projectedRoundTripFeeBps: focusMarket.projectedRoundTripFeeBps,
         reason: focusMarket.reason,
         reasonList: focusMarket.reasonList,
         rsi: focusMarket.rsi_5m,
@@ -213,6 +279,7 @@ function createServerApi(context) {
         entryCount: 0,
         entryEngine: null,
         entryPrice: null,
+        expectedNetProfitUsdt: null,
         exitReasonCode: null,
         focusMode,
         focusReason,
@@ -222,6 +289,9 @@ function createServerApi(context) {
         macdHistogram: null,
         macdLine: null,
         missingIndicators: ["OHLCV"],
+        projectedNetEdgeBps: null,
+        projectedRiskRewardRatio: null,
+        projectedRoundTripFeeBps: null,
         reason: "Nessun mercato disponibile.",
         reasonList: ["Trend: non disponibile", "RSI: non disponibile", "Prezzo: non valutabile", "Stato posizione: nessuna", "Decisione finale: HOLD"],
         rsi: null,
@@ -302,7 +372,15 @@ function createServerApi(context) {
         sessionPnlPercent: getSessionPnlPercent(),
         usdtBalance: state.usdtBalance
       },
-      stats
+      runtime: {
+        lastCompletedCycleAt: state.runtime?.lastCompletedCycleAt || null,
+        lastCycleDurationMs: state.runtime?.lastCycleDurationMs ?? null,
+        realtimeSymbols: state.runtime?.realtimeSymbols || [],
+        restSymbolCount: state.runtime?.restSymbolCount ?? 0,
+        scanCycle: state.runtime?.scanCycle ?? 0
+      },
+      stats,
+      watchlist
     };
   }
 

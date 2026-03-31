@@ -542,6 +542,12 @@ function createStrategy(context) {
     const sfpStopLevel = sfpValid ? previousOneMinuteLow : null;
     const triggerFired = previousOneMinuteTimestamp !== null && latestOneMinuteTimestamp !== null && latestOneMinuteTimestamp > previousOneMinuteTimestamp && previousOneMinuteClose !== null && ema9_1m !== null ? (previousOneMinuteClose > ema9_1m || (lastPrice_5m !== null && lastPrice_5m > ema9_1m)) : false;
     const setupValid = !warmingUp && trendBull_1h && trendSlope_1h !== null && trendSlope_1h > config.TREND_SLOPE_MIN && ema9_5m > ema21_5m && rsi_5m >= config.RSI_MIN && rsi_5m <= config.RSI_MAX && triggerFired;
+    const projectedEntryPrice = currentPrice;
+    const projectedTrendStopLoss = projectedEntryPrice !== null && atr14_5m !== null ? projectedEntryPrice - atr14_5m * config.ATR_STOP_MULT : null;
+    const minimumTargetPrice = projectedEntryPrice !== null ? projectedEntryPrice * (1 + (config.MIN_TAKE_PROFIT_BPS / 10000)) : null;
+    const projectedTrendTakeProfit = projectedEntryPrice !== null && atr14_5m !== null ? Math.max(projectedEntryPrice + atr14_5m * config.ATR_TP_MULT, minimumTargetPrice) : null;
+    const projectedSfpStopLoss = sfpStopLevel;
+    const projectedSfpTakeProfit = projectedEntryPrice !== null && sfpStopLevel !== null ? Math.max(projectedEntryPrice + (projectedEntryPrice - sfpStopLevel) * config.ATR_TP_MULT, minimumTargetPrice) : null;
 
     let trendContinuationScore = 0;
     if (trendBull_1h) trendContinuationScore += 2;
@@ -562,8 +568,40 @@ function createStrategy(context) {
     const compositeScore = Math.max(trendContinuationScore, sfpScore);
     const currentPosition = state.positions.find((position) => position.symbol === symbol) || null;
     const positionOpen = Boolean(currentPosition);
-    const trendContinuationEligible = setupValid && trendContinuationScore >= config.MIN_SCORE_ENTRY;
-    const sfpEligible = sfpValid && sfpScore >= config.MIN_SCORE_ENTRY;
+    const calculateProjectedMetrics = (entryPrice, stopLoss, takeProfit) => {
+      if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss) || !Number.isFinite(takeProfit) || entryPrice <= 0) {
+        return {
+          grossEdgeBps: 0,
+          netEdgeBps: 0,
+          rewardDistance: 0,
+          riskDistance: 0,
+          riskRewardRatio: 0,
+          roundTripFeeBps: (config.ENTRY_FEE_BPS || 0) + (config.EXIT_FEE_BPS || 0)
+        };
+      }
+
+      const riskDistance = entryPrice - stopLoss;
+      const rewardDistance = takeProfit - entryPrice;
+      const roundTripFeeBps = (config.ENTRY_FEE_BPS || 0) + (config.EXIT_FEE_BPS || 0);
+      const grossEdgeBps = rewardDistance > 0 ? (rewardDistance / entryPrice) * 10000 : 0;
+      return {
+        grossEdgeBps,
+        netEdgeBps: grossEdgeBps - roundTripFeeBps,
+        rewardDistance,
+        riskDistance,
+        riskRewardRatio: riskDistance > 0 ? rewardDistance / riskDistance : 0,
+        roundTripFeeBps
+      };
+    };
+    const trendMetrics = calculateProjectedMetrics(projectedEntryPrice, projectedTrendStopLoss, projectedTrendTakeProfit);
+    const sfpMetrics = calculateProjectedMetrics(projectedEntryPrice, projectedSfpStopLoss, projectedSfpTakeProfit);
+    const trendRiskRewardOk = trendMetrics.riskRewardRatio >= config.MIN_RISK_REWARD_RATIO;
+    const sfpRiskRewardOk = sfpMetrics.riskRewardRatio >= config.MIN_RISK_REWARD_RATIO;
+    const trendNetEdgeOk = trendMetrics.netEdgeBps >= config.MIN_EXPECTED_NET_EDGE_BPS;
+    const sfpNetEdgeOk = sfpMetrics.netEdgeBps >= config.MIN_EXPECTED_NET_EDGE_BPS;
+    const trendContinuationValid = setupValid && pullbackZoneOk && macdPositive;
+    const trendContinuationEligible = trendContinuationValid && trendRiskRewardOk && trendNetEdgeOk && trendContinuationScore >= config.TREND_ENTRY_MIN_SCORE;
+    const sfpEligible = sfpValid && sfpRiskRewardOk && sfpNetEdgeOk && sfpScore >= config.SFP_ENTRY_MIN_SCORE;
     const hasEligibleEntryPath = trendContinuationEligible || sfpEligible;
     const preferredEntryType = sfpEligible && sfpScore > trendContinuationScore ? ENTRY_ENGINES.SFP_REVERSAL : trendContinuationEligible ? ENTRY_ENGINES.TREND_CONTINUATION : sfpEligible ? ENTRY_ENGINES.SFP_REVERSAL : ENTRY_ENGINES.NONE;
 
@@ -586,6 +624,8 @@ function createStrategy(context) {
         sfpBlockers.push(volumeBlocker);
       }
       if (!macdPositive) trendBlockers.push("MACD 5m non conferma il trend");
+      if (!trendRiskRewardOk) trendBlockers.push(`Risk/reward insufficiente (${trendMetrics.riskRewardRatio.toFixed(2)}x < ${config.MIN_RISK_REWARD_RATIO}x)`);
+      if (!trendNetEdgeOk) trendBlockers.push(`Edge netto atteso insufficiente (${trendMetrics.netEdgeBps.toFixed(1)}bps < ${config.MIN_EXPECTED_NET_EDGE_BPS}bps)`);
       if (!triggerFired) trendBlockers.push("Trigger 1m non confermato su candela chiusa");
       if (!sfpValid) {
         if (swingLow === null) sfpBlockers.push("Nessun swing low 5m valido per SFP");
@@ -594,6 +634,8 @@ function createStrategy(context) {
         else if (!sfpStrongClose) sfpBlockers.push("SFP debole: close 1m non forte");
         else if (!sfpVolumeConfirm) sfpBlockers.push("SFP debole: reclaim senza volume");
       }
+      if (!sfpRiskRewardOk) sfpBlockers.push(`Risk/reward insufficiente (${sfpMetrics.riskRewardRatio.toFixed(2)}x < ${config.MIN_RISK_REWARD_RATIO}x)`);
+      if (!sfpNetEdgeOk) sfpBlockers.push(`Edge netto atteso insufficiente (${sfpMetrics.netEdgeBps.toFixed(1)}bps < ${config.MIN_EXPECTED_NET_EDGE_BPS}bps)`);
     }
 
     let signal = DECISION_ACTIONS.HOLD;
@@ -701,6 +743,9 @@ function createStrategy(context) {
       positionOpen,
       prevHistogram: macd ? macd.prevHistogram : null,
       previousClose_5m,
+      projectedNetEdgeBps: preferredEntryType === ENTRY_ENGINES.SFP_REVERSAL ? sfpMetrics.netEdgeBps : trendMetrics.netEdgeBps,
+      projectedRiskRewardRatio: preferredEntryType === ENTRY_ENGINES.SFP_REVERSAL ? sfpMetrics.riskRewardRatio : trendMetrics.riskRewardRatio,
+      projectedRoundTripFeeBps: preferredEntryType === ENTRY_ENGINES.SFP_REVERSAL ? sfpMetrics.roundTripFeeBps : trendMetrics.roundTripFeeBps,
       reason,
       reasonList: explanation.reasonList,
       rsi: rsi_5m,
@@ -725,7 +770,7 @@ function createStrategy(context) {
       trend: trendBull_1h ? "rialzista" : ema20_1h === null || ema50_1h === null ? "non disponibile" : "ribassista",
       trendBull_1h,
       trendContinuationScore,
-      trendContinuationValid: setupValid,
+      trendContinuationValid,
       trendLateral,
       trendSlope_1h,
       triggerFired,

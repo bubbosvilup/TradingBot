@@ -41,6 +41,7 @@ const config = {
   EMA50_1H_PERIOD: 50,
   EMA9_1M_PERIOD: 9,
   EMA9_5M_PERIOD: 9,
+  ENTRY_FEE_BPS: Math.max(Number(process.env.ENTRY_FEE_BPS || process.env.FEE_BPS || 10), 0),
   ENTRY_VOLUME_MULT: Number(process.env.ENTRY_VOLUME_MULT || 0.8),
   EXCHANGE_ID: process.env.EXCHANGE || "binance",
   EXCLUDED_BASE_ASSETS: new Set(["USDC", "BUSD", "TUSD", "FDUSD", "DAI", "USDP", "EUR", "GBP", "WBTC", "WETH", "STETH", "WSTETH", "RETH", "USD1", "U", "NOM", "NIGHT", "STO", "SENT", "ANKR", "BARD", "KITE", "CFG"]),
@@ -51,6 +52,11 @@ const config = {
   FETCH_TIMEOUT_MS: Math.max(Number(process.env.FETCH_TIMEOUT_MS || 15000), 1000),
   HARD_STOP_PCT: Number(process.env.HARD_STOP_PCT || 0.05),
   HAS_STATIC_SYMBOLS: configuredSymbols.length > 0,
+  HOT_SYMBOLS_POOL_COUNT: Math.max(
+    Number(process.env.HOT_SYMBOLS_POOL_COUNT || process.env.TOP_SYMBOLS_POOL_COUNT || (Math.max(Number(process.env.TOP_SYMBOLS_COUNT || 10), 1) * 3)),
+    Math.max(Number(process.env.TOP_SYMBOLS_COUNT || 10), 1)
+  ),
+  HOT_SYMBOLS_REFRESH_MS: Math.max(Number(process.env.HOT_SYMBOLS_REFRESH_MS || process.env.SYMBOLS_REFRESH_MS || 60000), 10000),
   INITIAL_USDT_BALANCE: Number(process.env.INITIAL_USDT_BALANCE || 100),
   LEVERAGED_TOKEN_REGEX: /\d+[LS]$/i,
   LOG_DEDUPE_WINDOW_MS: 8000,
@@ -63,6 +69,9 @@ const config = {
   MAX_POSITION_EXPOSURE_PCT: 0.85,
   MIN_HOLD_CANDLES: Number(process.env.MIN_HOLD_CANDLES || 5),
   MIN_HOLD_SECONDS: Math.max(Number(process.env.MIN_HOLD_SECONDS || 180), 0),
+  MIN_EXPECTED_NET_EDGE_BPS: Math.max(Number(process.env.MIN_EXPECTED_NET_EDGE_BPS || 25), 0),
+  MIN_POSITION_NOTIONAL_USDT: Math.max(Number(process.env.MIN_POSITION_NOTIONAL_USDT || 10), 1),
+  MIN_RISK_REWARD_RATIO: Math.max(Number(process.env.MIN_RISK_REWARD_RATIO || 1.8), 0),
   MIN_SCORE_ENTRY: Number(process.env.MIN_SCORE_ENTRY || 6),
   NEUTRAL_TOP_N: Math.max(Number(process.env.NEUTRAL_TOP_N || 10), 1),
   PAPER_TRADING: (process.env.PAPER_TRADING || "true").toLowerCase() === "true",
@@ -79,18 +88,25 @@ const config = {
   SERVER_HOST: "127.0.0.1",
   SERVER_PORT: Number(process.env.PORT || 3000),
   SLIPPAGE_BPS_BASE: Math.max(Number(process.env.SLIPPAGE_BPS_BASE || 5), 0),
+  SFP_ENTRY_MIN_SCORE: Math.max(Number(process.env.SFP_ENTRY_MIN_SCORE || process.env.MIN_SCORE_ENTRY || 7), Number(process.env.MIN_SCORE_ENTRY || 6)),
   SPREAD_MAX_PCT: Math.max(Number(process.env.SPREAD_MAX_PCT || 0.001), 0),
   STATE_FILE: path.join(__dirname, "state.json"),
   STRATEGY_NAME: "mtf-trend-following-1h-5m-1m",
-  SYMBOLS_REFRESH_CYCLES: Math.max(Number(process.env.SYMBOLS_REFRESH_CYCLES || 120), 1),
   TIME_STOP_CANDLES: Math.max(Number(process.env.TIME_STOP_CANDLES || 12), 1),
   TOP_SYMBOLS_COUNT: Math.max(Number(process.env.TOP_SYMBOLS_COUNT || 10), 1),
+  TARGET_NET_EDGE_BPS_FOR_MAX_SIZE: Math.max(Number(process.env.TARGET_NET_EDGE_BPS_FOR_MAX_SIZE || 120), 1),
+  TARGET_RISK_REWARD_RATIO_FOR_MAX_SIZE: Math.max(Number(process.env.TARGET_RISK_REWARD_RATIO_FOR_MAX_SIZE || 3.0), 1),
   TRADES_LOG_FILE: "trades.log",
   TRAILING_PCT: Number(process.env.TRAILING_PCT || 0.007),
+  TREND_ENTRY_MIN_SCORE: Math.max(Number(process.env.TREND_ENTRY_MIN_SCORE || process.env.MIN_SCORE_ENTRY || 7), Number(process.env.MIN_SCORE_ENTRY || 6)),
   TREND_SLOPE_MIN: Number(process.env.TREND_SLOPE_MIN || 0.001),
   USE_CCXT_PRO_WS: (process.env.USE_CCXT_PRO_WS || "false").toLowerCase() === "true",
   VOLUME_MULT: Number(process.env.VOLUME_MULT || 1.15),
   VOLUME_SMA_PERIOD: 20,
+  WEAK_SYMBOL_ROTATION_MS: Math.max(Number(process.env.WEAK_SYMBOL_ROTATION_MS || 10000), 5000),
+  WEAK_SYMBOL_RSI_MAX: Number(process.env.WEAK_SYMBOL_RSI_MAX || 45),
+  EXIT_FEE_BPS: Math.max(Number(process.env.EXIT_FEE_BPS || process.env.FEE_BPS || 10), 0),
+  MIN_TAKE_PROFIT_BPS: Math.max(Number(process.env.MIN_TAKE_PROFIT_BPS || ((Number(process.env.MIN_EXPECTED_NET_EDGE_BPS || 25)) + (Number(process.env.ENTRY_FEE_BPS || process.env.FEE_BPS || 10)) + (Number(process.env.EXIT_FEE_BPS || process.env.FEE_BPS || 10)))), 1),
   WS_BACKOFF_BASE_MS: Math.max(Number(process.env.WS_BACKOFF_BASE_MS || 1000), 250),
   WS_BACKOFF_MAX_MS: Math.max(Number(process.env.WS_BACKOFF_MAX_MS || 15000), Math.max(Number(process.env.WS_BACKOFF_BASE_MS || 1000), 250)),
   WS_FAILURE_THRESHOLD: Math.max(Number(process.env.WS_FAILURE_THRESHOLD || 6), 1),
@@ -117,9 +133,26 @@ const state = {
   markets: {},
   paperTrading: config.PAPER_TRADING,
   positions: [],
+  runtime: {
+    lastCompletedCycleAt: null,
+    lastCycleDurationMs: null,
+    realtimeSymbols: [],
+    restSymbolCount: 0,
+    scanCycle: 0
+  },
   strategyName: config.STRATEGY_NAME,
   trades: [],
-  usdtBalance: config.INITIAL_USDT_BALANCE
+  usdtBalance: config.INITIAL_USDT_BALANCE,
+  watchlist: {
+    activeSymbols: [],
+    hotPool: [],
+    lastPoolRefreshAt: null,
+    lastRotationAt: null,
+    lastRotationSummary: null,
+    recentSwaps: [],
+    source: SYMBOLS_SOURCE,
+    weakThresholdRsi: config.WEAK_SYMBOL_RSI_MAX
+  }
 };
 
 function log(message, options = {}) {
@@ -266,9 +299,10 @@ async function main() {
   let scanCycle = 0;
   let allCandidates = [];
   let lastCompletedCycleAt = Date.now();
+  let lastHotPoolRefreshAt = Date.now();
+  let lastWeakRotationAt = Date.now();
   let lastRealtimeSymbolsLabel = "";
   let lastWatchdogLogAt = 0;
-  let lastWatchlistRefreshTime = Date.now();
 
   setInterval(() => {
     if (!state.botActive) return;
@@ -284,13 +318,24 @@ async function main() {
     for (const position of state.positions) {
       if (!SYMBOLS.includes(position.symbol)) SYMBOLS = [position.symbol, ...SYMBOLS];
     }
+    state.watchlist.activeSymbols = [...SYMBOLS];
+    state.watchlist.hotPool = [...SYMBOLS];
+    state.watchlist.lastPoolRefreshAt = new Date().toISOString();
+    state.watchlist.source = SYMBOLS_SOURCE;
     logScoped("WATCHLIST", `loaded | count=${SYMBOLS.length} | source=${SYMBOLS_SOURCE}`);
     logScoped("WATCHLIST", `symbols | ${SYMBOLS.join(", ")}`);
   } else {
     const discoveredSymbols = await context.runtime.fetchTopSymbols(exchange);
-    allCandidates = context.runtime.normalizeDynamicSymbols(discoveredSymbols);
-    SYMBOLS = allCandidates.length > 0 ? [...allCandidates] : context.runtime.normalizeDynamicSymbols([config.DEFAULT_SYMBOL]);
+    allCandidates = context.runtime.normalizeDynamicSymbols(discoveredSymbols, { includeBtc: btcFilterEnabled, maxCount: config.HOT_SYMBOLS_POOL_COUNT });
+    SYMBOLS = allCandidates.length > 0
+      ? context.runtime.normalizeDynamicSymbols(allCandidates, { includeBtc: btcFilterEnabled, maxCount: config.TOP_SYMBOLS_COUNT })
+      : context.runtime.normalizeDynamicSymbols([config.DEFAULT_SYMBOL], { includeBtc: btcFilterEnabled, maxCount: config.TOP_SYMBOLS_COUNT });
     SYMBOLS_SOURCE = allCandidates.length > 0 ? "dynamic" : "fallback";
+    state.watchlist.activeSymbols = [...SYMBOLS];
+    state.watchlist.hotPool = [...allCandidates];
+    state.watchlist.lastPoolRefreshAt = new Date().toISOString();
+    state.watchlist.source = SYMBOLS_SOURCE;
+    logScoped("WATCHLIST", `pool_loaded | count=${allCandidates.length}`);
     logScoped("WATCHLIST", `dynamic_loaded | count=${SYMBOLS.length}`);
     logScoped("WATCHLIST", `symbols | ${SYMBOLS.join(", ")}`);
   }
@@ -300,18 +345,21 @@ async function main() {
   logScoped("BOOT", `started | exchange=${config.EXCHANGE_ID} | symbols=${SYMBOLS.length} | source=${SYMBOLS_SOURCE} | paper=${config.PAPER_TRADING} | interval=${config.POLL_INTERVAL_MS}ms | market_data=${streamExchange ? "hybrid_WS+REST" : "REST_only"} | ws_symbols=${initialRealtimeSymbols.length > 0 ? initialRealtimeSymbols.join(",") : "none"}`);
 
   while (true) {
+    const cycleStartedAt = Date.now();
     try {
       context.runtime.setCurrentScanCycle(scanCycle);
       context.runtime.pruneExpiringState();
 
-      if (!config.HAS_STATIC_SYMBOLS && Date.now() - lastWatchlistRefreshTime >= 300000) {
-        lastWatchlistRefreshTime = Date.now();
+      if (!config.HAS_STATIC_SYMBOLS && scanCycle > 0 && Date.now() - lastHotPoolRefreshAt >= config.HOT_SYMBOLS_REFRESH_MS) {
+        lastHotPoolRefreshAt = Date.now();
         const refreshedSymbols = await context.runtime.fetchTopSymbols(exchange);
         if (refreshedSymbols.length > 0) {
           const previousCandidates = [...allCandidates];
-          allCandidates = context.runtime.normalizeDynamicSymbols(refreshedSymbols);
+          allCandidates = context.runtime.normalizeDynamicSymbols(refreshedSymbols, { includeBtc: btcFilterEnabled, maxCount: config.HOT_SYMBOLS_POOL_COUNT });
           const candidatesChanged = previousCandidates.join(",") !== allCandidates.join(",");
-          logScoped("WATCHLIST", `refresh | candidates=${allCandidates.length} | changed=${candidatesChanged ? "yes" : "no"}`);
+          state.watchlist.hotPool = [...allCandidates];
+          state.watchlist.lastPoolRefreshAt = new Date().toISOString();
+          logScoped("WATCHLIST", `pool_refresh | cycle=${scanCycle} | every_ms=${config.HOT_SYMBOLS_REFRESH_MS} | candidates=${allCandidates.length} | changed=${candidatesChanged ? "yes" : "no"}`);
           if (candidatesChanged) logScoped("WATCHLIST", `candidates | ${allCandidates.join(", ")}`);
         }
       }
@@ -322,6 +370,8 @@ async function main() {
         lastRealtimeSymbolsLabel = realtimeSymbolsLabel;
         logScoped("WS", `symbols_update | ws_symbols=${realtimeSymbolsLabel || "none"} | rest_symbols=${Math.max(0, SYMBOLS.length - realtimeSymbols.size)}`);
       }
+      state.runtime.realtimeSymbols = [...realtimeSymbols];
+      state.runtime.restSymbolCount = Math.max(0, SYMBOLS.length - realtimeSymbols.size);
 
       const candleResults = await context.runtime.fetchCandlesBatched(exchange, streamExchange, SYMBOLS, realtimeSymbols);
       state.candleData = {};
@@ -358,10 +408,6 @@ async function main() {
           market.detailedExplanation = explanation.detailedExplanation;
           market.reasonList = explanation.reasonList;
         }
-      }
-
-      if (!config.HAS_STATIC_SYMBOLS) {
-        SYMBOLS = context.runtime.normalizeDynamicSymbols(context.runtime.rotateWatchlist(state.markets, allCandidates, SYMBOLS));
       }
 
       let positionClosedThisCycle = false;
@@ -431,11 +477,31 @@ async function main() {
       }
 
       logCycleSummary(scanCycle, realtimeSymbols);
+
+      if (!config.HAS_STATIC_SYMBOLS && Date.now() - lastWeakRotationAt >= config.WEAK_SYMBOL_ROTATION_MS) {
+        lastWeakRotationAt = Date.now();
+        const focusMarket = context.serverApi.selectFocusMarket();
+        SYMBOLS = context.runtime.rotateWeakSymbols(
+          state.markets,
+          allCandidates,
+          SYMBOLS,
+          focusMarket ? focusMarket.symbol : null,
+          {
+            includeBtc: btcFilterEnabled,
+            weakRsiMax: config.WEAK_SYMBOL_RSI_MAX
+          }
+        );
+      }
+      state.watchlist.activeSymbols = [...SYMBOLS];
+      state.watchlist.source = SYMBOLS_SOURCE;
     } catch (error) {
       logScoped("ERROR", `market_scan | exchange=${config.EXCHANGE_ID} | message=${error.message}`, { dedupe: false });
     }
 
     lastCompletedCycleAt = Date.now();
+    state.runtime.lastCompletedCycleAt = new Date(lastCompletedCycleAt).toISOString();
+    state.runtime.lastCycleDurationMs = Math.max(0, lastCompletedCycleAt - cycleStartedAt);
+    state.runtime.scanCycle = scanCycle;
     scanCycle += 1;
     await new Promise((resolve) => setTimeout(resolve, config.POLL_INTERVAL_MS));
   }

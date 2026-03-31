@@ -24,6 +24,8 @@ TradingBot e un paper trading bot multi-market in Node.js con dashboard locale, 
 3. Avvia il bot con `npm start`.
 4. Apri `http://127.0.0.1:3000`.
 
+La watchlist dinamica usa una pool ampia di mercati caldi aggiornata con `HOT_SYMBOLS_REFRESH_MS`; i simboli deboli non in focus vengono ruotati ogni `WEAK_SYMBOL_ROTATION_MS` in base a `WEAK_SYMBOL_RSI_MAX`, mantenendo sempre il focus corrente e le eventuali posizioni aperte.
+
 ## Script
 
 - `npm start`: avvia il bot e la dashboard.

@@ -9,113 +9,205 @@
   <body>
     <main class="page">
       <header class="hero">
-        <h1>Dashboard Paper Trading</h1>
-        <p id="summary">Caricamento dati della sessione...</p>
+        <div class="hero-copy">
+          <p class="eyebrow">Paper Trading Control Room</p>
+          <h1>TradingBot</h1>
+          <p id="summary">Caricamento dati della sessione...</p>
+        </div>
+        <div class="hero-toolbar">
+          <div class="status-strip" id="hero-status-strip"></div>
+          <div class="toolbar-actions">
+            <button id="refresh-button" type="button" class="secondary-button">Aggiorna ora</button>
+            <span class="note" id="refresh-status">Sincronizzazione iniziale...</span>
+          </div>
+        </div>
       </header>
 
       <section class="summary-grid" id="summary-cards"></section>
 
-      <section class="card" id="positions-section">
-        <h2>Posizioni aperte</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Simbolo</th>
-                <th>Prezzo Ingresso</th>
-                <th>Prezzo Corrente</th>
-                <th>Dimensione</th>
-                <th>PnL Live</th>
-                <th>Stop Loss</th>
-                <th>Take Profit</th>
-              </tr>
-            </thead>
-            <tbody id="positions-body">
-              <tr>
-                <td colspan="7">Nessuna posizione aperta.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <section class="workspace-grid">
+        <div class="workspace-main">
+          <section class="card decision-card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Focus corrente</p>
+                <h2>Decisione attuale</h2>
+              </div>
+              <div class="action-pill-wrap">
+                <span class="big-action" id="current-action">HOLD</span>
+                <span class="badge" id="current-symbol-badge">n/a</span>
+              </div>
+            </div>
+            <div class="decision-layout">
+              <div class="decision-copy">
+                <p class="explanation-short" id="decision-short-explanation">Caricamento spiegazione...</p>
+                <p class="explanation-detail" id="decision-detailed-explanation"></p>
+                <ul class="explanation-list" id="decision-reason-list"></ul>
+              </div>
+              <div class="decision-facts-panel">
+                <dl class="facts compact-facts" id="decision-main-facts"></dl>
+              </div>
+            </div>
+          </section>
 
-      <section class="card">
-        <h2>Decisione attuale</h2>
-        <div class="decision-highlight">
-          <div class="decision-main">
-            <span class="big-action" id="current-action">HOLD</span>
-            <span class="badge" id="current-symbol-badge">n/a</span>
-          </div>
-          <p class="explanation-short" id="decision-short-explanation">Caricamento spiegazione...</p>
-          <p class="explanation-detail" id="decision-detailed-explanation"></p>
-          <dl class="facts compact-facts" id="decision-main-facts"></dl>
-          <ul class="explanation-list" id="decision-reason-list"></ul>
-        </div>
-      </section>
+          <section class="card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Execution monitor</p>
+                <h2>Posizioni aperte</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Simbolo</th>
+                    <th>Prezzo Ingresso</th>
+                    <th>Prezzo Corrente</th>
+                    <th>Dimensione</th>
+                    <th>PnL Live</th>
+                    <th>Stop Loss</th>
+                    <th>Take Profit</th>
+                  </tr>
+                </thead>
+                <tbody id="positions-body">
+                  <tr>
+                    <td colspan="7">Nessuna posizione aperta.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-      <section class="card">
-        <h2>Mercati monitorati</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Simbolo</th>
-                <th>Prezzo</th>
-                <th>Trend</th>
-                <th>Segnale</th>
-                <th>Score</th>
-                <th>RSI</th>
-                <th>EMA veloce</th>
-                <th>EMA lenta</th>
-              </tr>
-            </thead>
-            <tbody id="markets-body">
-              <tr>
-                <td colspan="8">Caricamento mercati...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <section class="card">
+            <div class="section-heading section-heading-inline">
+              <div>
+                <p class="section-kicker">Market scanner</p>
+                <h2>Mercati monitorati</h2>
+              </div>
+              <div class="market-filters">
+                <input id="market-search" type="search" placeholder="Filtra simboli" />
+                <div class="chip-row" id="market-filter-chips"></div>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Simbolo</th>
+                    <th>Prezzo</th>
+                    <th>Trend</th>
+                    <th>Segnale</th>
+                    <th>Stato</th>
+                    <th>Score</th>
+                    <th>RSI</th>
+                    <th>Engine</th>
+                    <th>Motivo</th>
+                  </tr>
+                </thead>
+                <tbody id="markets-body">
+                  <tr>
+                    <td colspan="9">Caricamento mercati...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-      <section class="card">
-        <h2>Operazioni eseguite</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Apertura</th>
-                <th>Simbolo</th>
-                <th>Stato</th>
-                <th>Prezzi</th>
-                <th>Durata</th>
-                <th>PnL</th>
-              </tr>
-            </thead>
-            <tbody id="trades-body">
-              <tr>
-                <td colspan="6">Caricamento operazioni...</td>
-              </tr>
-            </tbody>
-          </table>
+          <section class="card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Trade journal</p>
+                <h2>Operazioni eseguite</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Apertura</th>
+                    <th>Simbolo</th>
+                    <th>Stato</th>
+                    <th>Prezzi</th>
+                    <th>Durata</th>
+                    <th>PnL</th>
+                  </tr>
+                </thead>
+                <tbody id="trades-body">
+                  <tr>
+                    <td colspan="6">Caricamento operazioni...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
-      </section>
 
-      <section class="card controls-card">
-        <h2>Controlli</h2>
-        <p>Usa il reset per riportare il paper trading allo stato iniziale.</p>
-        <div class="controls-row">
-          <label class="toggle-control" for="btc-filter-toggle">
-            <span>Filtro BTC</span>
-            <input id="btc-filter-toggle" type="checkbox" />
-            <span class="toggle-pill" aria-hidden="true"></span>
-          </label>
-          <button id="reset-button" type="button">Reset sessione</button>
-        </div>
-        <p class="note" id="reset-result"></p>
+        <aside class="workspace-side">
+          <section class="card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Watchlist engine</p>
+                <h2>Radar watchlist</h2>
+              </div>
+            </div>
+            <dl class="facts compact-facts" id="watchlist-overview"></dl>
+            <div class="panel-stack">
+              <div class="subpanel">
+                <h3>Attivi adesso</h3>
+                <div class="token-grid" id="active-watchlist"></div>
+              </div>
+              <div class="subpanel">
+                <h3>Pool calda</h3>
+                <div class="token-grid token-grid-dense" id="hot-pool"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Rotation activity</p>
+                <h2>Ultimi swap</h2>
+              </div>
+            </div>
+            <div class="timeline" id="swap-timeline">
+              <p class="empty-state">Nessuno swap registrato.</p>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Runtime</p>
+                <h2>Stato operativo</h2>
+              </div>
+            </div>
+            <dl class="facts compact-facts" id="runtime-facts"></dl>
+          </section>
+
+          <section class="card controls-card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Session controls</p>
+                <h2>Controlli</h2>
+              </div>
+            </div>
+            <p>Usa il reset per riportare il paper trading allo stato iniziale.</p>
+            <div class="controls-row">
+              <label class="toggle-control" for="btc-filter-toggle">
+                <span>Filtro BTC</span>
+                <input id="btc-filter-toggle" type="checkbox" />
+                <span class="toggle-pill" aria-hidden="true"></span>
+              </label>
+              <button id="reset-button" type="button">Reset sessione</button>
+            </div>
+            <p class="note" id="reset-result"></p>
+          </section>
+        </aside>
       </section>
     </main>
 
     <script src="/app.js"></script>
   </body>
-  </html>
+</html>
