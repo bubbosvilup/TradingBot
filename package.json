@@ -5,6 +5,7 @@
   "main": "bot.js",
   "type": "commonjs",
   "scripts": {
+    "backtest": "node scripts/backtest.js",
     "start": "node bot.js",
     "test": "node tests/run-tests.js"
   },

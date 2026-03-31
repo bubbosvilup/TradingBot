@@ -29,6 +29,7 @@ const ENTRY_ENGINES = {
 
 const EXIT_REASON_CODES = {
   ATR_STOP: "atr_stop",
+  BACKTEST_END: "backtest_end",
   HARD_STOP: "hard_stop",
   PARTIAL_TAKE_PROFIT: "partial_take_profit",
   TAKE_PROFIT: "take_profit",
@@ -40,6 +41,7 @@ const EXIT_REASON_CODES = {
 
 const EXIT_REASON_LABELS = {
   [EXIT_REASON_CODES.ATR_STOP]: "ATR stop loss reached.",
+  [EXIT_REASON_CODES.BACKTEST_END]: "Backtest ended.",
   [EXIT_REASON_CODES.HARD_STOP]: "Hard stop triggered.",
   [EXIT_REASON_CODES.PARTIAL_TAKE_PROFIT]: "Partial take profit reached.",
   [EXIT_REASON_CODES.TAKE_PROFIT]: "Take profit reached.",

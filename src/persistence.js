@@ -4,9 +4,11 @@ const fs = require("fs");
 
 function createPersistence(context) {
   const { config, state, logScoped, formatLogNumber } = context;
+  let backtestReportMtimeMs = null;
+  const getNowIso = typeof context.getNowIso === "function" ? context.getNowIso : () => new Date().toISOString();
 
   function appendTradeLog(message) {
-    const timestamp = new Date().toISOString();
+    const timestamp = getNowIso();
     fs.appendFileSync(config.TRADES_LOG_FILE, `[${timestamp}] ${message}\n`);
   }
 
@@ -41,6 +43,43 @@ function createPersistence(context) {
     fs.writeFileSync(config.TRADES_LOG_FILE, "");
   }
 
+  function refreshBacktestReportFromDisk() {
+    if (!config.BACKTEST_REPORT_FILE) {
+      return state.research?.backtestReport || null;
+    }
+
+    if (!fs.existsSync(config.BACKTEST_REPORT_FILE)) {
+      backtestReportMtimeMs = null;
+      if (state.research) {
+        state.research.backtestReport = null;
+      }
+      return null;
+    }
+
+    const stats = fs.statSync(config.BACKTEST_REPORT_FILE);
+    if (backtestReportMtimeMs === stats.mtimeMs && state.research?.backtestReport) {
+      return state.research.backtestReport;
+    }
+
+    const rawReport = fs.readFileSync(config.BACKTEST_REPORT_FILE, "utf-8");
+    const parsedReport = JSON.parse(rawReport);
+    backtestReportMtimeMs = stats.mtimeMs;
+    if (state.research) {
+      state.research.backtestReport = parsedReport;
+    }
+    return parsedReport;
+  }
+
+  function saveBacktestReport(report) {
+    if (!config.BACKTEST_REPORT_FILE) {
+      return;
+    }
+
+    fs.writeFileSync(config.BACKTEST_REPORT_FILE, JSON.stringify(report, null, 2));
+    backtestReportMtimeMs = null;
+    refreshBacktestReportFromDisk();
+  }
+
   function resetSession() {
     state.usdtBalance = config.INITIAL_USDT_BALANCE;
     state.positions = [];
@@ -64,7 +103,9 @@ function createPersistence(context) {
     appendTradeLog,
     clearTradesLog,
     loadStateFromDisk,
+    refreshBacktestReportFromDisk,
     resetSession,
+    saveBacktestReport,
     saveStateToDisk
   };
 }

@@ -19,6 +19,9 @@ const swapTimeline = document.getElementById("swap-timeline");
 const runtimeFacts = document.getElementById("runtime-facts");
 const performanceFacts = document.getElementById("performance-facts");
 const engineBreakdownBody = document.getElementById("engine-breakdown-body");
+const researchSummary = document.getElementById("research-summary");
+const strategyModesBody = document.getElementById("strategy-modes-body");
+const researchSymbolsBody = document.getElementById("research-symbols-body");
 const heroStatusStrip = document.getElementById("hero-status-strip");
 const refreshButton = document.getElementById("refresh-button");
 const refreshStatus = document.getElementById("refresh-status");
@@ -176,12 +179,14 @@ function renderReasonList(items) {
 function renderHeroStatus(statusData) {
   const runtime = statusData.runtime || {};
   const watchlist = statusData.watchlist || {};
+  const backtestReport = statusData.research?.backtestReport || null;
   const chips = [
     { label: "Exchange", value: statusData.bot.exchange || "n/a" },
     { label: "Regime BTC", value: statusData.overview?.btcRegime || "n/a" },
     { label: "Scan cycle", value: runtime.scanCycle ?? 0 },
     { label: "WS", value: (runtime.realtimeSymbols || []).join(", ") || "REST only" },
-    { label: "Rotazione debole", value: `${watchlist.weakThresholdRsi ?? "n/a"} RSI` }
+    { label: "Rotazione debole", value: `${watchlist.weakThresholdRsi ?? "n/a"} RSI` },
+    { label: "Mode research", value: backtestReport?.recommendedMode || "n/a" }
   ];
 
   heroStatusStrip.innerHTML = chips
@@ -516,6 +521,64 @@ function renderPerformancePanel(statusData) {
     .join("");
 }
 
+function renderResearchPanel(statusData) {
+  const report = statusData.research?.backtestReport || null;
+  if (!report) {
+    renderFacts(researchSummary, [
+      ["Stato", "Nessun report caricato"],
+      ["Azione", "Esegui npm run backtest"],
+      ["Timeline", "n/a"],
+      ["Simboli", "0"]
+    ]);
+    strategyModesBody.innerHTML = '<tr><td colspan="6">Nessun report di backtest disponibile.</td></tr>';
+    researchSymbolsBody.innerHTML = '<tr><td colspan="4">Esegui `npm run backtest` per popolare questa vista.</td></tr>';
+    return;
+  }
+
+  const recommendedMode = report.recommendedMode || "n/a";
+  const topMode = Array.isArray(report.modes) ? report.modes[0] : null;
+  const topSymbols = Array.isArray(topMode?.symbolBreakdown) ? topMode.symbolBreakdown : [];
+
+  renderFacts(researchSummary, [
+    ["Modalita raccomandata", escapeHtml(recommendedMode)],
+    ["Generato", formatRelativeTime(report.generatedAt)],
+    ["Timeline", report.timeline?.start && report.timeline?.end ? `${formatDate(report.timeline.start)} -> ${formatDate(report.timeline.end)}` : "n/a"],
+    ["Simboli", String(report.symbolCount ?? (report.symbols || []).length ?? 0)],
+    ["Campioni 5m", String(report.timeline?.points ?? 0)],
+    ["Heuristic score", formatIndicator(report.heuristics?.recommendedModeScore)]
+  ]);
+
+  const modeRows = Array.isArray(report.modes) ? report.modes : [];
+  strategyModesBody.innerHTML = modeRows.length
+    ? modeRows.map((mode) => `
+        <tr>
+          <td>
+            <div class="symbol-cell">
+              <strong>${escapeHtml(mode.strategyMode)}</strong>
+              ${mode.strategyMode === recommendedMode ? '<span class="badge badge-best">Raccomandata</span>' : ""}
+            </div>
+          </td>
+          <td class="${getValueClass(mode.summary?.sessionPnl)}">${formatSignedUsdt(mode.summary?.sessionPnl)}</td>
+          <td>${formatIndicator(mode.stats?.winRatePct)}%</td>
+          <td>${formatIndicator(mode.stats?.profitFactor)}</td>
+          <td class="${getValueClass(-Math.abs(mode.stats?.maxDrawdownUsdt || 0))}">${formatIndicator(mode.stats?.maxDrawdownPct)}%</td>
+          <td>${formatIndicator(mode.recommendationScore)}</td>
+        </tr>
+      `).join("")
+    : '<tr><td colspan="6">Nessuna modalita valutata.</td></tr>';
+
+  researchSymbolsBody.innerHTML = topSymbols.length
+    ? topSymbols.slice(0, 8).map((entry) => `
+        <tr>
+          <td>${escapeHtml(entry.symbol)}</td>
+          <td>${entry.closedRounds}</td>
+          <td class="${getValueClass(entry.grossPnlUsdt)}">${formatSignedUsdt(entry.grossPnlUsdt)}</td>
+          <td>${formatIndicator(entry.winRatePct)}%</td>
+        </tr>
+      `).join("")
+    : '<tr><td colspan="4">Nessun round chiuso nel report selezionato.</td></tr>';
+}
+
 function renderDecision(statusData) {
   currentActionElement.textContent = statusData.decision.action || "HOLD";
   currentActionElement.className = `big-action ${getActionClass(statusData.decision.action)}`;
@@ -577,6 +640,7 @@ function renderDashboard(statusData, tradesData) {
   renderWatchlistSidebar(statusData);
   renderRuntimePanel(statusData);
   renderPerformancePanel(statusData);
+  renderResearchPanel(statusData);
   renderTrades(Array.isArray(tradesData.trades) ? tradesData.trades : []);
   refreshStatus.textContent = `Ultimo refresh ${formatRelativeTime(clientState.lastRefreshAt)}`;
 }

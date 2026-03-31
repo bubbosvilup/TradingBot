@@ -32,6 +32,7 @@ const config = {
   ATR_STOP_MULT: Number(process.env.ATR_STOP_MULT || 1.5),
   ATR_TP_MULT: Number(process.env.ATR_TP_MULT || 3.0),
   ATR_TRAIL_MULT: Number(process.env.ATR_TRAIL_MULT || 2.0),
+  BACKTEST_REPORT_FILE: path.join(__dirname, "backtest-report.json"),
   BATCH_DELAY_MS: Math.max(Number(process.env.BATCH_DELAY_MS || 500), 0),
   BATCH_SIZE: Math.max(Number(process.env.BATCH_SIZE || 5), 1),
   DEFAULT_SYMBOL: (process.env.SYMBOL || "BTC/USDT").trim(),
@@ -149,6 +150,9 @@ const state = {
     realtimeSymbols: [],
     restSymbolCount: 0,
     scanCycle: 0
+  },
+  research: {
+    backtestReport: null
   },
   strategyName: config.STRATEGY_NAME,
   trades: [],
@@ -303,6 +307,7 @@ async function main() {
   state.botActive = true;
   state.botStartedAt = new Date().toISOString();
   context.persistence.loadStateFromDisk();
+  context.persistence.refreshBacktestReportFromDisk();
   if (state.positions.length > 0) {
     logScoped("SESSION", `restored | positions=${state.positions.length} | usdt=${formatLogNumber(state.usdtBalance, 2)} | trades=${state.trades.length}`);
   }

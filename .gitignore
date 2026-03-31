@@ -1,5 +1,6 @@
 .env
 state.json
 trades.log
+backtest-report.json
 node_modules/
 *.log

@@ -22,6 +22,7 @@ function createServerApi(context) {
         const sortedEvents = [...events].sort((left, right) => new Date(left.time) - new Date(right.time));
         const first = sortedEvents[0];
         const last = sortedEvents[sortedEvents.length - 1];
+        const tradeId = first?.tradeId || `legacy-${first?.time}-${first?.symbol}`;
         const isClosed = sortedEvents.some((event) => event.action === "SELL_FULL");
         const buys = sortedEvents.filter((event) => event.action === "BUY");
         const totalFees = sortedEvents.reduce((sum, event) => sum + (event.feePaid || 0), 0);
@@ -285,6 +286,10 @@ function createServerApi(context) {
   }
 
   function getStatusPayload() {
+    if (context.persistence?.refreshBacktestReportFromDisk) {
+      context.persistence.refreshBacktestReportFromDisk();
+    }
+
     const focusMarket = selectFocusMarket();
     const activePositionSymbols = state.positions.map((position) => position.symbol);
     const focusSymbol = focusMarket ? focusMarket.symbol : (activePositionSymbols[0] || state.bestCandidateSymbol);
@@ -518,6 +523,9 @@ function createServerApi(context) {
         realtimeSymbols: state.runtime?.realtimeSymbols || [],
         restSymbolCount: state.runtime?.restSymbolCount ?? 0,
         scanCycle: state.runtime?.scanCycle ?? 0
+      },
+      research: {
+        backtestReport: state.research?.backtestReport || null
       },
       stats,
       watchlist

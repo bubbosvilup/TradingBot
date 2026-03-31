@@ -2,6 +2,8 @@
 
 function createRuntime(context) {
   const { config, state } = context;
+  const getNowMs = typeof context.getNowMs === "function" ? context.getNowMs : () => Date.now();
+  const getNowIso = typeof context.getNowIso === "function" ? context.getNowIso : () => new Date(getNowMs()).toISOString();
   const symbolCooldown = new Map();
   const recentlyExited = new Set();
   const recentlyExitedExpiry = new Map();
@@ -183,7 +185,7 @@ function createRuntime(context) {
       return;
     }
 
-    const now = Date.now();
+    const now = getNowMs();
     wsFailureTimestamps.push(now);
     while (wsFailureTimestamps.length > 0 && now - wsFailureTimestamps[0] > config.WS_FAILURE_WINDOW_MS) {
       wsFailureTimestamps.shift();
@@ -201,7 +203,7 @@ function createRuntime(context) {
 
   async function getCandlesWithRealtimeFallback(restExchange, streamExchange, symbol, timeframe, limit, realtimeSymbols) {
     const backoffKey = `${symbol}:${timeframe}`;
-    const now = Date.now();
+    const now = getNowMs();
     const backoffUntil = wsBackoffUntil.get(backoffKey) || 0;
     const canUseWs =
       config.USE_CCXT_PRO_WS &&
@@ -220,7 +222,7 @@ function createRuntime(context) {
 
     if (canUseWs) {
       try {
-        const nowMs = Date.now();
+        const nowMs = getNowMs();
         let delay = 0;
         if (lastWsSubscribeTime < nowMs) {
           lastWsSubscribeTime = nowMs;
@@ -266,7 +268,7 @@ function createRuntime(context) {
         const previousDelay = wsBackoffDelay.get(backoffKey) || config.WS_BACKOFF_BASE_MS;
         const nextDelay = Math.min(previousDelay * 2, config.WS_BACKOFF_MAX_MS);
         wsBackoffDelay.set(backoffKey, nextDelay);
-        wsBackoffUntil.set(backoffKey, Date.now() + nextDelay);
+        wsBackoffUntil.set(backoffKey, getNowMs() + nextDelay);
         registerWsFailure(error);
         context.logScoped("WS", `stream_error | symbol=${symbol} | timeframe=${timeframe} | fallback=REST | retry_in=${nextDelay}ms | message=${error.message}`);
       }
@@ -371,8 +373,8 @@ function createRuntime(context) {
     const takeProfit = Math.max(plannedTakeProfit, minimumTakeProfit);
     const initialRiskPerUnit = averageEntryPrice - stopLoss;
     const nextEntryCount = (existingPosition ? existingPosition.entryCount : 0) + 1;
-    const tradeId = existingPosition ? existingPosition.tradeId : `T-${Date.now().toString(36).toUpperCase()}`;
-    const tradeTime = new Date().toISOString();
+    const tradeId = existingPosition ? existingPosition.tradeId : `T-${getNowMs().toString(36).toUpperCase()}`;
+    const tradeTime = getNowIso();
     const budgetRemainingAfter = Math.max(0, budget.budgetCap - totalNotionalAllocated);
     const explanationShort = existingPosition ? `Il bot aggiunge un ingresso su ${snapshot.symbol}: il segnale resta forte e c'e ancora budget disponibile.` : snapshot.shortExplanation;
     const explanationDetailed = existingPosition ? `${snapshot.detailedExplanation} Il bot ha aggiunto un ingresso sullo stesso mercato per aumentare la posizione in modo controllato, mantenendo un margine di budget disponibile.` : snapshot.detailedExplanation;
@@ -388,7 +390,7 @@ function createRuntime(context) {
       entryFeesPaid: totalEntryFeesPaid,
       entryPrice: averageEntryPrice,
       entrySlippagePaid: totalEntrySlippagePaid,
-      entryTime: existingPosition ? existingPosition.entryTime : Date.now(),
+      entryTime: existingPosition ? existingPosition.entryTime : getNowMs(),
       hardFloor,
       highWaterMark: existingPosition ? Math.max(existingPosition.highWaterMark, snapshot.lastPrice) : snapshot.lastPrice,
       initialRiskPerUnit,
@@ -488,7 +490,7 @@ function createRuntime(context) {
       reasonList: ["Decisione finale: SELL_PARTIAL", `Motivo: target parziale ${config.PARTIAL_TP_R}R raggiunto`, "Stop spostato a breakeven"],
       slippagePaid: execution.slippagePaid,
       symbol: currentPosition.symbol,
-      time: new Date().toISOString(),
+      time: getNowIso(),
       tradeId: currentPosition.tradeId,
       usdtAmount: execution.netProceeds
     });
@@ -515,7 +517,7 @@ function createRuntime(context) {
       return { exitReasonCode: context.strategy.EXIT_REASON_CODES.HARD_STOP, shouldExit: true, shouldPartialExit: false };
     }
 
-    const elapsedSeconds = currentPosition.entryTime ? (Date.now() - currentPosition.entryTime) / 1000 : Number.MAX_SAFE_INTEGER;
+    const elapsedSeconds = currentPosition.entryTime ? (getNowMs() - currentPosition.entryTime) / 1000 : Number.MAX_SAFE_INTEGER;
     const halfRTarget = currentPosition.entryPrice + currentPosition.initialRiskPerUnit * 0.5;
     const partialTargetPrice = currentPosition.partialTargetPrice || (currentPosition.entryPrice + currentPosition.initialRiskPerUnit * config.PARTIAL_TP_R);
     const partialTargetHit = !currentPosition.partialExitDone && snapshot.lastPrice >= partialTargetPrice;
@@ -626,7 +628,7 @@ function createRuntime(context) {
       reasonList: explanation.reasonList,
       slippagePaid: execution.slippagePaid,
       symbol: currentPosition.symbol,
-      time: new Date().toISOString(),
+      time: getNowIso(),
       tradeId: currentPosition.tradeId,
       usdtAmount: execution.netProceeds
     });
@@ -842,7 +844,7 @@ function createRuntime(context) {
 
     const previousLabel = currentSymbols.join(",");
     const nextLabel = nextSymbols.join(",");
-    state.watchlist.lastRotationAt = new Date().toISOString();
+    state.watchlist.lastRotationAt = getNowIso();
     state.watchlist.weakThresholdRsi = weakRsiMax;
     state.watchlist.lastRotationSummary = {
       anchoredSymbols: [...anchoredSymbols],
@@ -857,7 +859,7 @@ function createRuntime(context) {
     if (replacements.length > 0) {
       const stampedReplacements = replacements.map((replacement) => ({
         ...replacement,
-        time: new Date().toISOString()
+        time: getNowIso()
       }));
       state.watchlist.recentSwaps = [...stampedReplacements, ...(state.watchlist.recentSwaps || [])].slice(0, 20);
     }

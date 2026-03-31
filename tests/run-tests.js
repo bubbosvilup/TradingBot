@@ -1,11 +1,13 @@
 "use strict";
 
+const { runBacktestTests } = require("./backtest.test");
 const { runServerTests } = require("./server.test");
 const { runRuntimeTests } = require("./runtime.test");
 const { runStrategyTests } = require("./strategy.test");
 
 async function main() {
   const tests = [
+    { name: "backtest", run: async () => runBacktestTests() },
     { name: "strategy", run: async () => runStrategyTests() },
     { name: "runtime", run: async () => runRuntimeTests() },
     { name: "server", run: runServerTests }

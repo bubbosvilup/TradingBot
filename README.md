@@ -4,15 +4,19 @@ TradingBot e un paper trading bot multi-market in Node.js con dashboard locale, 
 
 Il motore supporta `STRATEGY_MODE=adaptive|trend|range_grid`. In `adaptive` il bot tratta i mercati direzionali con continuation / SFP e prova setup di tipo range-grid long-only quando il regime e laterale; in `range_grid` forza solo la logica di mean reversion sul bordo basso del range.
 
+Oltre al loop live, il progetto include anche un laboratorio di ricerca: `npm run backtest` scarica dati OHLCV recenti, confronta `adaptive`, `trend` e `range_grid` sugli stessi simboli e salva un report locale in `backtest-report.json`, che la dashboard mostra nella sezione Strategy Lab.
+
 ## Architettura
 
 - `bot.js`: entrypoint e orchestrazione del loop.
 - `src/strategy.js`: indicatori, scoring, decision state, entry engine, exit reason code.
 - `src/runtime.js`: watchlist dinamica, fetch candele, esecuzione paper, gestione posizioni.
 - `src/persistence.js`: persistenza di `state.json` e `trades.log`.
+- `src/backtest.js`: replay engine per confrontare modalita strategiche sugli stessi dati storici.
 - `src/server.js`: API locali e payload della dashboard.
 - `public/`: dashboard statica.
-- `tests/`: test minimi su strategy e API status.
+- `scripts/backtest.js`: runner CLI per generare il report di ricerca.
+- `tests/`: test minimi su strategy, runtime, server e replay.
 
 ## Requisiti
 
@@ -32,6 +36,7 @@ La watchlist dinamica usa una pool ampia di mercati caldi aggiornata con `HOT_SY
 
 - `npm start`: avvia il bot e la dashboard.
 - `npm test`: esegue i test minimi con `node:test`.
+- `npm run backtest`: scarica dati recenti, esegue il replay multi-modalita e aggiorna `backtest-report.json`.
 
 ## Dati locali
 
@@ -43,6 +48,13 @@ I file runtime non devono essere versionati:
 - `node_modules/`
 
 Il repository include un `.gitignore` per tenerli fuori dall'indice git.
+
+## Backtest rapido
+
+1. Imposta `BACKTEST_SYMBOLS` se vuoi simboli specifici; altrimenti il runner usa i simboli caldi del momento.
+2. Regola `BACKTEST_DAYS`, `BACKTEST_SYMBOL_LIMIT` e i delay di fetch.
+3. Esegui `npm run backtest`.
+4. Riavvia o aggiorna la dashboard per vedere il report in Strategy Lab.
 
 ## API locali
 
