@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 
-const { createStrategy } = require("../src/strategy");
+const { createStrategy } = require("../legacy/strategy");
 
 function makeCandle(timestamp, open, high, low, close, volume) {
   return [timestamp, open, high, low, close, volume];

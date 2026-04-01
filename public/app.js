@@ -1,176 +1,106 @@
-const summaryCards = document.getElementById("summary-cards");
-const decisionMainFacts = document.getElementById("decision-main-facts");
-const currentActionElement = document.getElementById("current-action");
-const currentSymbolBadge = document.getElementById("current-symbol-badge");
-const marketsBody = document.getElementById("markets-body");
-const tradesBody = document.getElementById("trades-body");
-const positionsBody = document.getElementById("positions-body");
-const summaryElement = document.getElementById("summary");
-const shortExplanationElement = document.getElementById("decision-short-explanation");
-const detailedExplanationElement = document.getElementById("decision-detailed-explanation");
-const reasonListElement = document.getElementById("decision-reason-list");
-const focusChartMeta = document.getElementById("focus-chart-meta");
-const focusChartSurface = document.getElementById("focus-chart-surface");
-const focusChartTimeframes = document.getElementById("focus-chart-timeframes");
-const resetButton = document.getElementById("reset-button");
-const resetResult = document.getElementById("reset-result");
-const btcFilterToggle = document.getElementById("btc-filter-toggle");
-const aggressiveModeToggle = document.getElementById("aggressive-mode-toggle");
-const watchlistOverview = document.getElementById("watchlist-overview");
-const activeWatchlist = document.getElementById("active-watchlist");
-const hotPool = document.getElementById("hot-pool");
-const swapTimeline = document.getElementById("swap-timeline");
-const runtimeFacts = document.getElementById("runtime-facts");
-const performanceFacts = document.getElementById("performance-facts");
-const engineBreakdownBody = document.getElementById("engine-breakdown-body");
-const researchSummary = document.getElementById("research-summary");
-const strategyModesBody = document.getElementById("strategy-modes-body");
-const researchSymbolsBody = document.getElementById("research-symbols-body");
-const researchModeChips = document.getElementById("research-mode-chips");
-const simulatedRoundsBody = document.getElementById("simulated-rounds-body");
-const backtestLog = document.getElementById("backtest-log");
-const runBacktestButton = document.getElementById("run-backtest-button");
-const backtestRunStatus = document.getElementById("backtest-run-status");
-const backtestDaysInput = document.getElementById("backtest-days");
-const backtestSymbolLimitInput = document.getElementById("backtest-symbol-limit");
-const backtestSymbolsInput = document.getElementById("backtest-symbols");
-const backtestUseWatchlistToggle = document.getElementById("backtest-use-watchlist-toggle");
-const backtestAggressiveToggle = document.getElementById("backtest-aggressive-toggle");
-const heroStatusStrip = document.getElementById("hero-status-strip");
-const refreshButton = document.getElementById("refresh-button");
-const refreshStatus = document.getElementById("refresh-status");
-const marketSearch = document.getElementById("market-search");
-const marketFilterChips = document.getElementById("market-filter-chips");
-
-const clientState = {
-  activeFilter: "all",
-  backtestForm: {
-    aggressiveMode: false,
-    days: 3,
-    symbolLimit: 6,
-    symbols: "",
-    useActiveWatchlist: true
-  },
-  chartTimeframe: "5m",
-  isRefreshing: false,
-  lastPayload: null,
-  lastRefreshAt: null,
-  refreshError: null,
-  selectedResearchMode: null,
-  searchQuery: ""
+const refs = {
+  botsBody: document.getElementById("bots-body"),
+  chartLegend: document.getElementById("chart-legend"),
+  comparisonNode: document.getElementById("comparison-chart"),
+  drawdownNode: document.getElementById("drawdown-chart"),
+  eventsList: document.getElementById("events-list"),
+  focusChart: document.getElementById("focus-chart"),
+  focusMeta: document.getElementById("focus-meta"),
+  focusSymbol: document.getElementById("focus-symbol"),
+  focusTitle: document.getElementById("focus-title"),
+  healthStack: document.getElementById("health-stack"),
+  historyBody: document.getElementById("history-body"),
+  historyCloseButton: document.getElementById("history-close-button"),
+  historyFilterBot: document.getElementById("history-filter-bot"),
+  historyFilterResult: document.getElementById("history-filter-result"),
+  historyFilterSymbol: document.getElementById("history-filter-symbol"),
+  historyModal: document.getElementById("history-modal"),
+  historyNote: document.getElementById("history-note"),
+  latencyPill: document.getElementById("latency-pill"),
+  modePill: document.getElementById("mode-pill"),
+  pnlNode: document.getElementById("pnl-chart"),
+  positionsBody: document.getElementById("positions-body"),
+  pricesList: document.getElementById("prices-list"),
+  refreshButton: document.getElementById("refresh-button"),
+  refreshStatus: document.getElementById("refresh-status"),
+  systemCards: document.getElementById("system-cards"),
+  systemNote: document.getElementById("system-note"),
+  timeframeGroup: document.getElementById("timeframe-group"),
+  tradeHistoryButton: document.getElementById("trade-history-button"),
+  tradeHistoryButtonInline: document.getElementById("trade-history-button-inline"),
+  wsPill: document.getElementById("ws-pill")
 };
 
-const MARKET_FILTERS = [
-  { id: "all", label: "Tutti" },
-  { id: "focus", label: "Focus" },
-  { id: "candidate", label: "Candidati" },
-  { id: "weak", label: "Deboli" },
-  { id: "position", label: "In posizione" }
-];
+const state = {
+  analytics: null,
+  bots: [],
+  chart: null,
+  chartPayload: null,
+  events: [],
+  focusSymbol: null,
+  history: {
+    filters: {
+      botId: "all",
+      result: "all",
+      symbol: "all"
+    },
+    isOpen: false,
+    selectedBotId: null,
+    trades: []
+  },
+  inFlight: {
+    analytics: false,
+    chart: false,
+    snapshot: false,
+    trades: false
+  },
+  positions: [],
+  prices: [],
+  system: null,
+  timeframe: "1m"
+};
+
+function formatNumber(value, decimals = 2) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "n/a";
+  return Number(value).toFixed(decimals);
+}
 
 function formatPrice(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "n/a";
-  }
-
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "n/a";
   const number = Number(value);
-  const absolute = Math.abs(number);
-
-  if (absolute >= 1000) return number.toFixed(2);
-  if (absolute >= 1) return number.toFixed(4);
-  if (absolute >= 0.1) return number.toFixed(5);
-  if (absolute >= 0.01) return number.toFixed(6);
-  return number.toFixed(8);
+  if (Math.abs(number) >= 1000) return number.toFixed(2);
+  if (Math.abs(number) >= 1) return number.toFixed(4);
+  return number.toFixed(6);
 }
 
-function formatBtc(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "n/a";
-  }
-  return Number(value).toFixed(6);
-}
-
-function formatUsdt(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "n/a";
-  }
-  return Number(value).toFixed(2);
-}
-
-function formatIndicator(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "n/a";
-  }
-  return Number(value).toFixed(2);
-}
-
-function formatBps(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "n/a";
-  }
-  return `${Number(value).toFixed(1)} bps`;
-}
-
-function formatSignedUsdt(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "n/a";
-  }
+function formatSigned(value, decimals = 2) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "n/a";
   const number = Number(value);
-  return `${number > 0 ? "+" : ""}${formatUsdt(number)}`;
+  const fixed = number.toFixed(decimals);
+  return `${number > 0 ? "+" : ""}${fixed}`;
 }
 
-function getValueClass(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "";
-  }
-  const number = Number(value);
-  if (number > 0) return "value-positive";
-  if (number < 0) return "value-negative";
-  return "";
+function formatRelative(value) {
+  if (!value) return "n/a";
+  const delta = Date.now() - Number(value);
+  if (!Number.isFinite(delta)) return "n/a";
+  if (delta < 1000) return "now";
+  if (delta < 60000) return `${Math.round(delta / 1000)}s ago`;
+  if (delta < 3600000) return `${Math.round(delta / 60000)}m ago`;
+  return `${Math.round(delta / 3600000)}h ago`;
 }
 
-function getActionClass(action) {
-  if (action === "BUY") return "value-positive";
-  if (action === "SELL") return "value-negative";
-  if (action === "WAIT") return "value-wait";
-  return "";
-}
-
-function formatDate(value) {
+function formatDateTime(value) {
   if (!value) return "n/a";
   return new Date(value).toLocaleString();
 }
 
-function formatChartTimeLabel(value, timeframe = "5m") {
-  if (!value) return "n/a";
-  const date = new Date(value);
-  if (timeframe === "1h") {
-    return date.toLocaleDateString(undefined, { day: "2-digit", month: "2-digit" });
-  }
-  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-}
-
-function formatRelativeTime(value) {
-  if (!value) return "n/a";
-  const deltaMs = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(deltaMs)) return "n/a";
-  const seconds = Math.max(0, Math.round(deltaMs / 1000));
-  if (seconds < 5) return "ora";
-  if (seconds < 60) return `${seconds}s fa`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m fa`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h fa`;
-}
-
-function formatDurationMs(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "n/a";
-  }
-  const ms = Number(value);
-  if (ms < 1000) return `${ms} ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)} s`;
-  return `${(ms / 60000).toFixed(1)} m`;
+function formatDuration(ms) {
+  if (!Number.isFinite(Number(ms)) || Number(ms) <= 0) return "ready";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `${(ms / 60000).toFixed(1)}m`;
+  return `${(ms / 3600000).toFixed(1)}h`;
 }
 
 function escapeHtml(value) {
@@ -182,1039 +112,569 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function renderFacts(container, entries) {
-  container.innerHTML = entries
-    .map(([label, value, cssClass]) => `<div class="fact"><dt>${escapeHtml(label)}</dt><dd class="${cssClass || ""}">${value}</dd></div>`)
-    .join("");
+function numberClass(value) {
+  if (!Number.isFinite(Number(value))) return "";
+  if (Number(value) > 0) return "value-positive";
+  if (Number(value) < 0) return "value-negative";
+  return "";
 }
 
-function renderSummaryCards(items) {
-  summaryCards.innerHTML = items
-    .map((item) => `
-      <article class="mini-card">
-        <span class="mini-label">${escapeHtml(item.label)}</span>
-        <strong class="mini-value ${item.cssClass || ""}">${item.value}</strong>
-        ${item.note ? `<span class="mini-note">${escapeHtml(item.note)}</span>` : ""}
-      </article>
-    `)
-    .join("");
+function badgeClass(status) {
+  if (status === "connected" || status === "running" || status === "mocking") return "badge badge-positive";
+  if (status === "reconnecting" || status === "paused") return "badge badge-warning";
+  if (status === "error" || status === "disconnected" || status === "stopped") return "badge badge-negative";
+  return "badge";
 }
 
-function renderReasonList(items) {
-  if (!items || !items.length) {
-    reasonListElement.innerHTML = "<li>Nessun dettaglio disponibile.</li>";
-    return;
+function setText(node, value) {
+  if (node) node.textContent = value;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
   }
-  reasonListElement.innerHTML = items.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  return response.json();
 }
 
-function renderHeroStatus(statusData) {
-  const runtime = statusData.runtime || {};
-  const watchlist = statusData.watchlist || {};
-  const backtestReport = statusData.research?.backtestReport || null;
-  const chips = [
-    { label: "Exchange", value: statusData.bot.exchange || "n/a" },
-    { label: "Regime BTC", value: statusData.overview?.btcRegime || "n/a" },
-    { label: "Profilo", value: statusData.overview?.aggressiveModeEnabled ? "Aggressivo" : "Normale" },
-    { label: "Scan cycle", value: runtime.scanCycle ?? 0 },
-    { label: "WS", value: (runtime.realtimeSymbols || []).join(", ") || "REST only" },
-    { label: "Rotazione debole", value: `${watchlist.weakThresholdRsi ?? "n/a"} RSI / ${formatDurationMs(watchlist.rotationCadenceMs ?? null)}` },
-    { label: "Mode research", value: backtestReport?.recommendedMode || "n/a" }
+function getMarketConnection(system) {
+  if (!system) return null;
+  return (system.wsConnections || []).find((connection) => connection.connectionId === "market-stream") || system.wsConnection || null;
+}
+
+function getUserConnection(system) {
+  if (!system) return null;
+  return (system.wsConnections || []).find((connection) => connection.connectionId === "user-stream") || null;
+}
+
+function pickFocusSymbol() {
+  const availableSymbols = [...new Set(state.bots.map((bot) => bot.symbol))];
+  if (state.focusSymbol && availableSymbols.includes(state.focusSymbol)) {
+    return state.focusSymbol;
+  }
+  const positionSymbol = state.positions[0]?.symbol;
+  if (positionSymbol) return positionSymbol;
+  const hotBot = state.bots.find((bot) => bot.openPosition) || state.bots.find((bot) => bot.status === "running");
+  return hotBot?.symbol || availableSymbols[0] || null;
+}
+
+function ensureFocusSymbol() {
+  const nextFocus = pickFocusSymbol();
+  state.focusSymbol = nextFocus;
+  const symbols = [...new Set(state.bots.map((bot) => bot.symbol))];
+  refs.focusSymbol.innerHTML = symbols.map((symbol) => `
+    <option value="${escapeHtml(symbol)}" ${symbol === nextFocus ? "selected" : ""}>${escapeHtml(symbol)}</option>
+  `).join("");
+}
+
+function renderSystemCards() {
+  if (!state.system) return;
+  const system = state.system;
+  const marketConnection = getMarketConnection(system);
+  const metrics = [
+    {
+      label: "Bots running",
+      note: `${system.botsTotal} configured`,
+      value: system.botsRunning
+    },
+    {
+      label: "Open positions",
+      note: "Across all bots",
+      value: system.openPositions
+    },
+    {
+      label: "Market stream",
+      note: marketConnection?.lastReason || "Primary feed state",
+      value: marketConnection?.status || "unknown"
+    },
+    {
+      label: "Uptime",
+      note: `Started ${formatDateTime(system.startedAt)}`,
+      value: formatDuration(system.uptimeMs)
+    }
   ];
 
-  heroStatusStrip.innerHTML = chips
-    .map((chip) => `<span class="status-chip"><strong>${escapeHtml(chip.label)}</strong><span>${escapeHtml(chip.value)}</span></span>`)
-    .join("");
-}
-
-function renderPositions(positions) {
-  if (!positions || !positions.length) {
-    positionsBody.innerHTML = '<tr><td colspan="7">Nessuna posizione aperta al momento.</td></tr>';
-    return;
-  }
-
-  positionsBody.innerHTML = positions
-    .map((pos) => {
-      const pnlClass = getValueClass(pos.pnlUsdt);
-      const stopLoss = pos.trailingActive && pos.trailingStop ? pos.trailingStop : pos.stopLoss;
-
-      return `
-        <tr>
-          <td>
-            <div class="symbol-cell">
-              <strong>${escapeHtml(pos.symbol)}</strong>
-              <span class="badge ${pos.trailingActive ? "badge-best" : "badge-position"}">${pos.trailingActive ? "Trailing" : "Open"}</span>
-            </div>
-          </td>
-          <td>${formatPrice(pos.entryPrice)}</td>
-          <td>${formatPrice(pos.lastPrice)}</td>
-          <td>${formatBtc(pos.btcAmount)}</td>
-          <td class="${pnlClass}">${escapeHtml(pos.pnlLabel)}</td>
-          <td>${formatPrice(stopLoss)}</td>
-          <td>${pos.takeProfit ? formatPrice(pos.takeProfit) : "n/a"}</td>
-        </tr>
-      `;
-    })
-    .join("");
-}
-
-function renderMarketFilters() {
-  marketFilterChips.innerHTML = MARKET_FILTERS.map((filter) => `
-    <button
-      type="button"
-      class="chip-button ${clientState.activeFilter === filter.id ? "chip-active" : ""}"
-      data-filter-id="${filter.id}"
-    >
-      ${escapeHtml(filter.label)}
-    </button>
-  `).join("");
-}
-
-function marketMatchesFilter(market) {
-  if (!market) return false;
-  if (clientState.searchQuery && !market.symbol.toLowerCase().includes(clientState.searchQuery)) {
-    return false;
-  }
-
-  switch (clientState.activeFilter) {
-    case "focus":
-      return market.isFocus === true;
-    case "candidate":
-      return market.signal === "BUY candidate" || market.isBestCandidate === true;
-    case "weak":
-      return market.isWeak === true;
-    case "position":
-      return market.isInPosition === true;
-    default:
-      return true;
-  }
-}
-
-function renderMarkets(markets) {
-  const filteredMarkets = (markets || []).filter(marketMatchesFilter);
-  if (!filteredMarkets.length) {
-    marketsBody.innerHTML = '<tr><td colspan="9">Nessun mercato corrisponde ai filtri attivi.</td></tr>';
-    return;
-  }
-
-  marketsBody.innerHTML = filteredMarkets
-    .map((market) => {
-      const badges = [
-        market.isInPosition ? '<span class="badge badge-position">Posizione aperta</span>' : "",
-        market.isBestCandidate ? '<span class="badge badge-best">Migliore opportunita</span>' : "",
-        market.isWeak ? '<span class="badge badge-weak">Debole</span>' : "",
-        market.isFocus ? '<span class="badge badge-focus">Focus</span>' : ""
-      ].filter(Boolean).join("");
-
-      return `
-        <tr>
-          <td>
-            <div class="symbol-cell">
-              <span>${escapeHtml(market.symbol)}</span>
-              ${badges}
-            </div>
-          </td>
-          <td>${formatPrice(market.lastPrice)}</td>
-          <td>${escapeHtml(market.trend || "n/a")}</td>
-          <td>${escapeHtml(market.signal || "HOLD")}</td>
-          <td>${escapeHtml(market.decisionState || "n/a")} / ${escapeHtml(market.marketRegime || "n/a")}</td>
-          <td>${market.score === null || market.score === undefined ? "n/a" : `${market.score} / ${formatIndicator(market.opportunityScore)}`}</td>
-          <td>${formatIndicator(market.rsi)}</td>
-          <td>${escapeHtml(market.entryEngine || "n/a")}</td>
-          <td class="reason-cell">${escapeHtml(market.reason || "n/a")}</td>
-        </tr>
-      `;
-    })
-    .join("");
-}
-
-function groupTrades(trades) {
-  const groups = new Map();
-
-  for (const trade of trades) {
-    const id = trade.tradeId || `legacy-${trade.time}-${trade.symbol}`;
-    if (!groups.has(id)) {
-      groups.set(id, []);
-    }
-    groups.get(id).push(trade);
-  }
-
-  return Array.from(groups.values())
-    .map((events) => {
-      const sortedEvents = [...events].sort((left, right) => new Date(left.time) - new Date(right.time));
-      const first = sortedEvents[0];
-      const last = sortedEvents[sortedEvents.length - 1];
-      const isClosed = sortedEvents.some((event) => event.action === "SELL_FULL");
-      const buys = sortedEvents.filter((event) => event.action === "BUY");
-      const totalBtc = buys.reduce((sum, event) => sum + event.btcAmount, 0);
-      const totalUsdt = buys.reduce((sum, event) => sum + (event.usdtAmount || event.price * event.btcAmount), 0);
-      const avgEntry = totalBtc > 0 ? totalUsdt / totalBtc : first.price;
-      const totalPnl = sortedEvents.reduce((sum, event) => sum + (event.netPnlUsdt || 0), 0);
-      const startTime = new Date(first.time);
-      const endTime = new Date(last.time);
-      const durationMs = endTime - startTime;
-      const durationMin = Math.floor(durationMs / 60000);
-
-      return {
-        duration: isClosed ? (durationMin > 0 ? `${durationMin}m` : "< 1m") : "In corso...",
-        entryPrice: avgEntry,
-        events: sortedEvents,
-        exitPrice: isClosed ? last.price : null,
-        lastReason: last.reason,
-        pnl: totalPnl,
-        startTime,
-        status: isClosed ? "Chiuso" : "Aperto",
-        symbol: first.symbol
-      };
-    })
-    .sort((left, right) => right.startTime - left.startTime);
-}
-
-function renderTrades(trades) {
-  if (!tradesBody) return;
-  if (!trades.length) {
-    tradesBody.innerHTML = '<tr><td colspan="6">Nessuna operazione completata disponibile.</td></tr>';
-    return;
-  }
-
-  tradesBody.innerHTML = groupTrades(trades)
-    .map((round) => {
-      const pnlClass = getValueClass(round.pnl);
-      const lastEvent = round.events[round.events.length - 1];
-      const shortExplanation = escapeHtml(lastEvent.explanationShort || lastEvent.reason || "Dettagli non disponibili.");
-      const eventLines = round.events.map((event) => `
-        <li>
-          <strong>${escapeHtml(event.action)}</strong>
-          <span>${escapeHtml(formatDate(event.time))}</span>
-          <span> @ ${escapeHtml(formatPrice(event.price))}</span>
-        </li>
-      `).join("");
-      const statusBadge = round.status === "Chiuso"
-        ? '<span class="badge badge-wait">Chiuso</span>'
-        : '<span class="badge badge-position">In corso</span>';
-
-      return `
-        <tr>
-          <td>${formatDate(round.startTime)}</td>
-          <td><strong>${escapeHtml(round.symbol)}</strong></td>
-          <td>${statusBadge}</td>
-          <td>
-            <div class="trade-action-cell">
-              <span>${formatPrice(round.entryPrice)} / ${round.exitPrice ? formatPrice(round.exitPrice) : "---"}</span>
-              <details class="trade-info">
-                <summary class="info-chip" title="Dettagli operazione">i</summary>
-                <div class="trade-tooltip">
-                  <strong>Status: ${escapeHtml(round.status)}</strong>
-                  <p>${shortExplanation}</p>
-                  <p>Motivo: ${escapeHtml(round.lastReason || "Nessuno")}</p>
-                  <p>Eventi: ${round.events.length}</p>
-                  <ul class="explanation-list">${eventLines}</ul>
-                </div>
-              </details>
-            </div>
-          </td>
-          <td>${escapeHtml(round.duration)}</td>
-          <td class="${pnlClass}">${round.status === "Chiuso" ? formatSignedUsdt(round.pnl) : "---"}</td>
-        </tr>
-      `;
-    })
-    .join("");
-}
-
-function renderActiveWatchlist(items) {
-  if (!items || !items.length) {
-    activeWatchlist.innerHTML = '<p class="empty-state">Nessun simbolo attivo.</p>';
-    return;
-  }
-
-  activeWatchlist.innerHTML = items.map((item) => `
-    <article class="token-card ${item.isFocus ? "token-focus" : ""} ${item.isWeak ? "token-weak" : ""}">
-      <div class="token-title-row">
-        <strong>${escapeHtml(item.symbol)}</strong>
-        <span class="token-rsi">${formatIndicator(item.rsi)}</span>
-      </div>
-      <div class="token-meta-row">
-        <span>${escapeHtml(item.signal || "HOLD")}</span>
-        <span>Opp ${formatIndicator(item.opportunityScore)}</span>
-      </div>
-      <div class="token-badges">
-        ${item.isFocus ? '<span class="badge badge-focus">Focus</span>' : ""}
-        ${item.isInPosition ? '<span class="badge badge-position">Open</span>' : ""}
-        ${item.isWeak ? '<span class="badge badge-weak">Weak</span>' : ""}
-        <span class="badge">${escapeHtml(item.marketRegime || "n/a")}</span>
-      </div>
+  refs.systemCards.innerHTML = metrics.map((item) => `
+    <article class="mini-card">
+      <span class="mini-label">${escapeHtml(item.label)}</span>
+      <strong class="mini-value">${escapeHtml(item.value)}</strong>
+      <span class="mini-note">${escapeHtml(item.note)}</span>
     </article>
   `).join("");
 }
 
-function renderHotPool(items) {
-  if (!items || !items.length) {
-    hotPool.innerHTML = '<p class="empty-state">Pool non disponibile.</p>';
-    return;
-  }
+function renderHealth() {
+  if (!state.system) return;
+  const marketConnection = getMarketConnection(state.system);
+  const userConnection = getUserConnection(state.system);
+  const latency = state.system.latency || null;
 
-  hotPool.innerHTML = items
-    .slice(0, 18)
-    .map((item) => `
-      <article class="token-card token-card-mini ${item.isActive ? "token-active" : ""}">
-        <div class="token-title-row">
-          <strong>${escapeHtml(item.symbol)}</strong>
-          <span class="token-rank">#${item.index}</span>
-        </div>
-        <div class="token-meta-row">
-          <span>RSI ${formatIndicator(item.rsi)}</span>
-          <span>Opp ${formatIndicator(item.opportunityScore)}</span>
-        </div>
-        <div class="token-badges">
-          ${item.isActive ? '<span class="badge badge-position">Attivo</span>' : ""}
-          ${item.isFocus ? '<span class="badge badge-focus">Focus</span>' : ""}
-          ${item.isBestCandidate ? '<span class="badge badge-best">Top</span>' : ""}
-        </div>
+  setText(refs.modePill, String(state.system.feedMode || "n/a").toUpperCase());
+  setText(refs.wsPill, marketConnection?.status || "n/a");
+  setText(refs.latencyPill, latency?.totalPipelineMs ? `${Math.round(latency.totalPipelineMs)}ms` : "n/a");
+
+  refs.healthStack.innerHTML = `
+    <div class="health-item">
+      <div>
+        <strong>Market WS</strong>
+        <p>${escapeHtml(marketConnection?.lastReason || "Primary price feed status")}</p>
+      </div>
+      <span class="${badgeClass(marketConnection?.status)}">${escapeHtml(marketConnection?.status || "unknown")}</span>
+    </div>
+    <div class="health-item">
+      <div>
+        <strong>User stream</strong>
+        <p>${escapeHtml(userConnection?.lastReason || "Order / balance event stream")}</p>
+      </div>
+      <span class="${badgeClass(userConnection?.status)}">${escapeHtml(userConnection?.status || "inactive")}</span>
+    </div>
+    <div class="pipeline-grid">
+      <article class="pipeline-item">
+        <span>Exchange -> WS</span>
+        <strong>${latency?.exchangeToReceiveMs ? `${Math.round(latency.exchangeToReceiveMs)}ms` : "n/a"}</strong>
       </article>
-    `)
-    .join("");
+      <article class="pipeline-item">
+        <span>WS -> Store</span>
+        <strong>${latency?.receiveToStateMs ? `${Math.round(latency.receiveToStateMs)}ms` : "n/a"}</strong>
+      </article>
+      <article class="pipeline-item">
+        <span>Store -> Bot</span>
+        <strong>${latency?.stateToBotMs ? `${Math.round(latency.stateToBotMs)}ms` : "n/a"}</strong>
+      </article>
+      <article class="pipeline-item">
+        <span>Bot -> Exec</span>
+        <strong>${latency?.botToExecutionMs ? `${Math.round(latency.botToExecutionMs)}ms` : "n/a"}</strong>
+      </article>
+    </div>
+  `;
 }
 
-function renderSwapTimeline(swaps) {
-  if (!swaps || !swaps.length) {
-    swapTimeline.innerHTML = '<p class="empty-state">Nessuno swap registrato.</p>';
-    return;
-  }
+function renderFocusMeta() {
+  const focusBot = state.bots.find((bot) => bot.symbol === state.focusSymbol) || null;
+  const focusPosition = state.positions.find((position) => position.symbol === state.focusSymbol) || null;
+  const latency = focusBot?.latency || state.system?.latency || null;
 
-  swapTimeline.innerHTML = swaps.slice(0, 8).map((swap) => `
-    <article class="timeline-item">
-      <div class="timeline-marker"></div>
-      <div class="timeline-content">
-        <div class="timeline-title-row">
-          <strong>${escapeHtml(swap.dropped)} -> ${escapeHtml(swap.added)}</strong>
-          <span>${formatRelativeTime(swap.time)}</span>
-        </div>
-        <p>RSI debole rilevato: ${swap.weakRsi === null ? "n/a" : formatIndicator(swap.weakRsi)}</p>
-      </div>
+  setText(refs.focusTitle, state.focusSymbol || "No symbol selected");
+  refs.focusMeta.innerHTML = [
+    { label: "Strategy", value: focusBot?.activeStrategyId || "n/a" },
+    { label: "Status", value: focusBot?.status || "n/a" },
+    { label: "Price", value: formatPrice(focusBot?.price ?? state.chartPayload?.lastPrice) },
+    { label: "Position", value: focusPosition ? `${formatNumber(focusPosition.quantity, 6)} @ ${formatPrice(focusPosition.entryPrice)}` : "Flat" },
+    { label: "Cooldown", value: focusBot?.cooldownRemainingMs > 0 ? formatDuration(focusBot.cooldownRemainingMs) : "Ready" },
+    { label: "PnL / Win", value: `${formatSigned(focusBot?.performance?.pnl)} / ${formatNumber(focusBot?.performance?.winRate, 1)}%` },
+    { label: "Drawdown", value: `${formatNumber(focusBot?.performance?.drawdown, 2)}%` },
+    { label: "Pipeline", value: latency?.totalPipelineMs ? `${Math.round(latency.totalPipelineMs)}ms` : "n/a" }
+  ].map((item) => `
+    <article class="focus-stat">
+      <span class="focus-label">${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(item.value)}</strong>
     </article>
   `).join("");
 }
 
-function renderWatchlistSidebar(statusData) {
-  const watchlist = statusData.watchlist || {};
-  const runtime = statusData.runtime || {};
-  renderFacts(watchlistOverview, [
-    ["Watchlist attiva", String((watchlist.active || []).length)],
-    ["Pool calda", String((watchlist.hotPool || []).length)],
-    ["Focus", statusData.decision.symbol || "n/a"],
-    ["Ultimo pool refresh", formatRelativeTime(watchlist.lastPoolRefreshAt)],
-    ["Ultima rotazione", formatRelativeTime(watchlist.lastRotationAt)],
-    ["Soglia RSI debole", formatIndicator(watchlist.weakThresholdRsi)],
-    ["Cadence weak swap", formatDurationMs(watchlist.rotationCadenceMs)],
-    ["WS attivi", String((runtime.realtimeSymbols || []).length)],
-    ["Mercati REST", String(runtime.restSymbolCount ?? 0)]
-  ]);
-  renderActiveWatchlist(watchlist.active || []);
-  renderHotPool(watchlist.hotPool || []);
-  renderSwapTimeline(watchlist.recentSwaps || []);
-}
-
-function renderRuntimePanel(statusData) {
-  renderFacts(runtimeFacts, [
-    ["Ultimo aggiornamento bot", formatRelativeTime(statusData.bot.lastUpdate)],
-    ["Ultimo ciclo completato", formatRelativeTime(statusData.runtime?.lastCompletedCycleAt)],
-    ["Durata ultimo ciclo", formatDurationMs(statusData.runtime?.lastCycleDurationMs)],
-    ["Scan cycle", String(statusData.runtime?.scanCycle ?? 0)],
-    ["Strategia", escapeHtml(statusData.bot.strategy || "n/a")],
-    ["Profilo esecuzione", statusData.overview?.aggressiveModeEnabled ? "Aggressivo" : "Normale"],
-    ["Best candidate", escapeHtml(statusData.overview?.bestCandidateSymbol || "n/a")],
-    ["Filtro BTC", statusData.overview?.btcFilterEnabled ? "Attivo" : "Disattivo"],
-    ["Paper trading", statusData.overview?.paperTrading ? "Attivo" : "Disattivo"]
-  ]);
-}
-
-function renderPerformancePanel(statusData) {
-  const stats = statusData.stats || {};
-  renderFacts(performanceFacts, [
-    ["Trade chiusi", String(stats.totalClosedRounds ?? 0)],
-    ["Win rate", `${formatIndicator(stats.winRatePct)}%`],
-    ["Profit factor", formatIndicator(stats.profitFactor)],
-    ["Expectancy", formatSignedUsdt(stats.expectancyUsdt)],
-    ["Avg winner", formatSignedUsdt(stats.avgWinnerUsdt)],
-    ["Avg loser", formatSignedUsdt(stats.avgLoserUsdt)],
-    ["Max drawdown", `${formatSignedUsdt(-Math.abs(stats.maxDrawdownUsdt || 0))} (${formatIndicator(stats.maxDrawdownPct)}%)`, getValueClass(-Math.abs(stats.maxDrawdownUsdt || 0))],
-    ["Fees pagate", formatUsdt(stats.totalFeesPaid)],
-    ["Slippage pagata", formatUsdt(stats.totalSlippagePaid)],
-    ["Turnover", formatUsdt(stats.turnoverUsdt)],
-    ["Avg hold", `${formatIndicator(stats.averageHoldMinutes)} min`]
-  ]);
-
-  const engineBreakdown = Array.isArray(stats.engineBreakdown) ? stats.engineBreakdown : [];
-  if (!engineBreakdown.length) {
-    engineBreakdownBody.innerHTML = '<tr><td colspan="5">Nessun dato performance disponibile.</td></tr>';
+function renderBots() {
+  if (!state.bots.length) {
+    refs.botsBody.innerHTML = '<tr><td colspan="11">No active bots.</td></tr>';
     return;
   }
 
-  engineBreakdownBody.innerHTML = engineBreakdown
-    .sort((left, right) => right.grossPnlUsdt - left.grossPnlUsdt)
-    .map((entry) => `
-      <tr>
-        <td>${escapeHtml(entry.engine)}</td>
-        <td>${entry.count}</td>
-        <td>${formatIndicator(entry.winRatePct)}%</td>
-        <td class="${getValueClass(entry.grossPnlUsdt)}">${formatSignedUsdt(entry.grossPnlUsdt)}</td>
-        <td class="${getValueClass(entry.avgPnlUsdt)}">${formatSignedUsdt(entry.avgPnlUsdt)}</td>
-      </tr>
-    `)
-    .join("");
-}
-
-function renderResearchModeSelector(modes) {
-  if (!researchModeChips) return;
-  if (!modes.length) {
-    researchModeChips.innerHTML = "";
-    return;
-  }
-
-  researchModeChips.innerHTML = modes.map((mode) => `
-    <button
-      type="button"
-      class="chip-button ${clientState.selectedResearchMode === mode.strategyMode ? "chip-active" : ""}"
-      data-research-mode="${escapeHtml(mode.strategyMode)}"
-    >
-      ${escapeHtml(mode.strategyMode)}
-    </button>
-  `).join("");
-}
-
-function renderSimulatedRounds(modeReport) {
-  if (!simulatedRoundsBody) return;
-  const rounds = Array.isArray(modeReport?.rounds) ? modeReport.rounds : [];
-  if (!rounds.length) {
-    simulatedRoundsBody.innerHTML = '<tr><td colspan="6">Nessun round simulato disponibile per questa modalita.</td></tr>';
-    return;
-  }
-
-  simulatedRoundsBody.innerHTML = rounds.slice(0, 18).map((round) => {
-    const pnlClass = getValueClass(round.realizedPnl);
-    const events = Array.isArray(round.events) ? round.events : [];
-    const eventLines = events.map((event) => `
-      <li>
-        <strong>${escapeHtml(event.action)}</strong>
-        <span>${escapeHtml(formatDate(event.time))}</span>
-        <span> @ ${escapeHtml(formatPrice(event.price))}</span>
-        ${event.reason ? `<span> | ${escapeHtml(event.reason)}</span>` : ""}
-      </li>
-    `).join("");
-
+  refs.botsBody.innerHTML = state.bots.map((bot) => {
+    const positionSummary = bot.openPosition
+      ? `${formatPrice(bot.openPosition.entryPrice)} / ${formatSigned(bot.openPosition.unrealizedPnl)}`
+      : "Flat";
+    const cooldown = bot.cooldownRemainingMs > 0
+      ? `${formatDuration(bot.cooldownRemainingMs)}${bot.cooldownReason ? ` (${bot.cooldownReason})` : ""}`
+      : "Ready";
+    const decisionSummary = Array.isArray(bot.lastDecisionReasons) && bot.lastDecisionReasons.length > 0
+      ? bot.lastDecisionReasons.slice(0, 2).join(" | ")
+      : "No blockers";
     return `
-      <tr>
-        <td>${escapeHtml(formatDate(round.startTime))}</td>
-        <td><strong>${escapeHtml(round.symbol)}</strong></td>
-        <td>${escapeHtml(round.entryEngine || "n/a")}</td>
-        <td>${round.durationMinutes ? `${formatIndicator(round.durationMinutes)} m` : "n/a"}</td>
-        <td class="${pnlClass}">${formatSignedUsdt(round.realizedPnl)}</td>
+      <tr class="bot-row ${bot.symbol === state.focusSymbol ? "is-selected" : ""}" data-symbol="${escapeHtml(bot.symbol)}">
         <td>
-          <details class="trade-info">
-            <summary class="info-chip" title="Dettagli simulazione">i</summary>
-            <div class="trade-tooltip">
-              <strong>${escapeHtml(round.symbol)} | ${escapeHtml(round.entryEngine || "n/a")}</strong>
-              <p>Ingresso medio: ${escapeHtml(formatPrice(round.weightedEntryPrice))}</p>
-              <p>Uscita: ${escapeHtml(formatPrice(round.exitPrice))}</p>
-              <p>Fee: ${escapeHtml(formatUsdt(round.totalFees))} | Slippage: ${escapeHtml(formatUsdt(round.totalSlippage))}</p>
-              <p>Motivo ingresso: ${escapeHtml(round.entryReason || "n/a")}</p>
-              <p>Motivo finale: ${escapeHtml(round.lastReason || "n/a")}</p>
-              <ul class="explanation-list">${eventLines || "<li>Nessun evento registrato.</li>"}</ul>
-            </div>
-          </details>
+          <div class="cell-stack">
+            <strong>${escapeHtml(bot.botId)}</strong>
+            <span class="muted">${escapeHtml(bot.symbol)}</span>
+          </div>
+        </td>
+        <td><span class="${badgeClass(bot.status)}">${escapeHtml(bot.status)}</span></td>
+        <td>${escapeHtml(bot.activeStrategyId)}</td>
+        <td>${formatPrice(bot.price)}</td>
+        <td>${escapeHtml(cooldown)}</td>
+        <td>${escapeHtml(positionSummary)}</td>
+        <td class="${numberClass(bot.performance?.pnl)}">${formatSigned(bot.performance?.pnl)}</td>
+        <td>${formatNumber(bot.performance?.drawdown, 2)}%</td>
+        <td>${formatNumber(bot.performance?.winRate, 1)}%</td>
+        <td>
+          <div class="cell-stack">
+            <strong>${escapeHtml(bot.lastDecision)} (${formatNumber(bot.lastDecisionConfidence, 2)})</strong>
+            <span class="muted">${escapeHtml(decisionSummary)}</span>
+          </div>
+        </td>
+        <td>
+          <button type="button" class="button-secondary table-action" data-history-bot="${escapeHtml(bot.botId)}">History</button>
         </td>
       </tr>
     `;
   }).join("");
 }
 
-function renderBacktestLog(job) {
-  if (!backtestLog) return;
-  const logs = Array.isArray(job?.logs) ? [...job.logs].slice(-8).reverse() : [];
-  if (!logs.length) {
-    backtestLog.innerHTML = '<p class="empty-state">Nessun log di ricerca disponibile.</p>';
+function renderPositions() {
+  if (!state.positions.length) {
+    refs.positionsBody.innerHTML = '<tr><td colspan="7">No open positions.</td></tr>';
     return;
   }
 
-  backtestLog.innerHTML = logs.map((entry) => `
-    <article class="timeline-item">
-      <div class="timeline-marker"></div>
-      <div class="timeline-content">
-        <div class="timeline-title-row">
-          <strong>${escapeHtml(formatDate(entry.time))}</strong>
-        </div>
-        <p class="log-line">${escapeHtml(entry.message)}</p>
+  refs.positionsBody.innerHTML = state.positions.map((position) => `
+    <tr>
+      <td>${escapeHtml(position.botId)}</td>
+      <td>${escapeHtml(position.symbol)}</td>
+      <td>${formatPrice(position.entryPrice)}</td>
+      <td>${formatPrice(position.currentPrice)}</td>
+      <td>${formatNumber(position.quantity, 6)}</td>
+      <td>${escapeHtml(formatDuration(position.holdMs))}</td>
+      <td class="${numberClass(position.unrealizedPnl)}">${formatSigned(position.unrealizedPnl)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderPrices() {
+  if (!state.prices.length) {
+    refs.pricesList.innerHTML = '<p class="empty-state">No prices available.</p>';
+    return;
+  }
+
+  refs.pricesList.innerHTML = state.prices.map((item) => `
+    <article class="price-item ${item.symbol === state.focusSymbol ? "is-selected" : ""}" data-symbol="${escapeHtml(item.symbol)}">
+      <div>
+        <strong>${escapeHtml(item.symbol)}</strong>
+        <p>${escapeHtml(formatRelative(item.updatedAt))}</p>
       </div>
+      <span>${formatPrice(item.price)}</span>
     </article>
   `).join("");
 }
 
-function renderResearchPanel(statusData) {
-  const report = statusData.research?.backtestReport || null;
-  const job = statusData.research?.backtestJob || null;
-  const jobStatus = job?.active
-    ? `Ricerca in corso: ${job.stage || "running"} (${job.progressPct ?? 0}%)${job.symbol ? ` | ${job.symbol}` : ""}`
-    : job?.stage === "failed"
-      ? `Ricerca fallita: ${job.error || "errore sconosciuto"}`
-      : job?.stage === "completed"
-        ? `Ultima ricerca completata ${formatRelativeTime(job.finishedAt)}`
-        : "La ricerca strategica puo essere avviata direttamente da qui.";
-
-  if (backtestRunStatus) {
-    backtestRunStatus.textContent = jobStatus;
-  }
-  if (runBacktestButton) {
-    runBacktestButton.disabled = Boolean(job?.active);
-    runBacktestButton.textContent = job?.active ? "Ricerca in corso..." : "Esegui ricerca";
-  }
-
-  if (!report) {
-    renderFacts(researchSummary, [
-    ["Stato", job?.stage || "idle"],
-    ["Azione", "Avvia la ricerca dal pannello"],
-    ["Profilo", clientState.backtestForm.aggressiveMode ? "Aggressivo" : "Normale"],
-    ["Timeline", "n/a"],
-    ["Simboli", "0"]
-  ]);
-    strategyModesBody.innerHTML = '<tr><td colspan="6">Nessun report di backtest disponibile.</td></tr>';
-    researchSymbolsBody.innerHTML = '<tr><td colspan="4">Esegui una ricerca per vedere i simboli migliori.</td></tr>';
-    renderResearchModeSelector([]);
-    renderSimulatedRounds(null);
-    renderBacktestLog(job);
+function renderEvents() {
+  if (!state.events.length) {
+    refs.eventsList.innerHTML = '<p class="empty-state">No events yet.</p>';
     return;
   }
 
-  const recommendedMode = report.recommendedMode || "n/a";
-  const reportModes = Array.isArray(report.modes) ? report.modes : [];
-  if (!clientState.selectedResearchMode || !reportModes.some((mode) => mode.strategyMode === clientState.selectedResearchMode)) {
-    clientState.selectedResearchMode = recommendedMode !== "n/a" ? recommendedMode : (reportModes[0]?.strategyMode || null);
+  refs.eventsList.innerHTML = state.events.map((event) => {
+    const metadata = Object.entries(event.metadata || {})
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(" | ");
+    return `
+      <article class="event-item">
+        <div class="event-topline">
+          <strong>${escapeHtml(event.scope)}</strong>
+          <span class="${badgeClass(event.level === "ERROR" ? "error" : event.level === "WARN" ? "paused" : "running")}">${escapeHtml(event.level)}</span>
+          <span class="muted">${escapeHtml(formatRelative(event.time))}</span>
+        </div>
+        <p>${escapeHtml(event.message)}</p>
+        <p class="muted">${escapeHtml(metadata || "no metadata")}</p>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderHistoryFilters() {
+  const botOptions = ["<option value=\"all\">All bots</option>"].concat(
+    state.bots.map((bot) => `<option value="${escapeHtml(bot.botId)}">${escapeHtml(bot.botId)}</option>`)
+  );
+  const symbolOptions = ["<option value=\"all\">All symbols</option>"].concat(
+    [...new Set(state.history.trades.map((trade) => trade.symbol))].sort().map((symbol) => `<option value="${escapeHtml(symbol)}">${escapeHtml(symbol)}</option>`)
+  );
+
+  refs.historyFilterBot.innerHTML = botOptions.join("");
+  refs.historyFilterSymbol.innerHTML = symbolOptions.join("");
+  refs.historyFilterBot.value = state.history.filters.botId;
+  refs.historyFilterSymbol.value = state.history.filters.symbol;
+  refs.historyFilterResult.value = state.history.filters.result;
+}
+
+function getFilteredTrades() {
+  return state.history.trades.filter((trade) => {
+    if (state.history.filters.botId !== "all" && trade.botId !== state.history.filters.botId) return false;
+    if (state.history.filters.symbol !== "all" && trade.symbol !== state.history.filters.symbol) return false;
+    if (state.history.filters.result !== "all" && trade.result !== state.history.filters.result) return false;
+    return true;
+  });
+}
+
+function renderTradeHistory() {
+  renderHistoryFilters();
+  const trades = getFilteredTrades();
+  refs.historyNote.textContent = trades.length > 0
+    ? `${trades.length} completed trade${trades.length === 1 ? "" : "s"} visible. Newest first.`
+    : "No completed trades match the current filters.";
+
+  if (trades.length <= 0) {
+    refs.historyBody.innerHTML = '<tr><td colspan="13">No completed trades yet.</td></tr>';
+    return;
   }
-  const selectedMode = reportModes.find((mode) => mode.strategyMode === clientState.selectedResearchMode) || reportModes[0] || null;
-  const topSymbols = Array.isArray(selectedMode?.symbolBreakdown) ? selectedMode.symbolBreakdown : [];
 
-  renderFacts(researchSummary, [
-    ["Modalita raccomandata", escapeHtml(recommendedMode)],
-    ["Generato", formatRelativeTime(report.generatedAt)],
-    ["Stato job", escapeHtml(job?.stage || "idle")],
-    ["Profilo", escapeHtml(report.strategyProfile || (report.request?.aggressiveMode ? "aggressive" : "normal"))],
-    ["Timeline", report.timeline?.start && report.timeline?.end ? `${formatDate(report.timeline.start)} -> ${formatDate(report.timeline.end)}` : "n/a"],
-    ["Simboli", String(report.symbolCount ?? (report.symbols || []).length ?? 0)],
-    ["Campioni 5m", String(report.timeline?.points ?? 0)],
-    ["Heuristic score", formatIndicator(report.heuristics?.recommendedModeScore)],
-    ["Origine", escapeHtml(report.request?.resolvedSource || "n/a")],
-    ["Modalita selezionata", escapeHtml(selectedMode?.strategyMode || "n/a")]
-  ]);
-
-  strategyModesBody.innerHTML = reportModes.length
-    ? reportModes.map((mode) => `
-        <tr>
-          <td>
-            <div class="symbol-cell">
-              <strong>${escapeHtml(mode.strategyMode)}</strong>
-              ${mode.strategyMode === recommendedMode ? '<span class="badge badge-best">Raccomandata</span>' : ""}
-            </div>
-          </td>
-          <td class="${getValueClass(mode.summary?.sessionPnl)}">${formatSignedUsdt(mode.summary?.sessionPnl)}</td>
-          <td>${formatIndicator(mode.stats?.winRatePct)}%</td>
-          <td>${formatIndicator(mode.stats?.profitFactor)}</td>
-          <td class="${getValueClass(-Math.abs(mode.stats?.maxDrawdownUsdt || 0))}">${formatIndicator(mode.stats?.maxDrawdownPct)}%</td>
-          <td>${formatIndicator(mode.recommendationScore)}</td>
-        </tr>
-      `).join("")
-    : '<tr><td colspan="6">Nessuna modalita valutata.</td></tr>';
-
-  renderResearchModeSelector(reportModes);
-  renderSimulatedRounds(selectedMode);
-
-  researchSymbolsBody.innerHTML = topSymbols.length
-    ? topSymbols.slice(0, 8).map((entry) => `
-        <tr>
-        <td>${escapeHtml(entry.symbol)}</td>
-        <td>${entry.closedRounds}</td>
-        <td class="${getValueClass(entry.grossPnlUsdt)}">${formatSignedUsdt(entry.grossPnlUsdt)}</td>
-        <td>${formatIndicator(entry.winRatePct)}%</td>
-      </tr>
-    `).join("")
-    : '<tr><td colspan="4">Nessun round chiuso nella modalita selezionata.</td></tr>';
-
-  renderBacktestLog(job);
-}
-
-function renderDecision(statusData) {
-  currentActionElement.textContent = statusData.decision.action || "HOLD";
-  currentActionElement.className = `big-action ${getActionClass(statusData.decision.action)}`;
-  currentSymbolBadge.textContent = statusData.decision.symbol || "n/a";
-
-  renderFacts(decisionMainFacts, [
-    ["Mercato in focus", escapeHtml(statusData.decision.symbol || "n/a")],
-    ["Perche guardiamo questo mercato", escapeHtml(statusData.decision.focusReason || "n/a")],
-    ["Motivo principale", escapeHtml(statusData.decision.reason || "n/a")],
-    ["Decision state", escapeHtml(statusData.decision.decisionState || "n/a")],
-    ["Profilo strategia", escapeHtml(statusData.decision.strategyProfile || "n/a")],
-    ["Entry engine", escapeHtml(statusData.decision.entryEngine || "n/a")],
-    ["Regime", escapeHtml(statusData.decision.marketRegime || "n/a")],
-    ["Focus score", formatIndicator(statusData.decision.focusScore)],
-    ["Opportunity score", formatIndicator(statusData.decision.opportunityScore)],
-    ["Setup quality", formatIndicator(statusData.decision.setupQualityScore)],
-    ["Entrate aperte", String(statusData.portfolio.entryCount ?? 0)],
-    ["Saldo USDT disponibile", formatUsdt(statusData.portfolio.usdtBalance)],
-    ["Capitale impegnato", formatUsdt(statusData.portfolio.budgetUsed)],
-    ["Spazio residuo", formatUsdt(statusData.portfolio.budgetRemaining)],
-    ["RSI", formatIndicator(statusData.decision.rsi)],
-    ["EMA veloce", formatPrice(statusData.decision.ema9)],
-    ["EMA lenta", formatPrice(statusData.decision.ema21)],
-    ["Edge netta attesa", formatBps(statusData.decision.projectedNetEdgeBps)],
-    ["R/R atteso", formatIndicator(statusData.decision.projectedRiskRewardRatio)],
-    ["Profitto netto atteso", formatUsdt(statusData.decision.expectedNetProfitUsdt)],
-    ["Stop pianificato", formatPrice(statusData.decision.plannedStopLoss)],
-    ["Target pianificato", formatPrice(statusData.decision.plannedTakeProfit)]
-  ]);
-
-  shortExplanationElement.textContent = statusData.decision.shortExplanation || "Spiegazione non disponibile.";
-  detailedExplanationElement.textContent = statusData.decision.detailedExplanation || "";
-  renderReasonList(statusData.decision.reasonList || []);
-}
-
-function renderFocusChart(statusData) {
-  if (!focusChartSurface || !focusChartMeta || !focusChartTimeframes) return;
-
-  const chart = statusData.chart || null;
-  const timeframes = chart?.timeframes || {};
-  const availableTimeframes = ["1m", "5m", "1h"].filter((timeframe) => Array.isArray(timeframes[timeframe]) && timeframes[timeframe].length > 1);
-  const requestedTimeframe = clientState.chartTimeframe || chart?.defaultTimeframe || "5m";
-  const activeTimeframe = availableTimeframes.includes(requestedTimeframe)
-    ? requestedTimeframe
-    : (availableTimeframes.includes(chart?.defaultTimeframe) ? chart.defaultTimeframe : availableTimeframes[0]);
-
-  focusChartTimeframes.innerHTML = ["1m", "5m", "1h"].map((timeframe) => `
-    <button
-      type="button"
-      class="chip-button ${activeTimeframe === timeframe ? "chip-active" : ""}"
-      data-chart-timeframe="${timeframe}"
-      ${availableTimeframes.includes(timeframe) ? "" : "disabled"}
-    >
-      ${timeframe}
-    </button>
+  refs.historyBody.innerHTML = trades.map((trade) => `
+    <tr>
+      <td>${escapeHtml(trade.botName || trade.botId)}</td>
+      <td>${escapeHtml(trade.symbol)}</td>
+      <td>${escapeHtml(String(trade.side || "long").toUpperCase())}</td>
+      <td>${escapeHtml(formatDateTime(trade.entryTime))}</td>
+      <td>${escapeHtml(formatDateTime(trade.exitTime))}</td>
+      <td>${formatPrice(trade.entryPrice)}</td>
+      <td>${formatPrice(trade.exitPrice)}</td>
+      <td>${formatNumber(trade.quantity, 6)}</td>
+      <td>${escapeHtml(formatDuration(trade.holdMs))}</td>
+      <td class="${numberClass(trade.grossPnl)}">${formatSigned(trade.grossPnl)}</td>
+      <td>${formatSigned(trade.fees)}</td>
+      <td class="${numberClass(trade.netPnl)}">${formatSigned(trade.netPnl)}</td>
+      <td>
+        <div class="reason-block">
+          <strong>Entry</strong>
+          <span>${escapeHtml((trade.entryReason || []).join(" | ") || "n/a")}</span>
+          <strong>Exit</strong>
+          <span>${escapeHtml((trade.exitReason || []).join(" | ") || "n/a")}</span>
+        </div>
+      </td>
+    </tr>
   `).join("");
-
-  if (!chart || !activeTimeframe) {
-    renderFacts(focusChartMeta, [
-      ["Simbolo", "n/a"],
-      ["Timeframe", "n/a"],
-      ["Stato", "Grafico non disponibile"],
-      ["Prezzo", "n/a"]
-    ]);
-    focusChartSurface.innerHTML = '<p class="empty-state">Nessun dato grafico disponibile per il focus corrente.</p>';
-    return;
-  }
-
-  clientState.chartTimeframe = activeTimeframe;
-  const candles = timeframes[activeTimeframe] || [];
-  const lastCandle = candles[candles.length - 1] || null;
-  renderFacts(focusChartMeta, [
-    ["Simbolo", escapeHtml(chart.symbol || "n/a")],
-    ["Timeframe", activeTimeframe],
-    ["Ultima candela", formatDate(lastCandle?.time || chart.lastUpdate)],
-    ["O/H/L/C", lastCandle ? `${formatPrice(lastCandle.open)} / ${formatPrice(lastCandle.high)} / ${formatPrice(lastCandle.low)} / ${formatPrice(lastCandle.close)}` : "n/a"],
-    ["Prezzo attuale", formatPrice(chart.currentPrice)],
-    ["Entry", formatPrice(chart.entryPrice)],
-    ["Stop", formatPrice(chart.stopLoss)],
-    ["Target", formatPrice(chart.takeProfit)]
-  ]);
-
-  if (candles.length < 2) {
-    focusChartSurface.innerHTML = '<p class="empty-state">Servono piu candele per disegnare il grafico operativo.</p>';
-    return;
-  }
-
-  const levelValues = [
-    chart.currentPrice,
-    chart.entryPrice,
-    chart.stopLoss,
-    chart.takeProfit,
-    chart.trailingStop,
-    chart.hardFloor
-  ].filter((value) => Number.isFinite(Number(value))).map(Number);
-  const highs = candles.map((candle) => Number(candle.high));
-  const lows = candles.map((candle) => Number(candle.low));
-  const rawMin = Math.min(...lows, ...levelValues);
-  const rawMax = Math.max(...highs, ...levelValues);
-  const baseRange = Math.max(rawMax - rawMin, rawMax * 0.002, 0.0001);
-  const minPrice = rawMin - (baseRange * 0.12);
-  const maxPrice = rawMax + (baseRange * 0.12);
-
-  const width = 920;
-  const height = 320;
-  const leftPadding = 14;
-  const rightPadding = 88;
-  const topPadding = 12;
-  const bottomPadding = 28;
-  const plotWidth = width - leftPadding - rightPadding;
-  const plotHeight = height - topPadding - bottomPadding;
-  const candleSlot = plotWidth / candles.length;
-  const candleBodyWidth = Math.max(3, Math.min(10, candleSlot * 0.58));
-  const yForPrice = (price) => topPadding + ((maxPrice - price) / Math.max(maxPrice - minPrice, 0.0001)) * plotHeight;
-  const xForIndex = (index) => leftPadding + (index * candleSlot) + (candleSlot / 2);
-
-  const gridLines = Array.from({ length: 5 }, (_, index) => {
-    const price = maxPrice - (((maxPrice - minPrice) / 4) * index);
-    const y = yForPrice(price);
-    return `
-      <g>
-        <line x1="${leftPadding}" y1="${y}" x2="${width - rightPadding}" y2="${y}" class="chart-grid-line"></line>
-        <text x="${width - rightPadding + 8}" y="${y + 4}" class="chart-axis-label">${escapeHtml(formatPrice(price))}</text>
-      </g>
-    `;
-  }).join("");
-
-  const candleMarks = candles.map((candle, index) => {
-    const x = xForIndex(index);
-    const openY = yForPrice(Number(candle.open));
-    const closeY = yForPrice(Number(candle.close));
-    const highY = yForPrice(Number(candle.high));
-    const lowY = yForPrice(Number(candle.low));
-    const bullish = Number(candle.close) >= Number(candle.open);
-    const bodyY = Math.min(openY, closeY);
-    const bodyHeight = Math.max(1.5, Math.abs(closeY - openY));
-    return `
-      <g>
-        <line x1="${x}" y1="${highY}" x2="${x}" y2="${lowY}" class="chart-wick ${bullish ? "chart-candle-up" : "chart-candle-down"}"></line>
-        <rect
-          x="${x - (candleBodyWidth / 2)}"
-          y="${bodyY}"
-          width="${candleBodyWidth}"
-          height="${bodyHeight}"
-          rx="1.5"
-          class="${bullish ? "chart-candle-up" : "chart-candle-down"}"
-        ></rect>
-      </g>
-    `;
-  }).join("");
-
-  const xLabelStep = Math.max(1, Math.floor(candles.length / 4));
-  const xLabels = candles
-    .map((candle, index) => ({ candle, index }))
-    .filter(({ index }) => index === 0 || index === candles.length - 1 || index % xLabelStep === 0)
-    .map(({ candle, index }) => `
-      <text x="${xForIndex(index)}" y="${height - 6}" text-anchor="middle" class="chart-axis-label">
-        ${escapeHtml(formatChartTimeLabel(candle.time, activeTimeframe))}
-      </text>
-    `)
-    .join("");
-
-  const levelLines = [
-    { className: "chart-line-entry", label: "Entry", value: chart.entryPrice },
-    { className: "chart-line-stop", label: "Stop", value: chart.stopLoss },
-    { className: "chart-line-target", label: "Target", value: chart.takeProfit },
-    { className: "chart-line-trailing", label: "Trail", value: chart.trailingStop },
-    { className: "chart-line-floor", label: "Floor", value: chart.hardFloor },
-    { className: "chart-line-current", label: "Last", value: chart.currentPrice }
-  ]
-    .filter((level) => Number.isFinite(Number(level.value)))
-    .map((level) => {
-      const y = yForPrice(Number(level.value));
-      return `
-        <g>
-          <line x1="${leftPadding}" y1="${y}" x2="${width - rightPadding}" y2="${y}" class="${level.className}"></line>
-          <text x="${width - rightPadding + 8}" y="${Math.max(12, Math.min(height - 12, y - 4))}" class="chart-level-label ${level.className}">
-            ${escapeHtml(level.label)} ${escapeHtml(formatPrice(level.value))}
-          </text>
-        </g>
-      `;
-    })
-    .join("");
-
-  focusChartSurface.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" class="focus-chart-svg" role="img" aria-label="Grafico operativo ${escapeHtml(chart.symbol || "n/a")} ${escapeHtml(activeTimeframe)}">
-      <rect x="0" y="0" width="${width}" height="${height}" class="chart-backdrop"></rect>
-      ${gridLines}
-      ${levelLines}
-      ${candleMarks}
-      ${xLabels}
-    </svg>
-  `;
 }
 
-function renderDashboard(statusData, tradesData) {
-  clientState.lastPayload = { statusData, tradesData };
-  clientState.lastRefreshAt = new Date().toISOString();
-  clientState.refreshError = null;
-  btcFilterToggle.checked = Boolean(statusData.overview?.btcFilterEnabled);
-  aggressiveModeToggle.checked = Boolean(statusData.overview?.aggressiveModeEnabled);
-  if (backtestAggressiveToggle && backtestAggressiveToggle.dataset.dirty !== "true") {
-    clientState.backtestForm.aggressiveMode = Boolean(statusData.overview?.aggressiveModeEnabled);
-    backtestAggressiveToggle.checked = clientState.backtestForm.aggressiveMode;
-  }
-  summaryElement.textContent = statusData.bot.summary;
-  renderMarketFilters();
-  renderHeroStatus(statusData);
-
-  renderSummaryCards([
-    { label: "Bot", value: statusData.overview.botActive ? "Attivo" : "Fermo", note: statusData.bot.exchange || "n/a" },
-    { label: "Paper trading", value: statusData.overview.paperTrading ? "Attivo" : "Disattivato", note: statusData.bot.strategy || "n/a" },
-    { label: "Saldo USDT", value: formatUsdt(statusData.portfolio.usdtBalance), note: "Liquidita libera" },
-    { label: "Valore totale", value: formatUsdt(statusData.overview.portfolioValue), note: "Saldo + posizioni" },
-    { label: "PnL sessione", value: formatSignedUsdt(statusData.overview.sessionPnl), cssClass: getValueClass(statusData.overview.sessionPnl), note: `${formatIndicator(statusData.portfolio.sessionPnlPercent)}%` },
-    { label: "Posizioni aperte", value: String(statusData.overview.activeCount || 0), note: `${(statusData.runtime?.realtimeSymbols || []).length} WS live` }
-  ]);
-
-  renderDecision(statusData);
-  renderFocusChart(statusData);
-  renderPositions(statusData.overview.positions || []);
-  renderMarkets((statusData.watchlist?.active || []).map((activeItem) => {
-    const market = (statusData.markets || []).find((entry) => entry.symbol === activeItem.symbol) || {};
-    return { ...market, ...activeItem };
-  }));
-  renderWatchlistSidebar(statusData);
-  renderRuntimePanel(statusData);
-  renderPerformancePanel(statusData);
-  renderResearchPanel(statusData);
-  renderTrades(Array.isArray(tradesData.trades) ? tradesData.trades : []);
-  refreshStatus.textContent = `Ultimo refresh ${formatRelativeTime(clientState.lastRefreshAt)}`;
+function setHistoryVisibility(isOpen) {
+  state.history.isOpen = isOpen;
+  refs.historyModal.classList.toggle("is-hidden", !isOpen);
+  refs.historyModal.setAttribute("aria-hidden", String(!isOpen));
 }
 
-async function fetchDashboardData() {
-  const [statusResponse, tradesResponse] = await Promise.all([
-    fetch("/api/status"),
-    fetch("/api/trades")
-  ]);
-
-  if (!statusResponse.ok || !tradesResponse.ok) {
-    throw new Error("Dashboard API unavailable.");
-  }
-
-  return {
-    statusData: await statusResponse.json(),
-    tradesData: await tradesResponse.json()
-  };
-}
-
-async function loadDashboard() {
-  if (clientState.isRefreshing) {
-    return;
-  }
-
-  clientState.isRefreshing = true;
-  refreshButton.disabled = true;
-  refreshStatus.textContent = "Aggiornamento in corso...";
-
+async function loadTradesHistory(force = false) {
+  if (state.inFlight.trades) return;
+  if (!force && state.history.trades.length > 0 && !state.history.isOpen) return;
+  state.inFlight.trades = true;
   try {
-    const { statusData, tradesData } = await fetchDashboardData();
-    renderDashboard(statusData, tradesData);
+    state.history.trades = await fetchJson("/api/trades");
+    if (state.history.isOpen) {
+      renderTradeHistory();
+    }
   } catch (error) {
-    clientState.refreshError = error.message;
-    refreshStatus.textContent = "Aggiornamento non disponibile.";
-    throw error;
+    if (state.history.isOpen) {
+      refs.historyNote.textContent = error?.message || "Unable to load closed trades.";
+    }
   } finally {
-    clientState.isRefreshing = false;
-    refreshButton.disabled = false;
+    state.inFlight.trades = false;
   }
 }
 
-async function resetSession() {
-  const confirmed = window.confirm("Vuoi davvero azzerare la sessione di paper trading?");
-  if (!confirmed) return;
-
-  const response = await fetch("/api/reset", { method: "POST" });
-  if (!response.ok) {
-    resetResult.textContent = "Reset non riuscito.";
-    return;
-  }
-
-  resetResult.textContent = "Sessione azzerata con successo.";
-  await loadDashboard();
+function openHistoryModal(options = {}) {
+  state.history.filters.botId = options.botId || "all";
+  state.history.filters.symbol = options.symbol || "all";
+  state.history.filters.result = options.result || "all";
+  setHistoryVisibility(true);
+  renderTradeHistory();
+  void loadTradesHistory(true);
 }
 
-async function updateBtcFilter() {
-  const nextValue = !btcFilterToggle.checked;
-  btcFilterToggle.disabled = true;
+function closeHistoryModal() {
+  setHistoryVisibility(false);
+}
+
+function wireInteractiveRows() {
+  refs.botsBody.querySelectorAll("[data-symbol]").forEach((row) => {
+    row.addEventListener("click", () => {
+      state.focusSymbol = row.getAttribute("data-symbol");
+      ensureFocusSymbol();
+      renderBots();
+      renderPrices();
+      renderFocusMeta();
+      void loadChart();
+    });
+  });
+
+  refs.botsBody.querySelectorAll("[data-history-bot]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openHistoryModal({ botId: button.getAttribute("data-history-bot") });
+    });
+  });
+
+  refs.pricesList.querySelectorAll("[data-symbol]").forEach((row) => {
+    row.addEventListener("click", () => {
+      state.focusSymbol = row.getAttribute("data-symbol");
+      ensureFocusSymbol();
+      renderBots();
+      renderPrices();
+      renderFocusMeta();
+      void loadChart();
+    });
+  });
+}
+
+function ensureAdapters() {
+  if (!state.chart && window.ChartAdapter && window.LightweightCharts) {
+    state.chart = window.ChartAdapter.create({
+      container: refs.focusChart,
+      legendNode: refs.chartLegend,
+      titleNode: refs.focusTitle
+    });
+  }
+  if (!state.analytics && window.DashboardAdapter && window.echarts) {
+    state.analytics = window.DashboardAdapter.create({
+      comparisonNode: refs.comparisonNode,
+      drawdownNode: refs.drawdownNode,
+      pnlNode: refs.pnlNode
+    });
+  }
+}
+
+async function loadSnapshot() {
+  if (state.inFlight.snapshot) return;
+  state.inFlight.snapshot = true;
+  refs.refreshButton.disabled = true;
+  refs.refreshStatus.textContent = "Refreshing runtime...";
 
   try {
-    const response = await fetch("/api/btc-filter", {
-      body: JSON.stringify({ enabled: nextValue }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || "BTC filter update failed.");
+    const [system, bots, prices, positions, events] = await Promise.all([
+      fetchJson("/api/system"),
+      fetchJson("/api/bots"),
+      fetchJson("/api/prices"),
+      fetchJson("/api/positions"),
+      fetchJson("/api/events")
+    ]);
+
+    state.system = system;
+    state.bots = bots;
+    state.prices = prices;
+    state.positions = positions;
+    state.events = events;
+    ensureFocusSymbol();
+    ensureAdapters();
+    renderSystemCards();
+    renderHealth();
+    renderFocusMeta();
+    renderBots();
+    renderPositions();
+    renderPrices();
+    renderEvents();
+    if (state.history.isOpen) {
+      renderTradeHistory();
+      void loadTradesHistory(true);
     }
-    btcFilterToggle.checked = Boolean(data.btcFilterEnabled);
+    wireInteractiveRows();
+
+    const marketConnection = getMarketConnection(system);
+    const userConnection = getUserConnection(system);
+    refs.systemNote.textContent = `Mode ${system.feedMode}. Market WS ${marketConnection?.status || "unknown"}, user stream ${userConnection?.status || "inactive"}.`;
+    refs.refreshStatus.textContent = `Last sync ${new Date().toLocaleTimeString()}`;
+  } catch (error) {
+    refs.systemNote.textContent = "Unable to read orchestrator state.";
+    refs.refreshStatus.textContent = error?.message || "Refresh failed.";
   } finally {
-    btcFilterToggle.disabled = false;
+    refs.refreshButton.disabled = false;
+    state.inFlight.snapshot = false;
   }
 }
 
-async function updateAggressiveMode() {
-  const nextValue = !aggressiveModeToggle.checked;
-  aggressiveModeToggle.disabled = true;
-
+async function loadChart() {
+  if (state.inFlight.chart || !state.focusSymbol) return;
+  state.inFlight.chart = true;
   try {
-    const response = await fetch("/api/aggressive-mode", {
-      body: JSON.stringify({ enabled: nextValue }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || "Aggressive mode update failed.");
+    const payload = await fetchJson(`/api/chart?symbol=${encodeURIComponent(state.focusSymbol)}`);
+    state.chartPayload = payload;
+    if (state.chart) {
+      state.chart.update(payload);
     }
-    aggressiveModeToggle.checked = Boolean(data.aggressiveModeEnabled);
-    resetResult.textContent = data.aggressiveModeEnabled
-      ? "Modalita aggressiva attivata."
-      : "Modalita aggressiva disattivata.";
-    await loadDashboard();
+    renderFocusMeta();
+  } catch (error) {
+    refs.chartLegend.innerHTML = `<span>${escapeHtml(error?.message || "Chart unavailable")}</span>`;
   } finally {
-    aggressiveModeToggle.disabled = false;
+    state.inFlight.chart = false;
   }
 }
 
-async function runBacktest() {
-  const payload = {
-    aggressiveMode: Boolean(backtestAggressiveToggle.checked),
-    days: Number(backtestDaysInput.value || clientState.backtestForm.days || 3),
-    symbolLimit: Number(backtestSymbolLimitInput.value || clientState.backtestForm.symbolLimit || 6),
-    symbols: String(backtestSymbolsInput.value || "").trim(),
-    useActiveWatchlist: Boolean(backtestUseWatchlistToggle.checked)
-  };
-
-  const response = await fetch("/api/backtest/run", {
-    body: JSON.stringify(payload),
-    headers: { "Content-Type": "application/json" },
-    method: "POST"
-  });
-  const data = await response.json();
-  if (!response.ok && data.reason !== "already_running") {
-    throw new Error(data.message || data.error || "Backtest non avviato.");
+async function loadAnalytics() {
+  if (state.inFlight.analytics || !state.analytics) return;
+  state.inFlight.analytics = true;
+  try {
+    const payload = await fetchJson("/api/analytics");
+    state.analytics.update(payload);
+  } catch {
+    // analytics errors stay silent; summary widgets already expose runtime health
+  } finally {
+    state.inFlight.analytics = false;
   }
-
-  backtestRunStatus.textContent = data.reason === "already_running"
-    ? "Una ricerca e gia in corso."
-    : "Ricerca avviata. La dashboard mostrera l'avanzamento.";
-  await loadDashboard();
 }
 
-function attachEventListeners() {
-  resetButton.addEventListener("click", () => {
-    resetSession().catch(() => {
-      resetResult.textContent = "Errore durante il reset.";
-    });
-  });
-
-  btcFilterToggle.addEventListener("click", (event) => {
-    event.preventDefault();
-    updateBtcFilter().catch(() => {
-      resetResult.textContent = "Errore durante l'aggiornamento del Filtro BTC.";
-    });
-  });
-
-  aggressiveModeToggle.addEventListener("click", (event) => {
-    event.preventDefault();
-    updateAggressiveMode().catch(() => {
-      resetResult.textContent = "Errore durante l'aggiornamento della modalita aggressiva.";
-    });
-  });
-
-  refreshButton.addEventListener("click", () => {
-    loadDashboard().catch(() => {
-      summaryElement.textContent = "Impossibile aggiornare la dashboard.";
-      shortExplanationElement.textContent = "Aggiornamento temporaneamente non disponibile.";
-    });
-  });
-
-  runBacktestButton.addEventListener("click", () => {
-    runBacktest().catch((error) => {
-      backtestRunStatus.textContent = error.message || "Errore durante l'avvio della ricerca.";
-    });
-  });
-
-  marketSearch.addEventListener("input", (event) => {
-    clientState.searchQuery = event.target.value.trim().toLowerCase();
-    if (clientState.lastPayload) {
-      renderDashboard(clientState.lastPayload.statusData, clientState.lastPayload.tradesData);
-    }
-  });
-
-  marketFilterChips.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-filter-id]");
-    if (!button) return;
-    clientState.activeFilter = button.dataset.filterId || "all";
-    if (clientState.lastPayload) {
-      renderDashboard(clientState.lastPayload.statusData, clientState.lastPayload.tradesData);
-    }
-  });
-
-  researchModeChips.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-research-mode]");
-    if (!button) return;
-    clientState.selectedResearchMode = button.dataset.researchMode || null;
-    if (clientState.lastPayload) {
-      renderDashboard(clientState.lastPayload.statusData, clientState.lastPayload.tradesData);
-    }
-  });
-
-  focusChartTimeframes.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-chart-timeframe]");
-    if (!button || button.disabled) return;
-    clientState.chartTimeframe = button.dataset.chartTimeframe || "5m";
-    if (clientState.lastPayload) {
-      renderFocusChart(clientState.lastPayload.statusData);
-    }
-  });
-
-  backtestDaysInput.addEventListener("input", () => {
-    clientState.backtestForm.days = Number(backtestDaysInput.value || 3);
-  });
-  backtestSymbolLimitInput.addEventListener("input", () => {
-    clientState.backtestForm.symbolLimit = Number(backtestSymbolLimitInput.value || 6);
-  });
-  backtestSymbolsInput.addEventListener("input", () => {
-    clientState.backtestForm.symbols = backtestSymbolsInput.value;
-  });
-  backtestUseWatchlistToggle.addEventListener("change", () => {
-    clientState.backtestForm.useActiveWatchlist = Boolean(backtestUseWatchlistToggle.checked);
-  });
-  backtestAggressiveToggle.addEventListener("change", () => {
-    clientState.backtestForm.aggressiveMode = Boolean(backtestAggressiveToggle.checked);
-    backtestAggressiveToggle.dataset.dirty = "true";
-  });
-
-  document.addEventListener("toggle", (event) => {
-    const details = event.target;
-    if (!(details instanceof HTMLDetailsElement) || !details.classList.contains("trade-info") || !details.open) {
-      return;
-    }
-    document.querySelectorAll(".trade-info[open]").forEach((element) => {
-      if (element !== details) {
-        element.open = false;
-      }
-    });
-  }, true);
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    document.querySelectorAll(".trade-info[open]").forEach((element) => {
-      element.open = false;
-    });
-  });
-}
-
-renderMarketFilters();
-backtestDaysInput.value = String(clientState.backtestForm.days);
-backtestSymbolLimitInput.value = String(clientState.backtestForm.symbolLimit);
-backtestSymbolsInput.value = clientState.backtestForm.symbols;
-backtestUseWatchlistToggle.checked = clientState.backtestForm.useActiveWatchlist;
-backtestAggressiveToggle.checked = clientState.backtestForm.aggressiveMode;
-attachEventListeners();
-
-loadDashboard().catch(() => {
-  summaryElement.textContent = "Impossibile caricare la dashboard.";
-  shortExplanationElement.textContent = "La dashboard non riesce a leggere i dati del bot.";
+refs.refreshButton.addEventListener("click", () => {
+  void loadSnapshot();
+  void loadChart();
+  void loadAnalytics();
 });
 
-setInterval(() => {
-  loadDashboard().catch(() => {
-    summaryElement.textContent = "Impossibile aggiornare la dashboard.";
-    shortExplanationElement.textContent = "Aggiornamento temporaneamente non disponibile.";
+refs.tradeHistoryButton.addEventListener("click", () => {
+  openHistoryModal();
+});
+refs.tradeHistoryButtonInline.addEventListener("click", () => {
+  openHistoryModal();
+});
+refs.historyCloseButton.addEventListener("click", () => {
+  closeHistoryModal();
+});
+refs.historyModal.addEventListener("click", (event) => {
+  const closer = event.target.closest("[data-close-modal='true']");
+  if (closer) {
+    closeHistoryModal();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.history.isOpen) {
+    closeHistoryModal();
+  }
+});
+
+refs.historyFilterBot.addEventListener("change", () => {
+  state.history.filters.botId = refs.historyFilterBot.value || "all";
+  renderTradeHistory();
+});
+refs.historyFilterSymbol.addEventListener("change", () => {
+  state.history.filters.symbol = refs.historyFilterSymbol.value || "all";
+  renderTradeHistory();
+});
+refs.historyFilterResult.addEventListener("change", () => {
+  state.history.filters.result = refs.historyFilterResult.value || "all";
+  renderTradeHistory();
+});
+
+refs.focusSymbol.addEventListener("change", () => {
+  state.focusSymbol = refs.focusSymbol.value || null;
+  renderBots();
+  renderPrices();
+  renderFocusMeta();
+  void loadChart();
+});
+
+refs.timeframeGroup.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-timeframe]");
+  if (!button) return;
+  state.timeframe = button.getAttribute("data-timeframe");
+  refs.timeframeGroup.querySelectorAll("[data-timeframe]").forEach((node) => {
+    node.classList.toggle("is-active", node === button);
   });
-}, 4000);
+  if (state.chart) {
+    state.chart.setTimeframe(state.timeframe);
+  }
+  void loadChart();
+});
+
+ensureAdapters();
+void loadSnapshot();
+void loadChart();
+void loadAnalytics();
+setInterval(() => {
+  void loadSnapshot();
+}, 1000);
+setInterval(() => {
+  void loadChart();
+}, 1000);
+setInterval(() => {
+  void loadAnalytics();
+}, 2000);

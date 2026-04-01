@@ -1,81 +1,148 @@
-﻿# TradingBot
+# TradingBot
 
-TradingBot e un paper trading bot multi-market in Node.js con dashboard locale, stato persistente e selezione dinamica dei simboli. Il sistema usa una strategia multi-timeframe 1h / 5m / 1m, applica sizing basato sul rischio e mantiene una UI locale su `http://127.0.0.1:3000`.
+TradingBot ora espone una nuova architettura multi-bot modulare in TypeScript-like runtime modules, eseguibili con `node --experimental-strip-types`. L'obiettivo e separare chiaramente orchestrazione, strategie, ruoli di rischio/performance e data streams, evitando un singolo bot monolitico.
 
-Il motore supporta `STRATEGY_MODE=adaptive|trend|range_grid`. In `adaptive` il bot tratta i mercati direzionali con continuation / SFP e prova setup di tipo range-grid long-only quando il regime e laterale; in `range_grid` forza solo la logica di mean reversion sul bordo basso del range.
+## Nuova struttura
 
-Il profilo di esecuzione puo inoltre passare da `normal` a `aggressive`: in quel caso il bot abbassa in modo controllato le soglie di score, slope, volume, edge netto e risk/reward. La modalita aggressiva e attivabile sia in live dalla dashboard sia nel replay di Strategy Lab.
+```text
+src/
+  core/
+  bots/
+  roles/
+  strategies/
+  engines/
+  streams/
+  data/
+  types/
+  ui/
+  utils/
+legacy/
+```
 
-Oltre al loop live, il progetto include anche un laboratorio di ricerca: `npm run backtest` scarica dati OHLCV recenti, confronta `adaptive`, `trend` e `range_grid` sugli stessi simboli e salva un report locale in `backtest-report.json`, che la dashboard mostra nella sezione Strategy Lab.
+### Core
 
-Lo stesso laboratorio puo essere avviato anche dalla dashboard principale: il bot espone un job di backtest in background, salva il report su disco e mostra sia il riepilogo sia i round simulati per ogni modalita.
+- `src/core/orchestrator.ts`: controller principale che avvia il sistema.
+- `src/core/botManager.ts`: crea e gestisce piu bot indipendenti.
+- `src/core/strategyRegistry.ts`: registra e istanzia strategie plug-and-play.
+- `src/core/configLoader.ts`: legge i file JSON di configurazione.
+- `src/core/wsManager.ts`: connessioni WebSocket, reconnect e normalizzazione eventi market.
+- `src/core/stateStore.ts`: single source of truth in memoria per prezzi, bot, posizioni e performance.
+- `src/core/systemServer.ts`: API/HTTP minimale per osservabilita e UI.
 
-## Architettura
+### Bots
 
-- `bot.js`: entrypoint e orchestrazione del loop.
-- `src/strategy.js`: indicatori, scoring, decision state, entry engine, exit reason code.
-- `src/runtime.js`: watchlist dinamica, fetch candele, esecuzione paper, gestione posizioni.
-- `src/persistence.js`: persistenza di `state.json` e `trades.log`.
-- `src/backtest.js`: replay engine per confrontare modalita strategiche sugli stessi dati storici.
-- `src/server.js`: API locali e payload della dashboard.
-- `public/`: dashboard statica.
-- `scripts/backtest.js`: runner CLI per generare il report di ricerca.
-- `tests/`: test minimi su strategy, runtime, server e replay.
+- `src/bots/baseBot.ts`: lifecycle comune.
+- `src/bots/tradingBot.ts`: implementazione concreta del bot.
 
-## Requisiti
+### Roles
 
-- Node.js 20+
-- Dipendenze installate con `npm install`
+- `src/roles/riskManager.ts`: sizing, drawdown, cooldown, overtrading.
+- `src/roles/performanceMonitor.ts`: PnL, win rate, drawdown, profit factor.
+- `src/roles/strategySwitcher.ts`: switching controllato fra strategie.
+- `src/roles/regimeDetector.ts`: regime detector leggero.
+
+### Engines
+
+- `src/engines/indicatorEngine.ts`: EMA, RSI, momentum, volatility.
+- `src/engines/executionEngine.ts`: esecuzione simulata ordini/posizioni.
+- `src/engines/backtestEngine.ts`: placeholder pronto per replay storici.
+
+### Streams
+
+- `src/streams/marketStream.ts`: market feed unificato con `marketMode: mock | live`.
+- `src/streams/userStream.ts`: aggiornamenti ordini/account, pronto per fills e balances.
+
+### Data
+
+- `src/data/bots.config.json`: definizione dei bot indipendenti.
+- `src/data/strategies.config.json`: registry delle strategie disponibili.
+
+## Multi-bot config
+
+`src/data/bots.config.json`
+
+```json
+{
+  "marketMode": "mock",
+  "market": {
+    "provider": "binance",
+    "streamType": "trade",
+    "wsBaseUrl": "wss://stream.binance.com:9443",
+    "liveEmitIntervalMs": 1000
+  },
+  "bots": [
+    {
+      "id": "bot_btc_trend",
+      "symbol": "BTC/USDT",
+      "strategy": "emaCross",
+      "enabled": true,
+      "riskProfile": "medium"
+    },
+    {
+      "id": "bot_eth_reversion",
+      "symbol": "ETH/USDT",
+      "strategy": "rsiReversion",
+      "enabled": true,
+      "riskProfile": "low"
+    }
+  ]
+}
+```
+
+Nel file reale ho aggiunto anche `allowedStrategies` e `initialBalanceUsdt` per supportare lo strategy switching e il paper sizing.
+
+## Strategie disponibili
+
+- `emaCross`: trend following con EMA cross e filtro RSI.
+- `rsiReversion`: mean reversion per mercati laterali.
+- `breakout`: breakout momentum con range recente.
+
+Ogni strategia espone il contratto standard:
+
+```ts
+export interface Strategy {
+  id: string;
+  evaluate(context: MarketContext): StrategyDecision;
+}
+```
 
 ## Avvio
 
-1. Copia `.env.example` in `.env` e regola i parametri.
-2. Installa le dipendenze con `npm install`.
-3. Avvia il bot con `npm start`.
-4. Apri `http://127.0.0.1:3000`.
+Compatibilita:
 
-La watchlist dinamica usa una pool ampia di mercati caldi aggiornata con `HOT_SYMBOLS_REFRESH_MS`; i simboli deboli non in focus vengono ruotati ogni `WEAK_SYMBOL_ROTATION_MS` in base a `WEAK_SYMBOL_RSI_MAX`, mantenendo sempre il focus corrente e le eventuali posizioni aperte. Il ranking interno separa `focusScore` da `opportunityScore` per ridurre i falsi focus.
+- `npm start`
+- `node bot.js`
 
-## Script
+Entrambi avviano il bootstrap JS che delega a:
 
-- `npm start`: avvia il bot e la dashboard.
-- `npm test`: esegue i test minimi con `node:test`.
-- `npm run backtest`: scarica dati recenti, esegue il replay multi-modalita e aggiorna `backtest-report.json`.
+```bash
+node --experimental-strip-types src/core/orchestrator.ts
+```
 
-## Dati locali
+Per eseguire direttamente l'orchestrator:
 
-I file runtime non devono essere versionati:
+```bash
+npm run start:orchestrator
+```
 
-- `.env`
-- `state.json`
-- `trades.log`
-- `node_modules/`
+Per uno smoke rapido:
 
-Il repository include un `.gitignore` per tenerli fuori dall'indice git.
+```bash
+node --experimental-strip-types src/core/orchestrator.ts --duration-ms=5000 --summary-ms=1000
+```
 
-## Backtest rapido
+## Test
 
-1. Imposta `BACKTEST_SYMBOLS` se vuoi simboli specifici; altrimenti il runner usa i simboli caldi del momento.
-2. Regola `BACKTEST_DAYS`, `BACKTEST_SYMBOL_LIMIT` e i delay di fetch.
-3. Esegui `npm run backtest`.
-4. Riavvia o aggiorna la dashboard per vedere il report in Strategy Lab.
+```bash
+npm test
+```
 
-## Strategy Lab in UI
+I test ora includono anche uno smoke sul nuovo orchestrator multi-bot.
 
-Dalla dashboard puoi:
+## Note operative
 
-- avviare una ricerca direttamente dal browser
-- scegliere giorni, numero simboli e simboli custom
-- usare la watchlist attuale come base del replay
-- spuntare un replay aggressivo per confrontare le stesse modalita con soglie piu spinte
-- confrontare le modalita `adaptive`, `trend` e `range_grid`
-- ispezionare i round simulati e gli eventi che il bot avrebbe eseguito
-- attivare o disattivare la modalita aggressiva live senza riavviare il bot
-
-## API locali
-
-- `GET /api/status`: stato completo per la dashboard.
-- `GET /api/trades`: lista trade della sessione.
-- `POST /api/reset`: resetta la sessione paper.
-- `POST /api/btc-filter`: abilita o disabilita il filtro BTC.
-- `POST /api/aggressive-mode`: abilita o disabilita il profilo aggressivo live.
+- Il runtime supporta sia `mock` che `live` via `marketMode` in `src/data/bots.config.json` o `MARKET_MODE` da env.
+- In `live`, Binance Spot WebSocket alimenta `marketStream`, che coalesca gli update prima di scriverli nello `stateStore` per evitare event flooding sui bot.
+- Le strategie non sono hardcoded nel bot: il bot riceve la strategia dal `strategyRegistry`.
+- Il `stateStore` aggiorna lo stato incrementalmente invece di ricostruirlo interamente a ogni tick.
+- I moduli JS del sistema precedente sono stati isolati in `legacy/` e non fanno parte del nuovo orchestrator.

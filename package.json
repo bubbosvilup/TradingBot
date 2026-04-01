@@ -1,13 +1,14 @@
 {
   "name": "tradingbot",
   "version": "1.0.0",
-  "description": "Multi-market paper trading bot with local dashboard, persistence, and strategy modules",
+  "description": "Modular multi-bot trading architecture with strategy registry, risk roles and websocket-ready streams",
   "main": "bot.js",
   "type": "commonjs",
   "scripts": {
     "backtest": "node scripts/backtest.js",
     "start": "node bot.js",
-    "test": "node tests/run-tests.js"
+    "start:orchestrator": "node --experimental-strip-types src/core/orchestrator.ts",
+    "test": "node --experimental-strip-types tests/run-tests.js"
   },
   "keywords": [
     "trading",
@@ -16,12 +17,17 @@
     "ccxt",
     "dashboard",
     "multi-market",
-    "binance"
+    "binance",
+    "multi-bot",
+    "typescript-architecture"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "ccxt": "^4.5.45",
     "dotenv": "^16.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0"
   }
 }

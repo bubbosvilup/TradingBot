@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 
-const { createRuntime } = require("../src/runtime");
+const { createRuntime } = require("../legacy/runtime");
 
 function runRuntimeTests() {
   const state = {

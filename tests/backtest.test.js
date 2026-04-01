@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 
-const { compareStrategyModes } = require("../src/backtest");
+const { compareStrategyModes } = require("../legacy/backtest");
 
 function makeCandle(timestamp, open, high, low, close, volume) {
   return [timestamp, open, high, low, close, volume];

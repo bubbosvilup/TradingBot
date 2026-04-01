@@ -1,0 +1,31 @@
+{
+  "marketMode": "mock",
+  "market": {
+    "provider": "binance",
+    "streamType": "trade",
+    "wsBaseUrl": "wss://stream.binance.com:9443",
+    "klineIntervals": ["1m", "5m", "1h"],
+    "liveEmitIntervalMs": 1000,
+    "mockIntervalMs": 1000
+  },
+  "bots": [
+    {
+      "id": "bot_btc_trend",
+      "symbol": "BTC/USDT",
+      "strategy": "emaCross",
+      "enabled": true,
+      "riskProfile": "medium",
+      "allowedStrategies": ["emaCross", "breakout", "rsiReversion"],
+      "initialBalanceUsdt": 1000
+    },
+    {
+      "id": "bot_eth_reversion",
+      "symbol": "ETH/USDT",
+      "strategy": "rsiReversion",
+      "enabled": true,
+      "riskProfile": "low",
+      "allowedStrategies": ["rsiReversion", "emaCross", "breakout"],
+      "initialBalanceUsdt": 1000
+    }
+  ]
+}

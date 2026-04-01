@@ -3,7 +3,7 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 
-const { printBacktestReport, runBacktestJob } = require("../src/backtest_runner");
+const { printBacktestReport, runBacktestJob } = require("../legacy/backtest_runner");
 
 function parseSymbols(rawValue) {
   if (!rawValue || typeof rawValue !== "string") {

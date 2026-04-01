@@ -1,0 +1,6 @@
+{
+  "lookback": 15,
+  "breakoutPct": 0.004,
+  "minConfidence": 0.6
+}
+

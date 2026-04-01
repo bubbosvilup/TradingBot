@@ -4,7 +4,7 @@ const http = require("http");
 const path = require("path");
 const assert = require("node:assert/strict");
 
-const { createServerApi } = require("../src/server");
+const { createServerApi } = require("../legacy/server");
 
 function readJson(url) {
   return new Promise((resolve, reject) => {

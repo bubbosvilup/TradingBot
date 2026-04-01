@@ -1,0 +1,19 @@
+{
+  "strategies": [
+    {
+      "id": "emaCross",
+      "module": "./strategies/emaCross/strategy.ts",
+      "config": "./strategies/emaCross/config.json"
+    },
+    {
+      "id": "rsiReversion",
+      "module": "./strategies/rsiReversion/strategy.ts",
+      "config": "./strategies/rsiReversion/config.json"
+    },
+    {
+      "id": "breakout",
+      "module": "./strategies/breakout/strategy.ts",
+      "config": "./strategies/breakout/config.json"
+    }
+  ]
+}

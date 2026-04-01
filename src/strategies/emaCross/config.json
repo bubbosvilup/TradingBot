@@ -1,0 +1,8 @@
+{
+  "emaFast": 9,
+  "emaSlow": 21,
+  "emaBaseline": 50,
+  "minConfidence": 0.58,
+  "rsiFloor": 48
+}
+
