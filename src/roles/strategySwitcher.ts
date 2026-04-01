@@ -1,65 +1,63 @@
-// Module responsibility: controlled strategy switching with cooldowns and loss-aware rules.
+// Module responsibility: resolve published architect family into an executable strategy with only light execution-side guards.
 
+import type { ArchitectAssessment, RecommendedFamily } from "../types/architect.ts";
 import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
-import type { PerformanceSnapshot } from "../types/performance.ts";
 
 class StrategySwitcher {
-  switchCooldownMs: number;
-  minTradesForEvaluation: number;
-  negativeExpectancyTrades: number;
-  drawdownThresholdPct: number;
+  maxDecisionAgeMs: number;
 
-  constructor(options: { switchCooldownMs?: number; minTradesForEvaluation?: number; negativeExpectancyTrades?: number; drawdownThresholdPct?: number } = {}) {
-    this.switchCooldownMs = options.switchCooldownMs || 10 * 60 * 1000;
-    this.minTradesForEvaluation = options.minTradesForEvaluation || 4;
-    this.negativeExpectancyTrades = options.negativeExpectancyTrades || 5;
-    this.drawdownThresholdPct = options.drawdownThresholdPct || 4;
+  constructor(options: { maxDecisionAgeMs?: number } = {}) {
+    this.maxDecisionAgeMs = Math.max(options.maxDecisionAgeMs || 0, 0);
   }
 
   evaluate(params: {
     availableStrategies: string[];
+    architect: ArchitectAssessment | null;
     botConfig: BotConfig;
-    marketRegime: string;
     now: number;
-    performance: PerformanceSnapshot;
+    positionOpen?: boolean;
     state: BotRuntimeState;
   }) {
+    void params.botConfig;
+
     const allowedStrategies = params.availableStrategies.filter(Boolean);
     if (allowedStrategies.length <= 1) return null;
-    if (params.state.lastStrategySwitchAt && (params.now - params.state.lastStrategySwitchAt) < this.switchCooldownMs) {
-      return null;
-    }
-    if (params.performance.tradesCount < this.minTradesForEvaluation) {
-      return null;
-    }
-
-    const recent = params.performance.recentNetPnl.slice(-this.negativeExpectancyTrades);
-    const negativeExpectancy = recent.length >= this.negativeExpectancyTrades
-      && recent.reduce((total, value) => total + value, 0) < 0;
-    const drawdownTriggered = params.performance.drawdown >= this.drawdownThresholdPct;
-
-    if (!negativeExpectancy && !drawdownTriggered) {
+    if (params.positionOpen) return null;
+    if (!params.architect || !params.architect.sufficientData) return null;
+    if (params.architect.recommendedFamily === "no_trade") return null;
+    if (this.maxDecisionAgeMs > 0 && params.architect.updatedAt && (params.now - params.architect.updatedAt) > this.maxDecisionAgeMs) {
       return null;
     }
 
-    const regimePreference = this.pickStrategyForRegime(params.marketRegime, allowedStrategies);
-    const fallback = allowedStrategies.find((strategyId) => strategyId !== params.state.activeStrategyId) || null;
-    const nextStrategyId = regimePreference !== params.state.activeStrategyId ? regimePreference : fallback;
+    const currentFamily = this.getStrategyFamily(params.state.activeStrategyId);
+    if (currentFamily === params.architect.recommendedFamily) {
+      return null;
+    }
+
+    const nextStrategyId = this.pickStrategyForFamily(params.architect.recommendedFamily, allowedStrategies);
     if (!nextStrategyId || nextStrategyId === params.state.activeStrategyId) return null;
 
     return {
       nextStrategyId,
-      reason: drawdownTriggered ? "drawdown_threshold_exceeded" : "negative_expectancy_recent_trades"
+      reason: `architect_family_${params.architect.recommendedFamily}`,
+      targetFamily: params.architect.recommendedFamily
     };
   }
 
-  pickStrategyForRegime(regime: string, allowedStrategies: string[]) {
-    const preference = regime === "trend"
+  getStrategyFamily(strategyId: string | null | undefined): RecommendedFamily | "other" {
+    if (strategyId === "emaCross") return "trend_following";
+    if (strategyId === "rsiReversion") return "mean_reversion";
+    return "other";
+  }
+
+  pickStrategyForFamily(family: RecommendedFamily, allowedStrategies: string[]) {
+    const target = family === "trend_following"
       ? "emaCross"
-      : regime === "range"
+      : family === "mean_reversion"
         ? "rsiReversion"
-        : "breakout";
-    return allowedStrategies.find((strategyId) => strategyId === preference) || allowedStrategies[0];
+        : null;
+    if (!target) return null;
+    return allowedStrategies.find((strategyId) => strategyId === target) || null;
   }
 }
 

@@ -8,12 +8,16 @@ const { WSManager } = require("./wsManager.ts");
 const { IndicatorEngine } = require("../engines/indicatorEngine.ts");
 const { ExecutionEngine } = require("../engines/executionEngine.ts");
 const { BacktestEngine } = require("../engines/backtestEngine.ts");
+const { ContextService } = require("./contextService.ts");
+const { ArchitectService } = require("./architectService.ts");
 const { MarketStream } = require("../streams/marketStream.ts");
 const { UserStream } = require("../streams/userStream.ts");
+const { ContextBuilder } = require("../roles/contextBuilder.ts");
 const { RiskManager } = require("../roles/riskManager.ts");
 const { PerformanceMonitor } = require("../roles/performanceMonitor.ts");
 const { StrategySwitcher } = require("../roles/strategySwitcher.ts");
 const { RegimeDetector } = require("../roles/regimeDetector.ts");
+const { BotArchitect } = require("../roles/botArchitect.ts");
 const { StateStore } = require("./stateStore.ts");
 const { createLogger } = require("../utils/logger.ts");
 const { formatDuration, now, sleep } = require("../utils/time.ts");
@@ -38,7 +42,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     durationMs: runtimeOptions.durationMs ?? cliArgs.durationMs,
     summaryEveryMs: runtimeOptions.summaryEveryMs ?? cliArgs.summaryEveryMs
   };
-  const store = new StateStore({ maxEvents: 300, maxPriceHistory: 300 });
+  const store = new StateStore({ maxEvents: 300, maxPriceHistory: 600 });
   const logger = createLogger("orchestrator", {
     eventSink: (event: any) => store.appendEvent(event)
   });
@@ -60,6 +64,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const performanceMonitor = new PerformanceMonitor();
   const strategySwitcher = new StrategySwitcher();
   const regimeDetector = new RegimeDetector();
+  const contextBuilder = new ContextBuilder({ indicatorEngine });
+  const botArchitect = new BotArchitect();
   const executionEngine = new ExecutionEngine({ feeRate: 0.001, logger: logger.child("execution"), store, userStream });
   const backtestEngine = new BacktestEngine();
   const strategyRegistry = new StrategyRegistry({ configLoader, indicatorEngine });
@@ -78,6 +84,24 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     wsBaseUrl: botConfig.market?.wsBaseUrl || "wss://stream.binance.com:9443",
     wsManager
   });
+  const contextService = new ContextService({
+    contextBuilder,
+    logger: logger.child("context"),
+    marketStream,
+    maxWindowMs: 300_000,
+    store,
+    warmupMs: 30_000
+  });
+  const architectService = new ArchitectService({
+    botArchitect,
+    logger: logger.child("architect"),
+    marketStream,
+    publishIntervalMs: 30_000,
+    requiredConfirmations: 2,
+    store,
+    switchDelta: 0.12,
+    warmupMs: 30_000
+  });
   const systemServer = new SystemServer({
     feedMode: marketMode === "live" ? "live" : "mock",
     host: process.env.HOST || "127.0.0.1",
@@ -89,6 +113,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   const botManager = new BotManager({
+    botArchitect,
     executionEngine,
     indicatorEngine,
     logger: logger.child("bots"),
@@ -104,6 +129,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
 
   botManager.initialize(enabledBots);
   marketStream.start(enabledBots.map((bot: any) => bot.symbol));
+  contextService.start(enabledBots.map((bot: any) => bot.symbol));
+  architectService.start(enabledBots.map((bot: any) => bot.symbol));
   botManager.startAll();
   await userStream.start({
     enabled: marketMode === "live"
@@ -133,6 +160,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     if (stopped) return;
     stopped = true;
     botManager.stopAll();
+    architectService.stop();
+    contextService.stop();
     marketStream.stop();
     Promise.resolve(userStream.stop()).catch(() => {});
     if (runtimeOptions.serverEnabled !== false) {

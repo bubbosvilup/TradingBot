@@ -12,6 +12,12 @@ function getMimeType(filePath: string) {
   return "text/html; charset=utf-8";
 }
 
+function getStrategyFamily(strategyId: string | null | undefined) {
+  if (strategyId === "emaCross") return "trend_following";
+  if (strategyId === "rsiReversion") return "mean_reversion";
+  return "other";
+}
+
 class SystemServer {
   store: any;
   logger: any;
@@ -104,13 +110,80 @@ class SystemServer {
       const performance = this.store.getPerformance(config.id);
       const position = this.store.getPosition(config.id);
       const latestPrice = this.store.getLatestPrice(config.symbol);
+      const architect = this.store.getArchitectAssessment(config.symbol);
+      const architectPublisher = this.store.getArchitectPublisherState(config.symbol);
+      const context = this.store.getContextSnapshot(config.symbol);
+      const activeFamily = getStrategyFamily(state?.activeStrategyId || config.strategy);
+      const targetFamily = architect?.recommendedFamily && architect.recommendedFamily !== "no_trade"
+        ? architect.recommendedFamily
+        : null;
       const cooldownRemainingMs = state?.cooldownUntil ? Math.max(0, state.cooldownUntil - now) : 0;
       const unrealizedPnl = position && latestPrice
         ? (latestPrice - position.entryPrice) * position.quantity
         : 0;
+      const derivedSyncStatus = position && targetFamily && activeFamily !== targetFamily
+        ? "waiting_flat"
+        : architect
+          ? "synced"
+          : "pending";
+      const syncStatus = !state?.architectSyncStatus || state.architectSyncStatus === "pending"
+        ? derivedSyncStatus
+        : state.architectSyncStatus;
 
       return {
         activeStrategyId: state?.activeStrategyId || config.strategy,
+        architect: architect ? {
+          ...architect,
+          challenger: architectPublisher?.challengerRegime ? {
+            count: architectPublisher.challengerCount,
+            regime: architectPublisher.challengerRegime,
+            required: architectPublisher.challengerRequired
+          } : null,
+          hysteresisActive: architectPublisher?.hysteresisActive || false,
+          nextPublishAt: architectPublisher?.nextPublishAt || null,
+          ready: architectPublisher ? architectPublisher.ready : true,
+          warmupRemainingMs: !context?.warmupComplete && context?.windowSpanMs
+            ? Math.max(0, 30_000 - context.windowSpanMs)
+            : 0
+        } : architectPublisher ? {
+          absoluteConviction: 0,
+          challenger: architectPublisher.challengerRegime ? {
+            count: architectPublisher.challengerCount,
+            regime: architectPublisher.challengerRegime,
+            required: architectPublisher.challengerRequired
+          } : null,
+          contextMaturity: context?.features?.maturity || 0,
+          dataMode: context?.dataMode || "unknown",
+          decisionStrength: 0,
+          familyScores: {
+            mean_reversion: 0,
+            no_trade: 1,
+            trend_following: 0
+          },
+          featureConflict: context?.features?.featureConflict || 0,
+          hysteresisActive: architectPublisher.hysteresisActive || false,
+          marketRegime: "unclear",
+          nextPublishAt: architectPublisher.nextPublishAt || null,
+          ready: architectPublisher.ready || false,
+          recommendedFamily: "no_trade",
+          regimeScores: {
+            range: 0,
+            trend: 0,
+            unclear: 1,
+            volatile: 0
+          },
+          reasonCodes: [],
+          sampleSize: context?.sampleSize || 0,
+          signalAgreement: 0,
+          structureState: context?.structureState || "choppy",
+          summary: context?.summary || "Architect warming up.",
+          trendBias: context?.trendBias || "neutral",
+          updatedAt: architectPublisher.lastPublishedAt || architectPublisher.lastObservedAt || now,
+          volatilityState: context?.volatilityState || "normal",
+          warmupRemainingMs: !context?.warmupComplete && context?.windowSpanMs
+            ? Math.max(0, 30_000 - context.windowSpanMs)
+            : 0
+        } : null,
         availableBalanceUsdt: state?.availableBalanceUsdt || 0,
         botId: config.id,
         cooldownReason: state?.cooldownReason || null,
@@ -134,6 +207,7 @@ class SystemServer {
         performance,
         price: latestPrice,
         riskProfile: config.riskProfile,
+        syncStatus,
         status: state?.status || "idle",
         symbol: config.symbol
       };

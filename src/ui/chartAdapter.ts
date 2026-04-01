@@ -1,6 +1,8 @@
 // Module responsibility: encapsulate lightweight-charts usage for the observability UI.
 
 (function registerChartAdapter(globalScope) {
+  const MAX_VISIBLE_MARKER_TEXT = 6;
+
   function createSeries(chart, seriesType, options) {
     if (typeof chart.addSeries === "function" && globalScope.LightweightCharts?.[seriesType]) {
       return chart.addSeries(globalScope.LightweightCharts[seriesType], options);
@@ -26,6 +28,93 @@
     if (typeof series.setMarkers === "function") {
       series.setMarkers(markers);
     }
+  }
+
+  function normalizeEpochSeconds(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) return null;
+    if (numericValue > 1_000_000_000_000) {
+      return Math.floor(numericValue / 1000);
+    }
+    return Math.floor(numericValue);
+  }
+
+  function findFloorTime(times, targetTime) {
+    if (!Array.isArray(times) || times.length <= 0) return null;
+    let low = 0;
+    let high = times.length - 1;
+    let best = null;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const candidate = times[mid];
+      if (candidate === targetTime) {
+        return candidate;
+      }
+      if (candidate < targetTime) {
+        best = candidate;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return best;
+  }
+
+  function projectMarkers(markers, referenceData) {
+    if (!Array.isArray(markers) || markers.length <= 0 || !Array.isArray(referenceData) || referenceData.length <= 0) {
+      return [];
+    }
+
+    const seriesTimes = referenceData
+      .map((point) => normalizeEpochSeconds(point?.time))
+      .filter((time) => time !== null);
+    if (seriesTimes.length <= 0) {
+      return [];
+    }
+
+    const minTime = seriesTimes[0];
+    const maxTime = seriesTimes[seriesTimes.length - 1];
+    const projected = [];
+    const seen = new Set();
+
+    for (const marker of markers) {
+      const rawTime = normalizeEpochSeconds(marker?.time ?? marker?.timestamp);
+      if (rawTime === null || rawTime < minTime || rawTime > maxTime) {
+        continue;
+      }
+
+      const alignedTime = findFloorTime(seriesTimes, rawTime);
+      if (alignedTime === null || alignedTime < minTime || alignedTime > maxTime) {
+        continue;
+      }
+
+      const normalizedMarker = {
+        color: marker?.color,
+        position: marker?.position,
+        shape: marker?.shape,
+        text: typeof marker?.text === "string" ? marker.text : "",
+        time: alignedTime
+      };
+      const dedupeKey = [
+        normalizedMarker.time,
+        normalizedMarker.position,
+        normalizedMarker.shape,
+        normalizedMarker.color,
+        normalizedMarker.text
+      ].join("|");
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      projected.push(normalizedMarker);
+    }
+
+    projected.sort((left, right) => Number(left.time) - Number(right.time));
+    const textStartIndex = Math.max(0, projected.length - MAX_VISIBLE_MARKER_TEXT);
+    return projected.map((marker, index) => ({
+      ...marker,
+      text: index >= textStartIndex ? marker.text : ""
+    }));
   }
 
   function createChartAdapter(options) {
@@ -270,10 +359,12 @@
         resetDataState(symbol);
       }
 
+      const lineData = Array.isArray(payload?.lineData) ? payload.lineData : [];
       const candles = payload?.candles?.[currentTimeframe] || [];
-      const markers = Array.isArray(payload?.markers) ? payload.markers.filter((marker) => Number.isFinite(Number(marker?.time)) && Number(marker.time) > 0) : [];
       const useCandles = Array.isArray(candles) && candles.length > 0;
       const nextContextKey = `${symbol || "n/a"}:${currentTimeframe}:${useCandles ? "candlestick" : "line"}`;
+      const activeReferenceData = useCandles ? candles : lineData;
+      const markers = projectMarkers(Array.isArray(payload?.markers) ? payload.markers : [], activeReferenceData);
 
       if (currentContextKey !== nextContextKey) {
         clearMarkers();
@@ -291,7 +382,7 @@
         setMarkers(candleSeries, [], candleMarkers);
       }
 
-      applyIncrementalLineData(Array.isArray(payload?.lineData) ? payload.lineData : []);
+      applyIncrementalLineData(lineData);
       if (!useCandles) {
         setMarkers(lineSeries, markers, lineMarkers);
       }

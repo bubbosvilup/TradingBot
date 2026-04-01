@@ -1,20 +1,28 @@
 "use strict";
 
 const { runBacktestTests } = require("./backtest.test");
+const { runArchitectServiceTests } = require("./architectService.test");
+const { runBotArchitectTests } = require("./botArchitect.test");
+const { runContextServiceTests } = require("./contextService.test");
 const { runOrchestratorTests } = require("./orchestrator.test");
 const { runSystemServerTests } = require("./systemServer.test");
 const { runServerTests } = require("./server.test");
 const { runRuntimeTests } = require("./runtime.test");
 const { runStrategyTests } = require("./strategy.test");
+const { runStrategySwitcherTests } = require("./strategySwitcher.test");
 const { runTradingBotTests } = require("./tradingBot.test");
 const { runWsManagerTests } = require("./wsManager.test");
 const { runMarketStreamTests } = require("./marketStream.test");
 
 async function main() {
   const tests = [
+    { name: "architectService", run: async () => runArchitectServiceTests() },
     { name: "backtest", run: async () => runBacktestTests() },
+    { name: "botArchitect", run: async () => runBotArchitectTests() },
+    { name: "contextService", run: async () => runContextServiceTests() },
     { name: "orchestrator", run: async () => runOrchestratorTests() },
     { name: "strategy", run: async () => runStrategyTests() },
+    { name: "strategySwitcher", run: async () => runStrategySwitcherTests() },
     { name: "tradingBot", run: async () => runTradingBotTests() },
     { name: "wsManager", run: async () => runWsManagerTests() },
     { name: "marketStream", run: async () => runMarketStreamTests() },

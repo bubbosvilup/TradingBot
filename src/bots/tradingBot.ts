@@ -1,6 +1,7 @@
 // Module responsibility: real bot implementation composed from strategy, risk, performance and execution roles.
 
 import type { BotConfig } from "../types/bot.ts";
+import type { ArchitectAssessment } from "../types/architect.ts";
 import type { MarketTick } from "../types/market.ts";
 import type { Strategy } from "../types/strategy.ts";
 import type { PositionRecord } from "../types/trade.ts";
@@ -14,6 +15,7 @@ class TradingBot extends BaseBot {
   cooldownWindowLoggedUntil: number | null;
   cooldownWasActive: boolean;
   lastNonCooldownBlockReason: string | null;
+  architectDivergenceActive: boolean;
 
   constructor(config: BotConfig, deps: any) {
     super(config, deps);
@@ -24,6 +26,7 @@ class TradingBot extends BaseBot {
     this.cooldownWindowLoggedUntil = null;
     this.cooldownWasActive = false;
     this.lastNonCooldownBlockReason = null;
+    this.architectDivergenceActive = false;
   }
 
   start() {
@@ -185,16 +188,59 @@ class TradingBot extends BaseBot {
     }
   }
 
-  maybeSwitchStrategy(performance: any, marketRegime: string) {
+  getPublishedArchitectAssessment(): ArchitectAssessment | null {
+    return this.deps.store.getArchitectPublishedAssessment(this.config.symbol);
+  }
+
+  updateArchitectSyncState(position: PositionRecord | null) {
     const state = this.deps.store.getBotState(this.config.id);
-    if (!state) return;
+    if (!state) return null;
+
+    const published = this.getPublishedArchitectAssessment();
+    const currentFamily = this.deps.strategySwitcher.getStrategyFamily(this.strategy.id);
+    const targetFamily = published?.recommendedFamily || null;
+    const actionableTarget = targetFamily && targetFamily !== "no_trade" ? targetFamily : null;
+    const waitingForFlat = Boolean(position) && Boolean(actionableTarget) && currentFamily !== actionableTarget;
+    const nextStatus = !published ? "pending" : waitingForFlat ? "waiting_flat" : "synced";
+
+    this.deps.store.updateBotState(this.config.id, {
+      architectRecommendedFamily: published?.recommendedFamily || null,
+      architectRecommendationStreak: 0,
+      architectSyncStatus: nextStatus,
+      lastArchitectAssessmentAt: published?.updatedAt || null
+    });
+
+    const divergenceActive = Boolean(actionableTarget) && currentFamily !== actionableTarget;
+    if (divergenceActive !== this.architectDivergenceActive) {
+      this.architectDivergenceActive = divergenceActive;
+      if (divergenceActive) {
+        this.deps.logger.bot(this.config, "architect_strategy_divergence", {
+          currentFamily,
+          publishedAt: published?.updatedAt || null,
+          recommendedFamily: actionableTarget,
+          syncStatus: nextStatus
+        });
+      }
+    }
+
+    return {
+      published,
+      state: this.deps.store.getBotState(this.config.id)
+    };
+  }
+
+  maybeApplyPublishedArchitect(position: PositionRecord | null) {
+    const state = this.deps.store.getBotState(this.config.id);
+    const published = this.getPublishedArchitectAssessment();
+    if (!state || !published) return;
+    if (position) return;
 
     const switchPlan = this.deps.strategySwitcher.evaluate({
+      architect: published,
       availableStrategies: this.allowedStrategies,
       botConfig: this.config,
-      marketRegime,
       now: now(),
-      performance,
+      positionOpen: Boolean(position),
       state
     });
 
@@ -202,11 +248,16 @@ class TradingBot extends BaseBot {
     this.strategy = this.deps.strategyRegistry.createStrategy(switchPlan.nextStrategyId);
     this.deps.store.updateBotState(this.config.id, {
       activeStrategyId: switchPlan.nextStrategyId,
+      architectSyncStatus: "synced",
       lastStrategySwitchAt: now()
     });
-    this.deps.logger.bot(this.config, "strategy_switched", {
+    this.deps.logger.bot(this.config, "strategy_aligned", {
+      absoluteConviction: published.absoluteConviction.toFixed(2),
+      decisionStrength: published.decisionStrength.toFixed(2),
       nextStrategy: switchPlan.nextStrategyId,
-      reason: switchPlan.reason
+      publishedRegime: published.marketRegime,
+      reason: switchPlan.reason,
+      targetFamily: switchPlan.targetFamily
     });
   }
 
@@ -222,6 +273,10 @@ class TradingBot extends BaseBot {
     if (!state || (state.status === "paused" && state.pausedReason === "max_drawdown_reached")) {
       return;
     }
+
+    const currentPosition = this.deps.store.getPosition(this.config.id);
+    this.updateArchitectSyncState(currentPosition);
+    this.maybeApplyPublishedArchitect(currentPosition);
 
     const context = this.buildContext(tick);
     const decision = this.strategy.evaluate(context);
@@ -334,7 +389,8 @@ class TradingBot extends BaseBot {
     });
     this.deps.store.recordExecution(this.config.id, this.config.symbol, closedTrade.closedAt);
     this.ensureCooldownState(closedTrade.closedAt);
-    this.maybeSwitchStrategy(nextPerformance, context.marketRegime);
+    this.updateArchitectSyncState(null);
+    this.maybeApplyPublishedArchitect(null);
   }
 }
 

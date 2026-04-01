@@ -1,6 +1,8 @@
 // Module responsibility: central in-memory state store for prices, bots, positions, orders and performance.
 
 import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
+import type { ArchitectAssessment, ArchitectPublisherState } from "../types/architect.ts";
+import type { ContextSnapshot } from "../types/context.ts";
 import type { SystemEvent } from "../types/event.ts";
 import type { MarketKline, MarketTick, PriceSnapshot } from "../types/market.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
@@ -53,6 +55,10 @@ class StateStore {
   performanceHistory: Map<string, PerformanceHistoryPoint[]>;
   wsConnections: Map<string, WsConnectionSnapshot>;
   pipelineBySymbol: Map<string, PipelineSnapshot>;
+  contextBySymbol: Map<string, ContextSnapshot>;
+  architectObservedBySymbol: Map<string, ArchitectAssessment>;
+  architectPublishedBySymbol: Map<string, ArchitectAssessment>;
+  architectPublisherBySymbol: Map<string, ArchitectPublisherState>;
   events: SystemEvent[];
   maxEvents: number;
   maxPriceHistory: number;
@@ -71,6 +77,10 @@ class StateStore {
     this.performanceHistory = new Map();
     this.wsConnections = new Map();
     this.pipelineBySymbol = new Map();
+    this.contextBySymbol = new Map();
+    this.architectObservedBySymbol = new Map();
+    this.architectPublishedBySymbol = new Map();
+    this.architectPublisherBySymbol = new Map();
     this.events = [];
     this.maxEvents = Math.max(options.maxEvents || 250, 50);
     this.maxPriceHistory = Math.max(options.maxPriceHistory || 300, 50);
@@ -92,6 +102,10 @@ class StateStore {
       lastDecision: "hold",
       lastDecisionConfidence: 0,
       lastDecisionReasons: [],
+      lastArchitectAssessmentAt: null,
+      architectRecommendedFamily: null,
+      architectRecommendationStreak: 0,
+      architectSyncStatus: "pending",
       lastEvaluationAt: null,
       lastExecutionAt: null,
       lastStrategySwitchAt: null,
@@ -191,6 +205,19 @@ class StateStore {
   getRecentPrices(symbol: string, limit: number = 120): number[] {
     const history = this.prices.get(symbol)?.history || [];
     return history.slice(-limit).map((tick) => tick.price);
+  }
+
+  getPriceHistory(symbol: string, limit?: number): MarketTick[] {
+    const history = this.prices.get(symbol)?.history || [];
+    if (!Number.isFinite(limit as number) || !limit || limit <= 0) {
+      return [...history];
+    }
+    return history.slice(-limit);
+  }
+
+  getPriceHistorySince(symbol: string, sinceTimestamp: number): MarketTick[] {
+    const history = this.prices.get(symbol)?.history || [];
+    return history.filter((tick) => Number(tick.timestamp) >= sinceTimestamp);
   }
 
   getBotState(botId: string): BotRuntimeState | null {
@@ -315,6 +342,58 @@ class StateStore {
     return Array.from(this.pipelineBySymbol.values());
   }
 
+  setContextSnapshot(symbol: string, snapshot: ContextSnapshot) {
+    this.contextBySymbol.set(symbol, snapshot);
+  }
+
+  getContextSnapshot(symbol: string): ContextSnapshot | null {
+    return this.contextBySymbol.get(symbol) || null;
+  }
+
+  getAllContextSnapshots() {
+    return Array.from(this.contextBySymbol.values());
+  }
+
+  setArchitectObservedAssessment(symbol: string, assessment: ArchitectAssessment) {
+    this.architectObservedBySymbol.set(symbol, assessment);
+  }
+
+  getArchitectObservedAssessment(symbol: string): ArchitectAssessment | null {
+    return this.architectObservedBySymbol.get(symbol) || null;
+  }
+
+  setArchitectPublishedAssessment(symbol: string, assessment: ArchitectAssessment) {
+    this.architectPublishedBySymbol.set(symbol, assessment);
+  }
+
+  setArchitectAssessment(symbol: string, assessment: ArchitectAssessment) {
+    this.setArchitectPublishedAssessment(symbol, assessment);
+  }
+
+  getArchitectPublishedAssessment(symbol: string): ArchitectAssessment | null {
+    return this.architectPublishedBySymbol.get(symbol) || null;
+  }
+
+  getArchitectAssessment(symbol: string): ArchitectAssessment | null {
+    return this.getArchitectPublishedAssessment(symbol);
+  }
+
+  getAllArchitectAssessments() {
+    return Array.from(this.architectPublishedBySymbol.values());
+  }
+
+  setArchitectPublisherState(symbol: string, state: ArchitectPublisherState) {
+    this.architectPublisherBySymbol.set(symbol, state);
+  }
+
+  getArchitectPublisherState(symbol: string): ArchitectPublisherState | null {
+    return this.architectPublisherBySymbol.get(symbol) || null;
+  }
+
+  getAllArchitectPublisherStates() {
+    return Array.from(this.architectPublisherBySymbol.values());
+  }
+
   getOrdersForSymbol(symbol: string): OrderRecord[] {
     return Array.from(this.orders.values()).flat().filter((order) => order.symbol === symbol);
   }
@@ -347,6 +426,9 @@ class StateStore {
       openPositions: Array.from(this.positions.values()).filter(Boolean),
       performance: Array.from(this.performance.values()),
       pipelines: this.getAllPipelineSnapshots(),
+      context: this.getAllContextSnapshots(),
+      architect: this.getAllArchitectAssessments(),
+      architectPublisher: this.getAllArchitectPublisherStates(),
       wsConnections: this.getWsConnections()
     };
   }

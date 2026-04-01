@@ -1,65 +1,178 @@
 # TradingBot
 
-TradingBot ora espone una nuova architettura multi-bot modulare in TypeScript-like runtime modules, eseguibili con `node --experimental-strip-types`. L'obiettivo e separare chiaramente orchestrazione, strategie, ruoli di rischio/performance e data streams, evitando un singolo bot monolitico.
+TradingBot e un runtime multi-bot modulare per paper trading e osservabilita realtime.
 
-## Nuova struttura
+Lo stato attuale del progetto e questo:
+- architettura nuova multi-bot attiva
+- feed market `mock` o `live` via Binance WebSocket
+- `stateStore` come fonte unica di verita
+- layer `Context -> Architect -> TradingBot`
+- UI/API minima per osservare bot, prezzi, posizioni, eventi e storico trade
+- esecuzione ancora simulata / paper, non ordini reali su exchange
+
+## Stato del sistema
+
+Flusso dati attuale:
+
+```text
+Binance/mock feed
+  -> streams
+  -> stateStore
+  -> ContextService
+  -> ArchitectService
+  -> TradingBot
+  -> executionEngine
+  -> UI/API
+```
+
+Principi chiave:
+- i bot non leggono direttamente Binance
+- la UI non legge direttamente gli stream
+- il market regime non e deciso dentro il bot esecutivo
+- le decisioni pubblicate dall'Architect sono separate dalle osservazioni rumorose per-tick
+
+## Cosa fa oggi
+
+- Avvia piu bot indipendenti in parallelo
+- Riceve prezzi realtime via Binance Spot WebSocket in `live`
+- Usa un feed simulato in `mock`
+- Mantiene prezzi, posizioni, ordini, performance ed eventi nello `stateStore`
+- Prepara feature rolling interpretabili per simbolo
+- Classifica il mercato in:
+  - `trend`
+  - `range`
+  - `volatile`
+  - `unclear`
+- Mappa il regime a una famiglia strategica:
+  - `trend -> trend_following`
+  - `range -> mean_reversion`
+  - `volatile -> no_trade`
+  - `unclear -> no_trade`
+- Pubblica una decisione Architect stabile ogni 30 secondi
+- Riallinea i bot alla famiglia pubblicata solo quando sono flat
+- Mantiene aperte le posizioni esistenti anche se il regime cambia
+- Espone dashboard e API di osservabilita
+
+## Cosa NON fa ancora
+
+- Non esegue ordini reali su Binance
+- Non garantisce profittabilita
+- Non usa ancora grid bot
+- Non usa ancora una famiglia `breakout` come strategia esecutiva attiva
+- Non e ancora una piattaforma di trading completa tipo terminale professionale
+
+Nota importante:
+- il feed puo essere `live`
+- l'execution resta `paper`
+
+## Struttura
 
 ```text
 src/
   core/
+    orchestrator.ts
+    botManager.ts
+    configLoader.ts
+    stateStore.ts
+    strategyRegistry.ts
+    systemServer.ts
+    wsManager.ts
+    contextService.ts
+    architectService.ts
   bots/
+    baseBot.ts
+    tradingBot.ts
   roles/
-  strategies/
+    contextBuilder.ts
+    botArchitect.ts
+    performanceMonitor.ts
+    regimeDetector.ts
+    riskManager.ts
+    strategySwitcher.ts
   engines/
+    indicatorEngine.ts
+    executionEngine.ts
+    backtestEngine.ts
   streams/
+    marketStream.ts
+    userStream.ts
+  strategies/
+    emaCross/
+    rsiReversion/
+    breakout/
   data/
+    bots.config.json
+    strategies.config.json
   types/
   ui/
   utils/
+
+public/
 legacy/
+tests/
 ```
+
+## Componenti principali
 
 ### Core
 
-- `src/core/orchestrator.ts`: controller principale che avvia il sistema.
-- `src/core/botManager.ts`: crea e gestisce piu bot indipendenti.
-- `src/core/strategyRegistry.ts`: registra e istanzia strategie plug-and-play.
-- `src/core/configLoader.ts`: legge i file JSON di configurazione.
-- `src/core/wsManager.ts`: connessioni WebSocket, reconnect e normalizzazione eventi market.
-- `src/core/stateStore.ts`: single source of truth in memoria per prezzi, bot, posizioni e performance.
-- `src/core/systemServer.ts`: API/HTTP minimale per osservabilita e UI.
+- `src/core/orchestrator.ts`: bootstrap del sistema
+- `src/core/stateStore.ts`: stato centrale in memoria
+- `src/core/systemServer.ts`: API e server della dashboard
+- `src/core/wsManager.ts`: gestione WebSocket e reconnect
+- `src/core/contextService.ts`: costruisce il contesto rolling per simbolo
+- `src/core/architectService.ts`: pubblica il regime/famiglia consigliata su cadenza stabile
 
-### Bots
+### Execution
 
-- `src/bots/baseBot.ts`: lifecycle comune.
-- `src/bots/tradingBot.ts`: implementazione concreta del bot.
+- `src/bots/tradingBot.ts`: bot esecutivo per simbolo
+- `src/roles/riskManager.ts`: sizing, cooldown, drawdown, guardrail
+- `src/roles/performanceMonitor.ts`: PnL, drawdown, win rate, profit factor
+- `src/roles/strategySwitcher.ts`: resolver leggero famiglia -> strategia eseguibile
+- `src/engines/executionEngine.ts`: paper execution
 
-### Roles
+### Context / Architect
 
-- `src/roles/riskManager.ts`: sizing, drawdown, cooldown, overtrading.
-- `src/roles/performanceMonitor.ts`: PnL, win rate, drawdown, profit factor.
-- `src/roles/strategySwitcher.ts`: switching controllato fra strategie.
-- `src/roles/regimeDetector.ts`: regime detector leggero.
+- `src/roles/contextBuilder.ts`: feature engineering rolling
+- `src/roles/botArchitect.ts`: classificatore di regime, non esecutivo
 
-### Engines
-
-- `src/engines/indicatorEngine.ts`: EMA, RSI, momentum, volatility.
-- `src/engines/executionEngine.ts`: esecuzione simulata ordini/posizioni.
-- `src/engines/backtestEngine.ts`: placeholder pronto per replay storici.
+Feature principali oggi:
+- directional efficiency
+- ema separation
+- slope consistency
+- reversion stretch
+- rsi intensity
+- volatility risk
+- chopiness
+- breakout quality
+- data quality
+- maturity
 
 ### Streams
 
-- `src/streams/marketStream.ts`: market feed unificato con `marketMode: mock | live`.
-- `src/streams/userStream.ts`: aggiornamenti ordini/account, pronto per fills e balances.
+- `src/streams/marketStream.ts`: feed unificato `mock | live`
+- `src/streams/userStream.ts`: eventi ordini/account, pronto per evoluzioni live
 
-### Data
+## Strategie eseguibili oggi
 
-- `src/data/bots.config.json`: definizione dei bot indipendenti.
-- `src/data/strategies.config.json`: registry delle strategie disponibili.
+Famiglie attive:
+- `trend_following -> emaCross`
+- `mean_reversion -> rsiReversion`
 
-## Multi-bot config
+Strategie presenti nel repo:
+- `emaCross`
+- `rsiReversion`
+- `breakout`
 
-`src/data/bots.config.json`
+Importante:
+- `breakout` esiste nel codice
+- al momento non e usata come famiglia esecutiva attiva dal flow Architect -> Switcher
+
+## Configurazione bot
+
+File: `src/data/bots.config.json`
+
+Esempio:
 
 ```json
 {
@@ -68,7 +181,9 @@ legacy/
     "provider": "binance",
     "streamType": "trade",
     "wsBaseUrl": "wss://stream.binance.com:9443",
-    "liveEmitIntervalMs": 1000
+    "klineIntervals": ["1m", "5m", "1h"],
+    "liveEmitIntervalMs": 1000,
+    "mockIntervalMs": 1000
   },
   "bots": [
     {
@@ -76,56 +191,72 @@ legacy/
       "symbol": "BTC/USDT",
       "strategy": "emaCross",
       "enabled": true,
-      "riskProfile": "medium"
-    },
-    {
-      "id": "bot_eth_reversion",
-      "symbol": "ETH/USDT",
-      "strategy": "rsiReversion",
-      "enabled": true,
-      "riskProfile": "low"
+      "riskProfile": "medium",
+      "allowedStrategies": ["emaCross", "breakout", "rsiReversion"],
+      "initialBalanceUsdt": 1000
     }
   ]
 }
 ```
 
-Nel file reale ho aggiunto anche `allowedStrategies` e `initialBalanceUsdt` per supportare lo strategy switching e il paper sizing.
+Override rapido:
+- `MARKET_MODE=mock`
+- `MARKET_MODE=live`
 
-## Strategie disponibili
+## Warm-up e publish Architect
 
-- `emaCross`: trend following con EMA cross e filtro RSI.
-- `rsiReversion`: mean reversion per mercati laterali.
-- `breakout`: breakout momentum con range recente.
+Regole attuali:
+- warm-up context: 30 secondi
+- osservazione continua
+- publish Architect ogni 30 secondi
+- decisione pubblicata stabile fino al ciclo successivo
+- hysteresis + challenger persistence per evitare flap
 
-Ogni strategia espone il contratto standard:
+Il bot esecutivo:
+- legge solo lo stato published dell'Architect
+- non cambia famiglia mentre ha una posizione aperta
+- si riallinea quando torna flat
+- non chiude una posizione solo perche il regime cambia
 
-```ts
-export interface Strategy {
-  id: string;
-  evaluate(context: MarketContext): StrategyDecision;
-}
-```
+## UI / API
+
+Avviando il bot, il server espone una dashboard locale.
+
+Endpoint principali:
+- `GET /api/system`
+- `GET /api/bots`
+- `GET /api/prices`
+- `GET /api/positions`
+- `GET /api/events`
+- `GET /api/trades`
+- `GET /api/chart`
+- `GET /api/analytics`
+
+La UI mostra:
+- bot attivi
+- stato stream
+- latenza pipeline
+- focus symbol
+- posizioni aperte
+- trade history in modale
+- chart locale con marker di esecuzione
+- eventi recenti
 
 ## Avvio
 
-Compatibilita:
-
-- `npm start`
-- `node bot.js`
-
-Entrambi avviano il bootstrap JS che delega a:
+Standard:
 
 ```bash
-node --experimental-strip-types src/core/orchestrator.ts
+npm start
 ```
 
-Per eseguire direttamente l'orchestrator:
+Diretto:
 
 ```bash
 npm run start:orchestrator
 ```
 
-Per uno smoke rapido:
+Smoke rapido:
 
 ```bash
 node --experimental-strip-types src/core/orchestrator.ts --duration-ms=5000 --summary-ms=1000
@@ -137,12 +268,18 @@ node --experimental-strip-types src/core/orchestrator.ts --duration-ms=5000 --su
 npm test
 ```
 
-I test ora includono anche uno smoke sul nuovo orchestrator multi-bot.
+La suite copre anche:
+- orchestrator
+- market stream
+- ws manager
+- context service
+- architect service
+- strategy switcher
+- trading bot
+- system server
 
-## Note operative
+## Legacy
 
-- Il runtime supporta sia `mock` che `live` via `marketMode` in `src/data/bots.config.json` o `MARKET_MODE` da env.
-- In `live`, Binance Spot WebSocket alimenta `marketStream`, che coalesca gli update prima di scriverli nello `stateStore` per evitare event flooding sui bot.
-- Le strategie non sono hardcoded nel bot: il bot riceve la strategia dal `strategyRegistry`.
-- Il `stateStore` aggiorna lo stato incrementalmente invece di ricostruirlo interamente a ogni tick.
-- I moduli JS del sistema precedente sono stati isolati in `legacy/` e non fanno parte del nuovo orchestrator.
+Il codice precedente e stato isolato in `legacy/`.
+
+Non fa parte del nuovo runtime principale.

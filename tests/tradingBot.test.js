@@ -4,17 +4,54 @@ const { TradingBot } = require("../src/bots/tradingBot.ts");
 const { ExecutionEngine } = require("../src/engines/executionEngine.ts");
 const { PerformanceMonitor } = require("../src/roles/performanceMonitor.ts");
 const { RiskManager } = require("../src/roles/riskManager.ts");
+const { StrategySwitcher } = require("../src/roles/strategySwitcher.ts");
 const { StateStore } = require("../src/core/stateStore.ts");
 const { UserStream } = require("../src/streams/userStream.ts");
 
-function createHarness(strategyEvaluate) {
+function createPublishedArchitect(overrides = {}) {
+  return {
+    absoluteConviction: 0.74,
+    confidence: 0.71,
+    contextMaturity: 0.82,
+    dataMode: "live",
+    decisionStrength: 0.16,
+    familyScores: {
+      mean_reversion: 0.68,
+      no_trade: 0.22,
+      trend_following: 0.31
+    },
+    featureConflict: 0.14,
+    marketRegime: "range",
+    reasonCodes: ["reversion_structure"],
+    recommendedFamily: "mean_reversion",
+    regimeScores: {
+      range: 0.68,
+      trend: 0.31,
+      unclear: 0.12,
+      volatile: 0.19
+    },
+    sampleSize: 180,
+    signalAgreement: 0.72,
+    structureState: "choppy",
+    sufficientData: true,
+    summary: "Market context favors range; recommend mean_reversion.",
+    symbol: "BTC/USDT",
+    trendBias: "neutral",
+    updatedAt: Date.now(),
+    volatilityState: "normal",
+    ...overrides
+  };
+}
+
+function createHarness(strategyEvaluate, options = {}) {
   const store = new StateStore();
   const config = {
+    allowedStrategies: options.allowedStrategies || ["testStrategy"],
     enabled: true,
     id: "bot_test",
-    riskProfile: "medium",
-    strategy: "testStrategy",
-    symbol: "BTC/USDT"
+    riskProfile: options.riskProfile || "medium",
+    strategy: options.strategy || "testStrategy",
+    symbol: options.symbol || "BTC/USDT"
   };
   const botLogs = [];
 
@@ -74,6 +111,11 @@ function createHarness(strategyEvaluate) {
       }
     },
     performanceMonitor: new PerformanceMonitor(),
+    botArchitect: {
+      assess() {
+        return null;
+      }
+    },
     regimeDetector: {
       detect() {
         return "trend";
@@ -82,25 +124,33 @@ function createHarness(strategyEvaluate) {
     riskManager: new RiskManager(),
     store,
     strategyRegistry: {
-      createStrategy() {
+      createStrategy(strategyId) {
         return {
           evaluate: strategyEvaluate,
-          id: "testStrategy"
+          id: strategyId
         };
       }
     },
-    strategySwitcher: {
+    strategySwitcher: options.strategySwitcher || {
       evaluate() {
         return null;
+      },
+      getStrategyFamily() {
+        return "trend_following";
       }
     }
   });
+
+  if (options.publishedArchitect) {
+    store.setArchitectPublishedAssessment(config.symbol, options.publishedArchitect);
+  }
 
   bot.start();
 
   return {
     bot,
     botLogs,
+    config,
     store
   };
 }
@@ -175,6 +225,63 @@ function runTradingBotTests() {
     }
     if (endedCount !== 1) {
       throw new Error(`expected one cooldown_ended log, found ${endedCount}`);
+    }
+
+    clock += 10_000;
+    const realignHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["no_trade"]
+    }), {
+      allowedStrategies: ["emaCross", "rsiReversion"],
+      publishedArchitect: createPublishedArchitect(),
+      strategy: "emaCross",
+      strategySwitcher: new StrategySwitcher({
+        minAgreement: 0.52,
+        minConviction: 0.42,
+        minDecisionStrength: 0.08
+      })
+    });
+
+    realignHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const switchedState = realignHarness.store.getBotState("bot_test");
+    if (switchedState.activeStrategyId !== "rsiReversion") {
+      throw new Error(`flat bot did not realign to published architect family: ${switchedState.activeStrategyId}`);
+    }
+    if (switchedState.architectSyncStatus !== "synced") {
+      throw new Error(`flat bot sync status invalid after realignment: ${switchedState.architectSyncStatus}`);
+    }
+
+    clock += 10_000;
+    const waitingHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["position_managed"]
+    }), {
+      allowedStrategies: ["emaCross", "rsiReversion"],
+      publishedArchitect: createPublishedArchitect(),
+      strategy: "emaCross",
+      strategySwitcher: new StrategySwitcher()
+    });
+    waitingHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.8,
+      entryPrice: 101,
+      id: "pos-1",
+      notes: ["entry"],
+      openedAt: clock - 5_000,
+      quantity: 0.5,
+      strategyId: "emaCross",
+      symbol: "BTC/USDT"
+    });
+
+    waitingHarness.bot.onMarketTick({ price: 102, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const waitingState = waitingHarness.store.getBotState("bot_test");
+    if (waitingState.activeStrategyId !== "emaCross") {
+      throw new Error("in-position bot switched strategy immediately instead of waiting flat");
+    }
+    if (waitingState.architectSyncStatus !== "waiting_flat") {
+      throw new Error(`expected waiting_flat sync status, received ${waitingState.architectSyncStatus}`);
     }
   } finally {
     Date.now = originalNow;
