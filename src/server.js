@@ -113,6 +113,47 @@ function createServerApi(context) {
     };
   }
 
+  function serializeCandles(candles, limit = 80) {
+    return (Array.isArray(candles) ? candles.slice(-limit) : []).map((candle) => ({
+      close: Number(candle[4]),
+      high: Number(candle[2]),
+      low: Number(candle[3]),
+      open: Number(candle[1]),
+      time: Number(candle[0]),
+      volume: Number(candle[5])
+    }));
+  }
+
+  function getFocusChartPayload(focusMarket) {
+    if (!focusMarket?.symbol) {
+      return null;
+    }
+
+    const candleSet = state.candleData?.[focusMarket.symbol];
+    if (!candleSet) {
+      return null;
+    }
+
+    const currentPosition = state.positions.find((position) => position.symbol === focusMarket.symbol) || null;
+    return {
+      currentPrice: focusMarket.lastPrice ?? null,
+      defaultTimeframe: "5m",
+      entryPrice: currentPosition?.entryPrice ?? focusMarket.entryPrice ?? null,
+      hardFloor: currentPosition?.hardFloor ?? null,
+      lastUpdate: state.lastUpdate,
+      positionOpen: Boolean(currentPosition),
+      stopLoss: currentPosition?.stopLoss ?? focusMarket.stopLoss ?? focusMarket.plannedStopLoss ?? null,
+      symbol: focusMarket.symbol,
+      takeProfit: currentPosition?.takeProfit ?? focusMarket.takeProfit ?? focusMarket.plannedTakeProfit ?? null,
+      timeframes: {
+        "1h": serializeCandles(candleSet.candles_1h, 72),
+        "1m": serializeCandles(candleSet.candles_1m, 90),
+        "5m": serializeCandles(candleSet.candles_5m, 90)
+      },
+      trailingStop: currentPosition?.trailingStop ?? focusMarket.trailingStop ?? null
+    };
+  }
+
   function getPortfolioValue() {
     const positionsValue = state.positions.reduce((sum, position) => {
       return sum + (position.lastPrice ? position.btcAmount * position.lastPrice : 0);
@@ -267,8 +308,10 @@ function createServerApi(context) {
     const scoredMarkets = availableMarkets.filter((market) => market.score !== null && market.score !== undefined);
     if (scoredMarkets.length > 0) {
       scoredMarkets.sort((left, right) => {
-        const leftTier = left.positionOpen ? 4 : left.action === "BUY" ? 3 : left.displayAction === "WAIT" ? 2 : left.signal === "BUY candidate" ? 1 : 0;
-        const rightTier = right.positionOpen ? 4 : right.action === "BUY" ? 3 : right.displayAction === "WAIT" ? 2 : right.signal === "BUY candidate" ? 1 : 0;
+        const leftBlocked = context.runtime?.getEntryBlockStatus ? context.runtime.getEntryBlockStatus(left.symbol) : null;
+        const rightBlocked = context.runtime?.getEntryBlockStatus ? context.runtime.getEntryBlockStatus(right.symbol) : null;
+        const leftTier = left.positionOpen ? 4 : left.action === "BUY" && !leftBlocked ? 3 : left.displayAction === "WAIT" ? 2 : left.signal === "BUY candidate" && !leftBlocked ? 1 : 0;
+        const rightTier = right.positionOpen ? 4 : right.action === "BUY" && !rightBlocked ? 3 : right.displayAction === "WAIT" ? 2 : right.signal === "BUY candidate" && !rightBlocked ? 1 : 0;
         if (rightTier !== leftTier) {
           return rightTier - leftTier;
         }
@@ -344,6 +387,7 @@ function createServerApi(context) {
         summary: buildSummary(),
         symbol: focusSymbol || config.DEFAULT_SYMBOL
       },
+      chart: getFocusChartPayload(focusMarket),
       decision: focusMarket ? {
         action: focusMarket.displayAction,
         aggressiveModeEnabled: state.aggressiveModeEnabled === true,

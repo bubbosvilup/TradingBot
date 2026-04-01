@@ -331,11 +331,11 @@ function replayStrategyMode(options) {
     }
 
     const tradableBuyCandidate = pickCandidateMarkets(Object.values(markets))
-      .find((market) => !(context.getBtcFilterEnabled() && btcRegime === "neutral" && !neutralEligibleSymbols.has(market.symbol)));
+      .find((market) => !(context.getBtcFilterEnabled() && btcRegime === "neutral" && !neutralEligibleSymbols.has(market.symbol)) && !context.runtime.getEntryBlockStatus(market.symbol));
 
     context.state.bestCandidateSymbol = tradableBuyCandidate
       ? tradableBuyCandidate.symbol
-      : context.strategy.pickBestCandidateSymbol(Object.values(markets));
+      : context.strategy.pickBestCandidateSymbol(Object.values(markets).filter((market) => market && !context.runtime.getEntryBlockStatus(market.symbol)));
 
     if (context.state.positions.length < context.config.MAX_CONCURRENT_POSITIONS && !positionClosedThisCycle && context.state.bestCandidateSymbol) {
       const bestMarket = markets[context.state.bestCandidateSymbol];

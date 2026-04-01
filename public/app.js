@@ -9,6 +9,9 @@ const summaryElement = document.getElementById("summary");
 const shortExplanationElement = document.getElementById("decision-short-explanation");
 const detailedExplanationElement = document.getElementById("decision-detailed-explanation");
 const reasonListElement = document.getElementById("decision-reason-list");
+const focusChartMeta = document.getElementById("focus-chart-meta");
+const focusChartSurface = document.getElementById("focus-chart-surface");
+const focusChartTimeframes = document.getElementById("focus-chart-timeframes");
 const resetButton = document.getElementById("reset-button");
 const resetResult = document.getElementById("reset-result");
 const btcFilterToggle = document.getElementById("btc-filter-toggle");
@@ -48,6 +51,7 @@ const clientState = {
     symbols: "",
     useActiveWatchlist: true
   },
+  chartTimeframe: "5m",
   isRefreshing: false,
   lastPayload: null,
   lastRefreshAt: null,
@@ -135,6 +139,15 @@ function getActionClass(action) {
 function formatDate(value) {
   if (!value) return "n/a";
   return new Date(value).toLocaleString();
+}
+
+function formatChartTimeLabel(value, timeframe = "5m") {
+  if (!value) return "n/a";
+  const date = new Date(value);
+  if (timeframe === "1h") {
+    return date.toLocaleDateString(undefined, { day: "2-digit", month: "2-digit" });
+  }
+  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatRelativeTime(value) {
@@ -369,6 +382,13 @@ function renderTrades(trades) {
       const pnlClass = getValueClass(round.pnl);
       const lastEvent = round.events[round.events.length - 1];
       const shortExplanation = escapeHtml(lastEvent.explanationShort || lastEvent.reason || "Dettagli non disponibili.");
+      const eventLines = round.events.map((event) => `
+        <li>
+          <strong>${escapeHtml(event.action)}</strong>
+          <span>${escapeHtml(formatDate(event.time))}</span>
+          <span> @ ${escapeHtml(formatPrice(event.price))}</span>
+        </li>
+      `).join("");
       const statusBadge = round.status === "Chiuso"
         ? '<span class="badge badge-wait">Chiuso</span>'
         : '<span class="badge badge-position">In corso</span>';
@@ -388,6 +408,7 @@ function renderTrades(trades) {
                   <p>${shortExplanation}</p>
                   <p>Motivo: ${escapeHtml(round.lastReason || "Nessuno")}</p>
                   <p>Eventi: ${round.events.length}</p>
+                  <ul class="explanation-list">${eventLines}</ul>
                 </div>
               </details>
             </div>
@@ -754,6 +775,166 @@ function renderDecision(statusData) {
   renderReasonList(statusData.decision.reasonList || []);
 }
 
+function renderFocusChart(statusData) {
+  if (!focusChartSurface || !focusChartMeta || !focusChartTimeframes) return;
+
+  const chart = statusData.chart || null;
+  const timeframes = chart?.timeframes || {};
+  const availableTimeframes = ["1m", "5m", "1h"].filter((timeframe) => Array.isArray(timeframes[timeframe]) && timeframes[timeframe].length > 1);
+  const requestedTimeframe = clientState.chartTimeframe || chart?.defaultTimeframe || "5m";
+  const activeTimeframe = availableTimeframes.includes(requestedTimeframe)
+    ? requestedTimeframe
+    : (availableTimeframes.includes(chart?.defaultTimeframe) ? chart.defaultTimeframe : availableTimeframes[0]);
+
+  focusChartTimeframes.innerHTML = ["1m", "5m", "1h"].map((timeframe) => `
+    <button
+      type="button"
+      class="chip-button ${activeTimeframe === timeframe ? "chip-active" : ""}"
+      data-chart-timeframe="${timeframe}"
+      ${availableTimeframes.includes(timeframe) ? "" : "disabled"}
+    >
+      ${timeframe}
+    </button>
+  `).join("");
+
+  if (!chart || !activeTimeframe) {
+    renderFacts(focusChartMeta, [
+      ["Simbolo", "n/a"],
+      ["Timeframe", "n/a"],
+      ["Stato", "Grafico non disponibile"],
+      ["Prezzo", "n/a"]
+    ]);
+    focusChartSurface.innerHTML = '<p class="empty-state">Nessun dato grafico disponibile per il focus corrente.</p>';
+    return;
+  }
+
+  clientState.chartTimeframe = activeTimeframe;
+  const candles = timeframes[activeTimeframe] || [];
+  const lastCandle = candles[candles.length - 1] || null;
+  renderFacts(focusChartMeta, [
+    ["Simbolo", escapeHtml(chart.symbol || "n/a")],
+    ["Timeframe", activeTimeframe],
+    ["Ultima candela", formatDate(lastCandle?.time || chart.lastUpdate)],
+    ["O/H/L/C", lastCandle ? `${formatPrice(lastCandle.open)} / ${formatPrice(lastCandle.high)} / ${formatPrice(lastCandle.low)} / ${formatPrice(lastCandle.close)}` : "n/a"],
+    ["Prezzo attuale", formatPrice(chart.currentPrice)],
+    ["Entry", formatPrice(chart.entryPrice)],
+    ["Stop", formatPrice(chart.stopLoss)],
+    ["Target", formatPrice(chart.takeProfit)]
+  ]);
+
+  if (candles.length < 2) {
+    focusChartSurface.innerHTML = '<p class="empty-state">Servono piu candele per disegnare il grafico operativo.</p>';
+    return;
+  }
+
+  const levelValues = [
+    chart.currentPrice,
+    chart.entryPrice,
+    chart.stopLoss,
+    chart.takeProfit,
+    chart.trailingStop,
+    chart.hardFloor
+  ].filter((value) => Number.isFinite(Number(value))).map(Number);
+  const highs = candles.map((candle) => Number(candle.high));
+  const lows = candles.map((candle) => Number(candle.low));
+  const rawMin = Math.min(...lows, ...levelValues);
+  const rawMax = Math.max(...highs, ...levelValues);
+  const baseRange = Math.max(rawMax - rawMin, rawMax * 0.002, 0.0001);
+  const minPrice = rawMin - (baseRange * 0.12);
+  const maxPrice = rawMax + (baseRange * 0.12);
+
+  const width = 920;
+  const height = 320;
+  const leftPadding = 14;
+  const rightPadding = 88;
+  const topPadding = 12;
+  const bottomPadding = 28;
+  const plotWidth = width - leftPadding - rightPadding;
+  const plotHeight = height - topPadding - bottomPadding;
+  const candleSlot = plotWidth / candles.length;
+  const candleBodyWidth = Math.max(3, Math.min(10, candleSlot * 0.58));
+  const yForPrice = (price) => topPadding + ((maxPrice - price) / Math.max(maxPrice - minPrice, 0.0001)) * plotHeight;
+  const xForIndex = (index) => leftPadding + (index * candleSlot) + (candleSlot / 2);
+
+  const gridLines = Array.from({ length: 5 }, (_, index) => {
+    const price = maxPrice - (((maxPrice - minPrice) / 4) * index);
+    const y = yForPrice(price);
+    return `
+      <g>
+        <line x1="${leftPadding}" y1="${y}" x2="${width - rightPadding}" y2="${y}" class="chart-grid-line"></line>
+        <text x="${width - rightPadding + 8}" y="${y + 4}" class="chart-axis-label">${escapeHtml(formatPrice(price))}</text>
+      </g>
+    `;
+  }).join("");
+
+  const candleMarks = candles.map((candle, index) => {
+    const x = xForIndex(index);
+    const openY = yForPrice(Number(candle.open));
+    const closeY = yForPrice(Number(candle.close));
+    const highY = yForPrice(Number(candle.high));
+    const lowY = yForPrice(Number(candle.low));
+    const bullish = Number(candle.close) >= Number(candle.open);
+    const bodyY = Math.min(openY, closeY);
+    const bodyHeight = Math.max(1.5, Math.abs(closeY - openY));
+    return `
+      <g>
+        <line x1="${x}" y1="${highY}" x2="${x}" y2="${lowY}" class="chart-wick ${bullish ? "chart-candle-up" : "chart-candle-down"}"></line>
+        <rect
+          x="${x - (candleBodyWidth / 2)}"
+          y="${bodyY}"
+          width="${candleBodyWidth}"
+          height="${bodyHeight}"
+          rx="1.5"
+          class="${bullish ? "chart-candle-up" : "chart-candle-down"}"
+        ></rect>
+      </g>
+    `;
+  }).join("");
+
+  const xLabelStep = Math.max(1, Math.floor(candles.length / 4));
+  const xLabels = candles
+    .map((candle, index) => ({ candle, index }))
+    .filter(({ index }) => index === 0 || index === candles.length - 1 || index % xLabelStep === 0)
+    .map(({ candle, index }) => `
+      <text x="${xForIndex(index)}" y="${height - 6}" text-anchor="middle" class="chart-axis-label">
+        ${escapeHtml(formatChartTimeLabel(candle.time, activeTimeframe))}
+      </text>
+    `)
+    .join("");
+
+  const levelLines = [
+    { className: "chart-line-entry", label: "Entry", value: chart.entryPrice },
+    { className: "chart-line-stop", label: "Stop", value: chart.stopLoss },
+    { className: "chart-line-target", label: "Target", value: chart.takeProfit },
+    { className: "chart-line-trailing", label: "Trail", value: chart.trailingStop },
+    { className: "chart-line-floor", label: "Floor", value: chart.hardFloor },
+    { className: "chart-line-current", label: "Last", value: chart.currentPrice }
+  ]
+    .filter((level) => Number.isFinite(Number(level.value)))
+    .map((level) => {
+      const y = yForPrice(Number(level.value));
+      return `
+        <g>
+          <line x1="${leftPadding}" y1="${y}" x2="${width - rightPadding}" y2="${y}" class="${level.className}"></line>
+          <text x="${width - rightPadding + 8}" y="${Math.max(12, Math.min(height - 12, y - 4))}" class="chart-level-label ${level.className}">
+            ${escapeHtml(level.label)} ${escapeHtml(formatPrice(level.value))}
+          </text>
+        </g>
+      `;
+    })
+    .join("");
+
+  focusChartSurface.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" class="focus-chart-svg" role="img" aria-label="Grafico operativo ${escapeHtml(chart.symbol || "n/a")} ${escapeHtml(activeTimeframe)}">
+      <rect x="0" y="0" width="${width}" height="${height}" class="chart-backdrop"></rect>
+      ${gridLines}
+      ${levelLines}
+      ${candleMarks}
+      ${xLabels}
+    </svg>
+  `;
+}
+
 function renderDashboard(statusData, tradesData) {
   clientState.lastPayload = { statusData, tradesData };
   clientState.lastRefreshAt = new Date().toISOString();
@@ -778,6 +959,7 @@ function renderDashboard(statusData, tradesData) {
   ]);
 
   renderDecision(statusData);
+  renderFocusChart(statusData);
   renderPositions(statusData.overview.positions || []);
   renderMarkets((statusData.watchlist?.active || []).map((activeItem) => {
     const market = (statusData.markets || []).find((entry) => entry.symbol === activeItem.symbol) || {};
@@ -971,6 +1153,15 @@ function attachEventListeners() {
     }
   });
 
+  focusChartTimeframes.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-chart-timeframe]");
+    if (!button || button.disabled) return;
+    clientState.chartTimeframe = button.dataset.chartTimeframe || "5m";
+    if (clientState.lastPayload) {
+      renderFocusChart(clientState.lastPayload.statusData);
+    }
+  });
+
   backtestDaysInput.addEventListener("input", () => {
     clientState.backtestForm.days = Number(backtestDaysInput.value || 3);
   });
@@ -986,6 +1177,25 @@ function attachEventListeners() {
   backtestAggressiveToggle.addEventListener("change", () => {
     clientState.backtestForm.aggressiveMode = Boolean(backtestAggressiveToggle.checked);
     backtestAggressiveToggle.dataset.dirty = "true";
+  });
+
+  document.addEventListener("toggle", (event) => {
+    const details = event.target;
+    if (!(details instanceof HTMLDetailsElement) || !details.classList.contains("trade-info") || !details.open) {
+      return;
+    }
+    document.querySelectorAll(".trade-info[open]").forEach((element) => {
+      if (element !== details) {
+        element.open = false;
+      }
+    });
+  }, true);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    document.querySelectorAll(".trade-info[open]").forEach((element) => {
+      element.open = false;
+    });
   });
 }
 

@@ -286,15 +286,14 @@ function createRuntime(context) {
       return;
     }
 
-    const cooldownExpiry = symbolCooldown.get(snapshot.symbol);
-    if (cooldownExpiry !== undefined && cooldownExpiry > currentScanCycle) {
-      context.logScoped("GUARD", `cooldown_active | symbol=${snapshot.symbol} | remaining=${cooldownExpiry - currentScanCycle} cycles`);
+    const entryBlock = getEntryBlockStatus(snapshot.symbol);
+    if (entryBlock?.reason === "cooldown") {
+      context.logScoped("GUARD", `cooldown_active | symbol=${snapshot.symbol} | remaining=${entryBlock.remainingCycles} cycles`);
       return;
     }
 
-    const recentExitExpiry = recentlyExitedExpiry.get(snapshot.symbol);
-    if (recentlyExited.has(snapshot.symbol) && recentExitExpiry !== undefined && recentExitExpiry > currentScanCycle) {
-      context.logScoped("GUARD", `recently_exited | symbol=${snapshot.symbol} | remaining=${recentExitExpiry - currentScanCycle} cycles`);
+    if (entryBlock?.reason === "recent_exit") {
+      context.logScoped("GUARD", `recently_exited | symbol=${snapshot.symbol} | remaining=${entryBlock.remainingCycles} cycles`);
       return;
     }
 
@@ -542,7 +541,15 @@ function createRuntime(context) {
     const takeProfitHit = !currentPosition.partialExitDone && currentPosition.takeProfit !== null && snapshot.lastPrice >= currentPosition.takeProfit;
     const volumeAbsorptionHit = currentPosition.holdCandles >= config.MIN_HOLD_CANDLES && snapshot.currentVolume_5m !== null && snapshot.volumeSMA20 !== null && snapshot.previousClose_5m !== null && snapshot.lastPrice_5m !== null && snapshot.currentVolume_5m > snapshot.volumeSMA20 * 2.5 && snapshot.lastPrice_5m <= snapshot.previousClose_5m;
     const trendReversalHit = currentPosition.holdCandles >= config.MIN_HOLD_CANDLES && snapshot.trendBull_1h === false;
-    const timeStopHit = currentPosition.holdCandles >= config.TIME_STOP_CANDLES && snapshot.lastPrice < halfRTarget;
+    const timeStopCycles = Math.max(config.TIME_STOP_CANDLES, config.MIN_HOLD_CANDLES * 3);
+    const trendSupportBroken = snapshot.ema21_5m !== null
+      ? snapshot.lastPrice <= snapshot.ema21_5m
+      : snapshot.trendBull_1h === false;
+    const timeStopHit = !currentPosition.partialExitDone
+      && currentPosition.holdCandles >= timeStopCycles
+      && snapshot.lastPrice <= currentPosition.entryPrice
+      && snapshot.lastPrice < halfRTarget
+      && (snapshot.trendBull_1h === false || trendSupportBroken);
     const hardExitHit = trailingStopHit || stopLossHit || takeProfitHit;
     const softExitHit = volumeAbsorptionHit || trendReversalHit || timeStopHit;
 
@@ -573,6 +580,12 @@ function createRuntime(context) {
     snapshot.trailingStop = currentPosition.trailingStop;
     snapshot.holdCandles = currentPosition.holdCandles;
     snapshot.entryCount = currentPosition.entryCount;
+    snapshot.entryBlockers = management.shouldExit && management.exitReasonCode
+      ? [context.strategy.getExitReasonLabel(management.exitReasonCode)]
+      : [];
+    snapshot.expectedNetProfitUsdt = currentPosition.expectedNetProfitUsdt ?? snapshot.expectedNetProfitUsdt ?? null;
+    snapshot.projectedNetEdgeBps = null;
+    snapshot.projectedRiskRewardRatio = null;
     snapshot.signal = management.shouldExit ? "SELL candidate" : "HOLD";
     snapshot.action = management.shouldExit ? "SELL" : "HOLD";
     snapshot.displayAction = management.shouldExit ? "SELL" : "HOLD";
@@ -755,6 +768,26 @@ function createRuntime(context) {
     return results;
   }
 
+  function getEntryBlockStatus(symbol) {
+    const cooldownExpiry = symbolCooldown.get(symbol);
+    if (cooldownExpiry !== undefined && cooldownExpiry > currentScanCycle) {
+      return {
+        reason: "cooldown",
+        remainingCycles: cooldownExpiry - currentScanCycle
+      };
+    }
+
+    const recentExitExpiry = recentlyExitedExpiry.get(symbol);
+    if (recentlyExited.has(symbol) && recentExitExpiry !== undefined && recentExitExpiry > currentScanCycle) {
+      return {
+        reason: "recent_exit",
+        remainingCycles: recentExitExpiry - currentScanCycle
+      };
+    }
+
+    return null;
+  }
+
   function rotateWeakSymbols(currentMarkets, allCandidates, currentSymbols, focusSymbol = null, options = {}) {
     const { includeBtc = true, weakRsiMax = 45 } = options;
     watchlistRotationCycle = currentScanCycle;
@@ -900,6 +933,7 @@ function createRuntime(context) {
     fetchCandlesBatched,
     fetchTopSymbols,
     getCandlesWithRealtimeFallback,
+    getEntryBlockStatus,
     manageOpenPosition,
     normalizeDynamicSymbols,
     openPaperPosition,

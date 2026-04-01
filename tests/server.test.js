@@ -61,7 +61,22 @@ async function runServerTests() {
     botActive: true,
     botStartedAt: "2026-03-30T10:00:00.000Z",
     btcRegime: "neutral",
-    candleData: {},
+    candleData: {
+      "RNDR/USDT": {
+        candles_1h: [
+          [Date.UTC(2026, 2, 30, 8, 0, 0), 6.9, 7.1, 6.8, 7.0, 1000],
+          [Date.UTC(2026, 2, 30, 9, 0, 0), 7.0, 7.2, 6.95, 7.1, 1100]
+        ],
+        candles_1m: [
+          [Date.UTC(2026, 2, 30, 10, 3, 0), 7.01, 7.05, 7.0, 7.03, 20],
+          [Date.UTC(2026, 2, 30, 10, 4, 0), 7.03, 7.06, 7.01, 7.04, 21]
+        ],
+        candles_5m: [
+          [Date.UTC(2026, 2, 30, 9, 55, 0), 6.98, 7.04, 6.96, 7.01, 80],
+          [Date.UTC(2026, 2, 30, 10, 0, 0), 7.01, 7.06, 6.99, 7.03, 82]
+        ]
+      }
+    },
     exchange: "binance",
     lastUpdate: "2026-03-30T10:05:00.000Z",
     markets: {
@@ -192,6 +207,9 @@ async function runServerTests() {
         ok: true
       })
     },
+    runtime: {
+      getEntryBlockStatus: () => null
+    },
     setBtcFilterEnabled: (value) => {
       btcFilterEnabled = value;
     },
@@ -214,6 +232,8 @@ async function runServerTests() {
     const response = await readJson(`http://127.0.0.1:${address.port}/api/status`);
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.bot.active, true);
+    assert.equal(response.body.chart.symbol, "RNDR/USDT");
+    assert.equal(response.body.chart.timeframes["5m"].length, 2);
     assert.equal(response.body.decision.decisionState, "wait_volume");
     assert.equal(response.body.decision.entryEngine, "trend_continuation");
     assert.equal(response.body.decision.marketRegime, "trend");

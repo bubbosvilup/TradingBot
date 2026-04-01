@@ -546,9 +546,10 @@ async function main() {
           }
           return Number(right.triggerFired) - Number(left.triggerFired);
         })
-        .find((market) => !(btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(market.symbol)));
+        .find((market) => !(btcFilterEnabled && btcRegime === "neutral" && !neutralEligibleSymbols.has(market.symbol)) && !context.runtime.getEntryBlockStatus(market.symbol));
 
-      state.bestCandidateSymbol = tradableBuyCandidate ? tradableBuyCandidate.symbol : context.strategy.pickBestCandidateSymbol(Object.values(state.markets));
+      const focusUniverse = Object.values(state.markets).filter((market) => market && !context.runtime.getEntryBlockStatus(market.symbol));
+      state.bestCandidateSymbol = tradableBuyCandidate ? tradableBuyCandidate.symbol : context.strategy.pickBestCandidateSymbol(focusUniverse);
 
       if (state.positions.length < config.MAX_CONCURRENT_POSITIONS && !positionClosedThisCycle && state.bestCandidateSymbol) {
         const bestMarket = state.markets[state.bestCandidateSymbol];
@@ -564,7 +565,11 @@ async function main() {
             const newPosition = state.positions.find((position) => position.symbol === bestMarket.symbol);
             if (newPosition && state.positions.length > countBefore) {
               context.runtime.refreshPositionSnapshot(bestMarket, { exitReasonCode: null, shouldExit: false });
-            } else if (state.positions.length === countBefore && !state.positions.some((position) => position.symbol === bestMarket.symbol)) {
+            } else if (
+              state.positions.length === countBefore
+              && !state.positions.some((position) => position.symbol === bestMarket.symbol)
+              && !context.runtime.getEntryBlockStatus(bestMarket.symbol)
+            ) {
               logScoped("ENTRY", `blocked_internal | symbol=${bestMarket.symbol} | score=${bestMarket.compositeScore} | volume=${formatLogNumber(bestMarket.currentVolume_5m, 2)} | volume_sma=${formatLogNumber(bestMarket.volumeSMA20, 2)} | action=${bestMarket.action}`);
             }
           }
