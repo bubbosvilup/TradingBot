@@ -7,12 +7,14 @@ class ExecutionEngine {
   userStream: any;
   logger: any;
   feeRate: number;
+  executionMode: string;
 
-  constructor(deps: { store: any; userStream: any; logger: any; feeRate?: number }) {
+  constructor(deps: { store: any; userStream: any; logger: any; feeRate?: number; executionMode?: string }) {
     this.store = deps.store;
     this.userStream = deps.userStream;
     this.logger = deps.logger;
     this.feeRate = Math.max(deps.feeRate || 0.001, 0);
+    this.executionMode = deps.executionMode || "paper";
   }
 
   buildOrderId(botId: string) {
@@ -55,6 +57,7 @@ class ExecutionEngine {
     this.userStream.publishOrderUpdate({ order, position, type: "opened" });
     this.logger.info("position_opened", {
       botId: params.botId,
+      executionMode: this.executionMode,
       price: params.price.toFixed(4),
       quantity: params.quantity.toFixed(6),
       strategy: params.strategyId,
@@ -104,6 +107,7 @@ class ExecutionEngine {
     this.userStream.publishOrderUpdate({ order, position: null, trade: closedTrade, type: "closed" });
     this.logger.info("position_closed", {
       botId: params.botId,
+      executionMode: this.executionMode,
       netPnl: netPnl.toFixed(4),
       price: params.price.toFixed(4),
       symbol: position.symbol

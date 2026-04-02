@@ -1,4 +1,5 @@
 {
+  "executionMode": "paper",
   "marketMode": "mock",
   "market": {
     "provider": "binance",

@@ -128,6 +128,19 @@ function runArchitectServiceTests() {
   if (!published || published.marketRegime !== "trend") {
     throw new Error("architect did not publish initial trend regime after warm-up");
   }
+  const initialPublish = logs.find((entry) => entry.event === "architect_published");
+  if (!initialPublish) {
+    throw new Error("missing architect_published audit log");
+  }
+  if (initialPublish.metadata.trendScore !== 0.67 || initialPublish.metadata.rangeScore !== 0.24 || initialPublish.metadata.volatileScore !== 0.15) {
+    throw new Error("architect publish log missing regime score diagnostics");
+  }
+  if (initialPublish.metadata.dataQuality !== 0.92 || initialPublish.metadata.directionalEfficiency !== 0.62 || initialPublish.metadata.slopeConsistency !== 0.59) {
+    throw new Error("architect publish log missing context feature diagnostics");
+  }
+  if (initialPublish.metadata.trendBias !== "bullish" || initialPublish.metadata.volatilityState !== "normal" || initialPublish.metadata.structureState !== "trending") {
+    throw new Error("architect publish log missing state labels");
+  }
 
   store.setContextSnapshot(symbol, createContext(symbol, 45_000, true, "range-small"));
   service.observe(symbol, 45_000);
@@ -158,6 +171,13 @@ function runArchitectServiceTests() {
   }
   if (blockedAudit.metadata.reason !== "below_switch_delta") {
     throw new Error(`unexpected blocked-switch reason: ${blockedAudit.metadata.reason}`);
+  }
+  const heldAudit = logs.find((entry) => entry.event === "architect_publish_held");
+  if (!heldAudit || heldAudit.metadata.marketRegime !== "trend" || heldAudit.metadata.candidateRegime !== "range") {
+    throw new Error("missing architect held-cycle diagnostics");
+  }
+  if (heldAudit.metadata.publishOutcome !== "held" || heldAudit.metadata.reversionStretch !== 0.2 || heldAudit.metadata.breakoutInstability !== 0.1) {
+    throw new Error("held-cycle diagnostic fields are incomplete");
   }
 
   store.setContextSnapshot(symbol, createContext(symbol, 90_000, true, "range-small"));

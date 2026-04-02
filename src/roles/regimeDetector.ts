@@ -1,4 +1,5 @@
-// Module responsibility: lightweight market regime classification for strategy context and switching.
+// Module responsibility: lightweight local regime hint for strategy diagnostics.
+// It is not the system-level routing brain; ArchitectService owns family recommendations.
 
 class RegimeDetector {
   detect(prices: number[]) {
@@ -24,4 +25,3 @@ class RegimeDetector {
 module.exports = {
   RegimeDetector
 };
-

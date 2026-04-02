@@ -123,6 +123,21 @@ function formatUnitPercent(value) {
   return `${Math.round(Number(value) * 100)}%`;
 }
 
+function getArchitectFeatures(architect) {
+  return architect?.contextFeatures || null;
+}
+
+function formatArchitectScores(architect) {
+  if (!architect?.regimeScores) return "T/R/V n/a";
+  return `T/R/V ${formatNumber(architect.regimeScores.trend, 2)} / ${formatNumber(architect.regimeScores.range, 2)} / ${formatNumber(architect.regimeScores.volatile, 2)}`;
+}
+
+function formatArchitectFeatureSummary(architect) {
+  const features = getArchitectFeatures(architect);
+  if (!features) return "features n/a";
+  return `DQ ${formatNumber(architect.dataQuality ?? features.dataQuality, 2)} | dir ${formatNumber(features.directionalEfficiency, 2)} | slope ${formatNumber(features.slopeConsistency, 2)} | rev ${formatNumber(features.reversionStretch, 2)} | vol ${formatNumber(features.volatilityRisk, 2)} | chop ${formatNumber(features.chopiness, 2)} | brk ${formatNumber(features.breakoutQuality, 2)}`;
+}
+
 function getStrategyFamily(strategyId) {
   if (strategyId === "emaCross") return "trend_following";
   if (strategyId === "rsiReversion") return "mean_reversion";
@@ -240,7 +255,7 @@ function renderHealth() {
   const userConnection = getUserConnection(state.system);
   const latency = state.system.latency || null;
 
-  setText(refs.modePill, String(state.system.feedMode || "n/a").toUpperCase());
+  setText(refs.modePill, `${String(state.system.feedMode || "n/a").toUpperCase()} / ${String(state.system.executionMode || "paper").toUpperCase()}`);
   setText(refs.wsPill, marketConnection?.status || "n/a");
   setText(refs.latencyPill, latency?.totalPipelineMs ? `${Math.round(latency.totalPipelineMs)}ms` : "n/a");
 
@@ -387,10 +402,14 @@ function formatArchitectTitle(architect) {
   if (!architect.ready) {
     return `${architect.summary || "Architect warming up."} Publish in ${formatDuration(architect.warmupRemainingMs || 0)}.`;
   }
+  const challenger = architect.challenger?.regime
+    ? ` Challenger ${architect.challenger.regime} ${architect.challenger.count}/${architect.challenger.required}.`
+    : "";
+  const hysteresis = architect.hysteresisActive ? " Hysteresis active." : "";
   const reasons = Array.isArray(architect.reasonCodes) && architect.reasonCodes.length > 0
     ? ` Reasons: ${architect.reasonCodes.join(", ")}.`
     : "";
-  return `${architect.summary} Strength ${formatNumber(architect.decisionStrength, 2)} | Agreement ${formatUnitPercent(architect.signalAgreement)}.${reasons}`;
+  return `${architect.summary} Strength ${formatNumber(architect.decisionStrength, 2)} | Agreement ${formatUnitPercent(architect.signalAgreement)}.\n${formatArchitectScores(architect)}\n${formatArchitectFeatureSummary(architect)}${hysteresis}${challenger}${reasons}`;
 }
 
 function renderFocusMeta() {
@@ -402,7 +421,7 @@ function renderFocusMeta() {
   const architectReady = Boolean(architect?.ready);
   const architectNote = architect
     ? architectReady
-      ? `${architect.summary} Published ${formatRelative(architect.updatedAt)}. Strength ${formatNumber(architect.decisionStrength, 2)}, agreement ${formatUnitPercent(architect.signalAgreement)}.`
+      ? `${architect.summary} Published ${formatRelative(architect.updatedAt)}. ${formatArchitectScores(architect)}. ${formatArchitectFeatureSummary(architect)}.`
       : `${architect.summary || "Architect warming up."} Ready in ${formatDuration(architect.warmupRemainingMs || 0)}.`
     : "Architect context not ready yet for this symbol.";
 
@@ -449,7 +468,7 @@ function renderBots() {
       ? "Waiting for enough market context"
       : !architectReady
         ? `Warm-up ${formatDuration(architect.warmupRemainingMs || 0)}`
-        : `${humanizeToken(architect.trendBias)} | strength ${formatNumber(architect.decisionStrength, 2)} | agreement ${formatUnitPercent(architect.signalAgreement)}`;
+        : `${humanizeToken(architect.trendBias)} | ${formatArchitectScores(architect)} | DQ ${formatNumber(architect.dataQuality, 2)}`;
     const positionSummary = bot.openPosition
       ? `${formatPrice(bot.openPosition.entryPrice)} / ${formatSigned(bot.openPosition.unrealizedPnl)}`
       : "Flat";
@@ -742,7 +761,7 @@ async function loadSnapshot() {
 
     const marketConnection = getMarketConnection(system);
     const userConnection = getUserConnection(system);
-    refs.systemNote.textContent = `Mode ${system.feedMode}. Market WS ${marketConnection?.status || "unknown"}, user stream ${userConnection?.status || "inactive"}.`;
+    refs.systemNote.textContent = `Market ${system.feedMode}. Execution ${system.executionMode || "paper"} (${system.executionSafety || "simulated_only"}). Market WS ${marketConnection?.status || "unknown"}, user stream ${userConnection?.status || "inactive"}.`;
     refs.refreshStatus.textContent = `Last sync ${new Date().toLocaleTimeString()}`;
   } catch (error) {
     refs.systemNote.textContent = "Unable to read orchestrator state.";

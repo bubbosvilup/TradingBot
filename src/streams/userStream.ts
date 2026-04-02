@@ -55,11 +55,16 @@ class UserStream {
     this.listenKey = null;
   }
 
-  async start(options: { enabled?: boolean } = {}) {
+  async start(options: { enabled?: boolean; mode?: "mock" | "live"; reason?: string } = {}) {
     if (options.enabled === false) {
       this.store.updateWsConnection("user-stream", {
-        mode: "mock",
+        lastReason: options.reason || "disabled",
+        mode: options.mode || "mock",
         status: "disabled"
+      });
+      this.logger.info("user_stream_disabled", {
+        mode: options.mode || "mock",
+        reason: options.reason || "disabled"
       });
       return;
     }

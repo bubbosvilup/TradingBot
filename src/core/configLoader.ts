@@ -20,6 +20,7 @@ class ConfigLoader {
 
   loadBotsConfig(): {
     bots: BotConfig[];
+    executionMode?: "paper" | "live";
     marketMode?: MarketMode;
     market?: MarketStreamConfig;
   } {

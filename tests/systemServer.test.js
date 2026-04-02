@@ -143,6 +143,7 @@ function runSystemServerTests() {
   });
 
   const server = new SystemServer({
+    executionMode: "paper",
     feedMode: "mock",
     logger: { info() {} },
     port: 3101,
@@ -161,6 +162,9 @@ function runSystemServerTests() {
   if (system.feedMode !== "mock") {
     throw new Error("system payload missing feed mode");
   }
+  if (system.executionMode !== "paper" || system.executionSafety !== "simulated_only") {
+    throw new Error("system payload missing execution safety mode");
+  }
   if (!Array.isArray(bots) || bots.length !== 1 || bots[0].botId !== "bot_a") {
     throw new Error("bots payload invalid");
   }
@@ -169,6 +173,12 @@ function runSystemServerTests() {
   }
   if (bots[0].architect?.decisionStrength !== 0.18 || bots[0].architect?.signalAgreement !== 0.76) {
     throw new Error("bots payload missing architect diagnostics");
+  }
+  if (bots[0].architect?.dataQuality !== 0.91) {
+    throw new Error("bots payload missing architect data quality");
+  }
+  if (bots[0].architect?.contextFeatures?.directionalEfficiency !== 0.74 || bots[0].architect?.contextFeatures?.volatilityRisk !== 0.2) {
+    throw new Error("bots payload missing architect context features");
   }
   if (bots[0].architect?.challenger?.regime !== "range" || bots[0].architect?.hysteresisActive !== true) {
     throw new Error("bots payload missing publisher hysteresis state");

@@ -5,6 +5,7 @@ TradingBot e un runtime multi-bot modulare per paper trading e osservabilita rea
 Lo stato attuale del progetto e questo:
 - architettura nuova multi-bot attiva
 - feed market `mock` o `live` via Binance WebSocket
+- execution mode separato e mantenuto su `paper`
 - `stateStore` come fonte unica di verita
 - layer `Context -> Architect -> TradingBot`
 - UI/API minima per osservare bot, prezzi, posizioni, eventi e storico trade
@@ -64,6 +65,7 @@ Principi chiave:
 Nota importante:
 - il feed puo essere `live`
 - l'execution resta `paper`
+- il runtime attivo non usa order routing reale verso Binance
 
 ## Struttura
 
@@ -176,6 +178,7 @@ Esempio:
 
 ```json
 {
+  "executionMode": "paper",
   "marketMode": "mock",
   "market": {
     "provider": "binance",
@@ -202,6 +205,15 @@ Esempio:
 Override rapido:
 - `MARKET_MODE=mock`
 - `MARKET_MODE=live`
+- `EXECUTION_MODE=paper`
+
+Modalita operative supportate oggi:
+- `MARKET_MODE=mock` + `EXECUTION_MODE=paper`
+- `MARKET_MODE=live` + `EXECUTION_MODE=paper`
+
+Nota di sicurezza:
+- anche con `MARKET_MODE=live`, il sistema continua a fare solo paper execution
+- se viene richiesto `EXECUTION_MODE=live`, il runtime forza comunque `paper` e lo dichiara nei log
 
 ## Warm-up e publish Architect
 
@@ -234,6 +246,7 @@ Endpoint principali:
 
 La UI mostra:
 - bot attivi
+- market mode / execution mode
 - stato stream
 - latenza pipeline
 - focus symbol
@@ -247,6 +260,14 @@ La UI mostra:
 Standard:
 
 ```bash
+npm start
+```
+
+Realtime market data + paper execution:
+
+```bash
+MARKET_MODE=live
+EXECUTION_MODE=paper
 npm start
 ```
 

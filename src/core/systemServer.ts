@@ -28,8 +28,9 @@ class SystemServer {
   startedAt: number;
   server: any;
   feedMode: string;
+  executionMode: string;
 
-  constructor(deps: { store: any; logger: any; host?: string; port?: number; publicDir?: string; uiDir?: string; startedAt?: number; feedMode?: string }) {
+  constructor(deps: { store: any; logger: any; host?: string; port?: number; publicDir?: string; uiDir?: string; startedAt?: number; feedMode?: string; executionMode?: string }) {
     this.store = deps.store;
     this.logger = deps.logger;
     this.host = deps.host || "127.0.0.1";
@@ -39,6 +40,7 @@ class SystemServer {
     this.startedAt = deps.startedAt || Date.now();
     this.server = null;
     this.feedMode = deps.feedMode || "mock";
+    this.executionMode = deps.executionMode || "paper";
   }
 
   start() {
@@ -47,7 +49,11 @@ class SystemServer {
       this.handleRequest(request, response);
     });
     this.server.listen(this.port, this.host, () => {
-      this.logger.info("dashboard_ready", { feedMode: this.feedMode, url: `http://${this.host}:${this.port}` });
+      this.logger.info("dashboard_ready", {
+        executionMode: this.executionMode,
+        feedMode: this.feedMode,
+        url: `http://${this.host}:${this.port}`
+      });
     });
   }
 
@@ -82,6 +88,24 @@ class SystemServer {
     response.end(fs.readFileSync(filePath));
   }
 
+  getArchitectContextFeatures(context: any) {
+    const features = context?.features || null;
+    if (!features) return null;
+    return {
+      breakoutInstability: Number(features.breakoutInstability || 0),
+      breakoutQuality: Number(features.breakoutQuality || 0),
+      chopiness: Number(features.chopiness || 0),
+      dataQuality: Number(features.dataQuality || 0),
+      directionalEfficiency: Number(features.directionalEfficiency || 0),
+      emaSeparation: Number(features.emaSeparation || 0),
+      featureConflict: Number(features.featureConflict || 0),
+      reversionStretch: Number(features.reversionStretch || 0),
+      rsiIntensity: Number(features.rsiIntensity || 0),
+      slopeConsistency: Number(features.slopeConsistency || 0),
+      volatilityRisk: Number(features.volatilityRisk || 0)
+    };
+  }
+
   buildSystemPayload() {
     const snapshot = this.store.getSystemSnapshot();
     const running = snapshot.botStates.filter((bot: any) => bot.status === "running").length;
@@ -92,6 +116,8 @@ class SystemServer {
     return {
       botsRunning: running,
       botsTotal: snapshot.botStates.length,
+      executionMode: this.executionMode,
+      executionSafety: this.executionMode === "paper" ? "simulated_only" : "exchange_execution_enabled",
       eventCount: this.store.getRecentEvents(500).length,
       feedMode: this.feedMode,
       latency: latestLatency,
@@ -129,6 +155,7 @@ class SystemServer {
       const syncStatus = !state?.architectSyncStatus || state.architectSyncStatus === "pending"
         ? derivedSyncStatus
         : state.architectSyncStatus;
+      const contextFeatures = this.getArchitectContextFeatures(context);
 
       return {
         activeStrategyId: state?.activeStrategyId || config.strategy,
@@ -139,6 +166,8 @@ class SystemServer {
             regime: architectPublisher.challengerRegime,
             required: architectPublisher.challengerRequired
           } : null,
+          contextFeatures,
+          dataQuality: contextFeatures?.dataQuality || 0,
           hysteresisActive: architectPublisher?.hysteresisActive || false,
           nextPublishAt: architectPublisher?.nextPublishAt || null,
           ready: architectPublisher ? architectPublisher.ready : true,
@@ -153,7 +182,9 @@ class SystemServer {
             required: architectPublisher.challengerRequired
           } : null,
           contextMaturity: context?.features?.maturity || 0,
+          contextFeatures,
           dataMode: context?.dataMode || "unknown",
+          dataQuality: contextFeatures?.dataQuality || 0,
           decisionStrength: 0,
           familyScores: {
             mean_reversion: 0,

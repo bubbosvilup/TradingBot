@@ -1,5 +1,7 @@
 // Module responsibility: compose the whole multi-bot system and run it as the main controller.
 
+require("dotenv").config();
+
 const { ConfigLoader } = require("./configLoader.ts");
 const { BotManager } = require("./botManager.ts");
 const { SystemServer } = require("./systemServer.ts");
@@ -24,14 +26,43 @@ const { formatDuration, now, sleep } = require("../utils/time.ts");
 
 function parseArgs(argv: string[]) {
   const args = new Map<string, string>();
-  for (const item of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const item = argv[index];
     if (!item.startsWith("--")) continue;
-    const [key, value] = item.slice(2).split("=");
-    args.set(key, value ?? "true");
+    const normalized = item.slice(2);
+    if (!normalized) continue;
+
+    const equalsIndex = normalized.indexOf("=");
+    if (equalsIndex >= 0) {
+      const key = normalized.slice(0, equalsIndex);
+      const value = normalized.slice(equalsIndex + 1);
+      args.set(key, value || "true");
+      continue;
+    }
+
+    const next = argv[index + 1];
+    if (next && !next.startsWith("--")) {
+      args.set(normalized, next);
+      index += 1;
+      continue;
+    }
+
+    args.set(normalized, "true");
   }
+
+  const pick = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = args.get(key);
+      if (value !== undefined && value !== null && value !== "") return value;
+    }
+    return null;
+  };
+
   return {
-    durationMs: args.has("duration-ms") ? Number(args.get("duration-ms")) : null,
-    summaryEveryMs: args.has("summary-ms") ? Number(args.get("summary-ms")) : 5000
+    durationMs: pick("duration-ms", "durationMs") ? Number(pick("duration-ms", "durationMs")) : null,
+    executionMode: pick("execution-mode", "executionMode"),
+    marketMode: pick("market-mode", "marketMode"),
+    summaryEveryMs: pick("summary-ms", "summaryMs") ? Number(pick("summary-ms", "summaryMs")) : 5000
   };
 }
 
@@ -48,7 +79,31 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
   const configLoader = new ConfigLoader();
   const botConfig = configLoader.loadBotsConfig();
-  const marketMode = ((process.env.MARKET_MODE || botConfig.marketMode || botConfig.market?.mode || "mock") as string).toLowerCase();
+  const marketModeSource = cliArgs.marketMode
+    ? "cli"
+    : process.env.MARKET_MODE
+      ? "env"
+      : botConfig.marketMode || botConfig.market?.mode
+        ? "config"
+        : "default";
+  const marketMode = ((cliArgs.marketMode || process.env.MARKET_MODE || botConfig.marketMode || botConfig.market?.mode || "mock") as string).toLowerCase();
+  const executionModeSource = cliArgs.executionMode
+    ? "cli"
+    : process.env.EXECUTION_MODE
+      ? "env"
+      : botConfig.executionMode
+        ? "config"
+        : "paper_trading_fallback";
+  const requestedExecutionMode = ((cliArgs.executionMode || process.env.EXECUTION_MODE || botConfig.executionMode || (String(process.env.PAPER_TRADING || "true").toLowerCase() === "false" ? "live" : "paper")) as string).toLowerCase();
+  const executionMode = requestedExecutionMode === "live" ? "paper" : "paper";
+  const simulatedExecutionOnly = executionMode === "paper";
+  if (requestedExecutionMode !== executionMode) {
+    logger.warn("execution_mode_forced_paper", {
+      requestedExecutionMode,
+      resolvedExecutionMode: executionMode,
+      safety: "real_order_routing_not_implemented"
+    });
+  }
   const wsManager = new WSManager({
     logger: logger.child("ws")
   });
@@ -66,7 +121,13 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const regimeDetector = new RegimeDetector();
   const contextBuilder = new ContextBuilder({ indicatorEngine });
   const botArchitect = new BotArchitect();
-  const executionEngine = new ExecutionEngine({ feeRate: 0.001, logger: logger.child("execution"), store, userStream });
+  const executionEngine = new ExecutionEngine({
+    executionMode,
+    feeRate: 0.001,
+    logger: logger.child("execution"),
+    store,
+    userStream
+  });
   const backtestEngine = new BacktestEngine();
   const strategyRegistry = new StrategyRegistry({ configLoader, indicatorEngine });
   strategyRegistry.load();
@@ -103,6 +164,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     warmupMs: 30_000
   });
   const systemServer = new SystemServer({
+    executionMode,
     feedMode: marketMode === "live" ? "live" : "mock",
     host: process.env.HOST || "127.0.0.1",
     logger,
@@ -133,7 +195,9 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   architectService.start(enabledBots.map((bot: any) => bot.symbol));
   botManager.startAll();
   await userStream.start({
-    enabled: marketMode === "live"
+    enabled: executionMode === "live",
+    mode: executionMode === "live" ? "live" : "mock",
+    reason: executionMode === "paper" ? "paper_execution" : "execution_enabled"
   });
   if (runtimeOptions.serverEnabled !== false) {
     systemServer.start();
@@ -151,7 +215,12 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   logger.info("system_ready", {
     backtestEngine: backtestEngine.run().ok,
     bots: enabledBots.length,
+    executionMode,
+    executionSafety: simulatedExecutionOnly ? "simulated_only" : "exchange_execution_enabled",
     marketMode,
+    marketModeSource,
+    requestedExecutionMode,
+    requestedExecutionModeSource: executionModeSource,
     strategies: strategyRegistry.listStrategyIds().join(",")
   });
 
@@ -207,5 +276,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  parseArgs,
   startOrchestrator
 };

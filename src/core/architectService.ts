@@ -98,11 +98,11 @@ class ArchitectService {
       return assessment;
     }
 
-    this.publish(symbol, assessment, observedAt);
+    this.publish(symbol, assessment, observedAt, context);
     return assessment;
   }
 
-  publish(symbol: string, candidate: ArchitectAssessment, observedAt: number) {
+  publish(symbol: string, candidate: ArchitectAssessment, observedAt: number, context: any) {
     const currentPublished = this.store.getArchitectPublishedAssessment(symbol);
     const currentPublisher = this.ensurePublisherState(symbol);
 
@@ -128,12 +128,12 @@ class ArchitectService {
         nextPublishAt: observedAt + this.publishIntervalMs,
         ready: true
       });
-      this.logger.info("architect_published", {
-        marketRegime: baseline.marketRegime,
-        recommendedFamily: baseline.recommendedFamily,
-        symbol,
-        summary: baseline.summary
-      });
+      this.logger.info("architect_published", this.buildPublishDiagnostics({
+        assessment: candidate,
+        context,
+        published: baseline,
+        symbol
+      }));
       return;
     }
 
@@ -159,6 +159,13 @@ class ArchitectService {
         nextPublishAt: observedAt + this.publishIntervalMs,
         ready: true
       });
+      this.logger.info("architect_publish_refreshed", this.buildPublishDiagnostics({
+        assessment: candidate,
+        context,
+        published,
+        publishOutcome: "refreshed",
+        symbol
+      }));
       return;
     }
 
@@ -190,13 +197,14 @@ class ArchitectService {
         nextPublishAt: observedAt + this.publishIntervalMs,
         ready: true
       });
-      this.logger.info("architect_changed", {
-        marketRegime: candidate.marketRegime,
+      this.logger.info("architect_changed", this.buildPublishDiagnostics({
+        assessment: candidate,
+        context,
         previousRegime: currentPublished.marketRegime,
-        recommendedFamily: candidate.recommendedFamily,
+        published,
         symbol,
         via: canImmediateSwitch ? "switch_delta" : "challenger_persistence"
-      });
+      }));
       return;
     }
 
@@ -232,6 +240,16 @@ class ArchitectService {
       nextPublishAt: observedAt + this.publishIntervalMs,
       ready: true
     });
+    this.logger.info("architect_publish_held", this.buildPublishDiagnostics({
+      assessment: candidate,
+      candidateRegime: candidate.marketRegime,
+      candidateSummary: candidate.summary,
+      context,
+      incumbentScore,
+      published: held,
+      publishOutcome: "held",
+      symbol
+    }));
   }
 
   finalizePublishedAssessment(
@@ -245,6 +263,60 @@ class ArchitectService {
       summary: assessment.summary,
       updatedAt: publishedAt,
       confidence: Number(assessment.confidence.toFixed(4))
+    };
+  }
+
+  roundMetric(value: unknown, decimals: number = 4) {
+    if (!Number.isFinite(Number(value))) return 0;
+    return Number(Number(value).toFixed(decimals));
+  }
+
+  buildPublishDiagnostics(params: {
+    symbol: string;
+    assessment: ArchitectAssessment;
+    published: ArchitectAssessment;
+    context: any;
+    previousRegime?: MarketRegime | null;
+    via?: string;
+    publishOutcome?: string;
+    candidateRegime?: MarketRegime;
+    candidateSummary?: string;
+    incumbentScore?: number;
+  }) {
+    const features = params.context?.features || {};
+    const published = params.published;
+    const assessment = params.assessment;
+    return {
+      absoluteConviction: this.roundMetric(assessment.absoluteConviction),
+      breakoutInstability: this.roundMetric(features.breakoutInstability),
+      breakoutQuality: this.roundMetric(features.breakoutQuality),
+      candidateRegime: params.candidateRegime || null,
+      candidateSummary: params.candidateSummary || null,
+      chopiness: this.roundMetric(features.chopiness),
+      contextMaturity: this.roundMetric(assessment.contextMaturity),
+      dataQuality: this.roundMetric(features.dataQuality),
+      decisionStrength: this.roundMetric(assessment.decisionStrength),
+      directionalEfficiency: this.roundMetric(features.directionalEfficiency),
+      featureConflict: this.roundMetric(features.featureConflict),
+      incumbentScore: params.incumbentScore === undefined ? null : this.roundMetric(params.incumbentScore),
+      marketRegime: published.marketRegime,
+      previousRegime: params.previousRegime || null,
+      publishOutcome: params.publishOutcome || "published",
+      rangeScore: this.roundMetric(assessment.regimeScores?.range),
+      recommendedFamily: published.recommendedFamily,
+      reversionStretch: this.roundMetric(features.reversionStretch),
+      signalAgreement: this.roundMetric(assessment.signalAgreement),
+      slopeConsistency: this.roundMetric(features.slopeConsistency),
+      structureState: assessment.structureState || params.context?.structureState || "choppy",
+      summary: published.summary,
+      symbol: params.symbol,
+      trendBias: assessment.trendBias || params.context?.trendBias || "neutral",
+      trendScore: this.roundMetric(assessment.regimeScores?.trend),
+      updatedAt: published.updatedAt,
+      via: params.via || null,
+      volatilityRisk: this.roundMetric(features.volatilityRisk),
+      volatilityState: assessment.volatilityState || params.context?.volatilityState || "normal",
+      volatileScore: this.roundMetric(assessment.regimeScores?.volatile)
     };
   }
 
