@@ -16,7 +16,7 @@
       "strategy": "emaCross",
       "enabled": true,
       "riskProfile": "medium",
-      "allowedStrategies": ["emaCross", "breakout", "rsiReversion"],
+      "allowedStrategies": ["emaCross", "rsiReversion"],
       "initialBalanceUsdt": 1000
     },
     {
@@ -25,7 +25,7 @@
       "strategy": "rsiReversion",
       "enabled": true,
       "riskProfile": "low",
-      "allowedStrategies": ["rsiReversion", "emaCross", "breakout"],
+      "allowedStrategies": ["rsiReversion", "emaCross"],
       "initialBalanceUsdt": 1000
     }
   ]

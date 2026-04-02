@@ -112,7 +112,7 @@ class BotArchitect {
       reasonCodes,
       recommendedFamily,
       regimeScores,
-      sampleSize: context.sampleSize,
+      sampleSize: context.effectiveSampleSize || context.sampleSize,
       signalAgreement: Number(signalAgreement.toFixed(4)),
       structureState: context.structureState,
       sufficientData: context.warmupComplete && features.dataQuality >= this.minDataQuality,

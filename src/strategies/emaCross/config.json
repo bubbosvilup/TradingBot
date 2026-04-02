@@ -3,6 +3,5 @@
   "emaSlow": 21,
   "emaBaseline": 50,
   "minConfidence": 0.58,
-  "rsiFloor": 48
+  "rsiFloor": 51
 }
-

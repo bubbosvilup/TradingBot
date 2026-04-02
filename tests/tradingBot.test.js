@@ -72,6 +72,7 @@ function createHarness(strategyEvaluate, options = {}) {
     allowedStrategies: options.allowedStrategies || ["testStrategy"],
     enabled: true,
     id: "bot_test",
+    initialBalanceUsdt: options.initialBalanceUsdt ?? 1000,
     riskProfile: options.riskProfile || "medium",
     strategy: options.strategy || "testStrategy",
     symbol: options.symbol || "BTC/USDT"
@@ -159,8 +160,11 @@ function createHarness(strategyEvaluate, options = {}) {
       evaluate() {
         return null;
       },
-      getStrategyFamily() {
-        return "trend_following";
+      getStrategyFamily(strategyId) {
+        if (strategyId === "testStrategy") return "trend_following";
+        if (strategyId === "emaCross") return "trend_following";
+        if (strategyId === "rsiReversion") return "mean_reversion";
+        return "other";
       }
     }
   });
@@ -181,9 +185,10 @@ function createHarness(strategyEvaluate, options = {}) {
     publishIntervalMs: 30_000,
     ready: true,
     symbol: config.symbol,
-    warmupStartedAt: Date.now() - 60_000
+    warmupStartedAt: Date.now() - 60_000,
+    ...(options.publisherState || {})
   });
-  store.setContextSnapshot(config.symbol, {
+  store.setContextSnapshot(config.symbol, options.contextSnapshot || {
     dataMode: "live",
     features: {
       breakoutDirection: "up",
@@ -239,6 +244,13 @@ function runTradingBotTests() {
     holdHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     if (holdHarness.store.getPosition("bot_test")) {
       throw new Error("position opened before entry debounce was satisfied");
+    }
+    const debounceEvaluation = holdHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.skipReason === "debounce_not_satisfied");
+    if (!debounceEvaluation) {
+      throw new Error("missing structured entry evaluation log for debounce_not_satisfied");
+    }
+    if (debounceEvaluation.metadata.architectSourceUsed !== "published" || debounceEvaluation.metadata.architectUpdatedAt !== 1_000_000) {
+      throw new Error("debounce evaluation log missing published architect snapshot details");
     }
 
     clock += 1_000;
@@ -320,6 +332,9 @@ function runTradingBotTests() {
     if (switchedState.architectSyncStatus !== "synced") {
       throw new Error(`flat bot sync status invalid after realignment: ${switchedState.architectSyncStatus}`);
     }
+    if (!realignHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.skipReason === "no_entry_signal")) {
+      throw new Error("missing structured entry evaluation log for no_entry_signal");
+    }
 
     clock += 10_000;
     const waitingHarness = createHarness(() => ({
@@ -371,8 +386,14 @@ function runTradingBotTests() {
     if (noTradeHarness.store.getPosition("bot_test")) {
       throw new Error("bot opened a position under architect no_trade");
     }
-    if (!noTradeHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "architect_no_trade")) {
-      throw new Error("missing architect_no_trade entry block log");
+    if (!noTradeHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "architect_not_usable_for_entry" && entry.metadata.architectBlockReason === "architect_no_trade")) {
+      throw new Error("missing architect_not_usable_for_entry log for architect_no_trade");
+    }
+    if (noTradeHarness.store.getBotState("bot_test").lastDecision === "buy") {
+      throw new Error("flat bot should not keep a buy decision when architect state is no_trade");
+    }
+    if (noTradeHarness.store.getBotState("bot_test").architectSyncStatus !== "pending") {
+      throw new Error("no_trade architect state should keep bot sync status pending");
     }
 
     clock += 10_000;
@@ -393,8 +414,14 @@ function runTradingBotTests() {
     if (unclearHarness.store.getPosition("bot_test")) {
       throw new Error("bot opened a position under architect unclear");
     }
-    if (!unclearHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "architect_unclear")) {
-      throw new Error("missing architect_unclear entry block log");
+    if (!unclearHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "architect_not_usable_for_entry" && entry.metadata.architectBlockReason === "architect_unclear")) {
+      throw new Error("missing architect_not_usable_for_entry log for architect_unclear");
+    }
+    if (unclearHarness.store.getBotState("bot_test").lastDecision === "buy") {
+      throw new Error("flat bot should not keep a buy decision when architect state is unclear");
+    }
+    if (unclearHarness.store.getBotState("bot_test").architectSyncStatus !== "pending") {
+      throw new Error("unclear architect state should keep bot sync status pending");
     }
 
     clock += 10_000;
@@ -414,8 +441,64 @@ function runTradingBotTests() {
     if (immatureHarness.store.getPosition("bot_test")) {
       throw new Error("bot opened a position with architect maturity below threshold");
     }
-    if (!immatureHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "architect_low_maturity")) {
-      throw new Error("missing architect_low_maturity entry block log");
+    if (!immatureHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "architect_not_usable_for_entry" && entry.metadata.architectBlockReason === "architect_low_maturity")) {
+      throw new Error("missing architect_not_usable_for_entry log for architect_low_maturity");
+    }
+    if (immatureHarness.store.getBotState("bot_test").lastDecision === "buy") {
+      throw new Error("flat bot should not keep a buy decision when architect state is low maturity");
+    }
+    if (immatureHarness.store.getBotState("bot_test").architectSyncStatus !== "pending") {
+      throw new Error("low-maturity architect state should keep bot sync status pending");
+    }
+
+    clock += 10_000;
+    const staleHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      allowedStrategies: ["emaCross", "rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock - 180_000
+      }),
+      strategy: "emaCross"
+    });
+    staleHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (staleHarness.store.getBotState("bot_test").activeStrategyId !== "emaCross") {
+      throw new Error("stale architect state should not trigger flat strategy realignment");
+    }
+    if (staleHarness.store.getBotState("bot_test").architectSyncStatus !== "pending") {
+      throw new Error("stale architect state should keep sync status pending");
+    }
+    clock += 1_000;
+    staleHarness.bot.onMarketTick({ price: 100.5, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (staleHarness.store.getPosition("bot_test")) {
+      throw new Error("bot opened a position with stale architect state");
+    }
+    if (!staleHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "architect_not_usable_for_entry" && entry.metadata.architectBlockReason === "architect_stale")) {
+      throw new Error("missing architect_not_usable_for_entry log for architect_stale");
+    }
+    if (staleHarness.store.getBotState("bot_test").lastDecision === "buy") {
+      throw new Error("flat bot should not keep a buy decision when architect state is stale");
+    }
+
+    clock += 10_000;
+    const mismatchHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        symbol: "ETH/USDT",
+        updatedAt: clock
+      })
+    });
+    mismatchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (mismatchHarness.store.getPosition("bot_test")) {
+      throw new Error("bot opened a position with architect symbol mismatch");
+    }
+    if (!mismatchHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.blockReason === "architect_symbol_mismatch" && entry.metadata.architectSymbolMatch === false)) {
+      throw new Error("missing structured entry evaluation log for architect_symbol_mismatch");
     }
 
     clock += 10_000;
@@ -447,6 +530,49 @@ function runTradingBotTests() {
     }
 
     clock += 10_000;
+    const lowNotionalHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      initialBalanceUsdt: 20,
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    lowNotionalHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    lowNotionalHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (lowNotionalHarness.store.getPosition("bot_test")) {
+      throw new Error("bot opened a position below minimum notional");
+    }
+    if (!lowNotionalHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "notional_below_minimum")) {
+      throw new Error("missing notional_below_minimum block log");
+    }
+
+    clock += 10_000;
+    const lowQuantityHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    lowQuantityHarness.bot.onMarketTick({ price: 500000000, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    lowQuantityHarness.bot.onMarketTick({ price: 500000001, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (lowQuantityHarness.store.getPosition("bot_test")) {
+      throw new Error("bot opened a position below minimum quantity");
+    }
+    if (!lowQuantityHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "quantity_below_minimum")) {
+      throw new Error("missing quantity_below_minimum block log");
+    }
+
+    clock += 10_000;
     const allowedHarness = createHarness(() => ({
       action: "buy",
       confidence: 0.93,
@@ -464,6 +590,13 @@ function runTradingBotTests() {
     }
     if (!allowedHarness.botLogs.find((entry) => entry.message === "entry_gate_allowed")) {
       throw new Error("missing entry_gate_allowed log on valid entry");
+    }
+    const openedEvaluation = allowedHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.outcome === "opened" && entry.metadata.allowReason === "entry_opened");
+    if (!openedEvaluation) {
+      throw new Error("missing structured entry evaluation log for opened entry");
+    }
+    if (openedEvaluation.metadata.publisherLastPublishedAt !== clock - 1_000 || openedEvaluation.metadata.tickTimestamp !== clock) {
+      throw new Error("opened entry evaluation log missing publisher/tick timing");
     }
   } finally {
     Date.now = originalNow;

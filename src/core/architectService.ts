@@ -62,6 +62,9 @@ class ArchitectService {
       lastObservedAt: null,
       lastPublishedAt: null,
       lastPublishedRegime: null,
+      lastRegimeSwitchAt: null,
+      lastRegimeSwitchFrom: null,
+      lastRegimeSwitchTo: null,
       nextPublishAt: null,
       publishIntervalMs: this.publishIntervalMs,
       ready: false,
@@ -107,17 +110,8 @@ class ArchitectService {
     const currentPublisher = this.ensurePublisherState(symbol);
 
     if (!currentPublished) {
-      const baseline = this.finalizePublishedAssessment(candidate, currentPublisher, {
-        challengerCount: 0,
-        challengerRegime: null,
-        hysteresisActive: false,
-        lastPublishedAt: observedAt,
-        lastPublishedRegime: candidate.marketRegime,
-        nextPublishAt: observedAt + this.publishIntervalMs,
-        ready: true
-      });
-      this.store.setArchitectPublishedAssessment(symbol, baseline);
-      this.store.setArchitectPublisherState(symbol, {
+      const baseline = this.createPublishedAssessment(candidate, observedAt);
+      const nextPublisher = {
         ...currentPublisher,
         challengerCount: 0,
         challengerRegime: null,
@@ -125,30 +119,30 @@ class ArchitectService {
         lastObservedAt: observedAt,
         lastPublishedAt: observedAt,
         lastPublishedRegime: candidate.marketRegime,
+        lastRegimeSwitchAt: currentPublisher.lastRegimeSwitchAt ?? null,
+        lastRegimeSwitchFrom: currentPublisher.lastRegimeSwitchFrom ?? null,
+        lastRegimeSwitchTo: currentPublisher.lastRegimeSwitchTo ?? null,
         nextPublishAt: observedAt + this.publishIntervalMs,
         ready: true
-      });
+      };
+      this.store.setArchitectPublishedAssessment(symbol, baseline);
+      this.store.setArchitectPublisherState(symbol, nextPublisher);
       this.logger.info("architect_published", this.buildPublishDiagnostics({
-        assessment: candidate,
+        candidate,
         context,
         published: baseline,
+        publishedPayloadChanged: true,
+        publisher: nextPublisher,
+        publisherMetadataOnly: false,
+        publishOutcome: "published",
         symbol
       }));
       return;
     }
 
     if (candidate.marketRegime === currentPublished.marketRegime) {
-      const published = this.finalizePublishedAssessment(candidate, currentPublisher, {
-        challengerCount: 0,
-        challengerRegime: null,
-        hysteresisActive: false,
-        lastPublishedAt: observedAt,
-        lastPublishedRegime: candidate.marketRegime,
-        nextPublishAt: observedAt + this.publishIntervalMs,
-        ready: true
-      });
-      this.store.setArchitectPublishedAssessment(symbol, published);
-      this.store.setArchitectPublisherState(symbol, {
+      const published = this.createPublishedAssessment(candidate, observedAt);
+      const nextPublisher = {
         ...currentPublisher,
         challengerCount: 0,
         challengerRegime: null,
@@ -156,13 +150,21 @@ class ArchitectService {
         lastObservedAt: observedAt,
         lastPublishedAt: observedAt,
         lastPublishedRegime: candidate.marketRegime,
+        lastRegimeSwitchAt: currentPublisher.lastRegimeSwitchAt ?? null,
+        lastRegimeSwitchFrom: currentPublisher.lastRegimeSwitchFrom ?? null,
+        lastRegimeSwitchTo: currentPublisher.lastRegimeSwitchTo ?? null,
         nextPublishAt: observedAt + this.publishIntervalMs,
         ready: true
-      });
+      };
+      this.store.setArchitectPublishedAssessment(symbol, published);
+      this.store.setArchitectPublisherState(symbol, nextPublisher);
       this.logger.info("architect_publish_refreshed", this.buildPublishDiagnostics({
-        assessment: candidate,
+        candidate,
         context,
         published,
+        publishedPayloadChanged: true,
+        publisher: nextPublisher,
+        publisherMetadataOnly: false,
         publishOutcome: "refreshed",
         symbol
       }));
@@ -176,17 +178,8 @@ class ArchitectService {
     const challengerCount = sameChallenger ? currentPublisher.challengerCount + 1 : 1;
 
     if (canImmediateSwitch || challengerCount >= this.requiredConfirmations) {
-      const published = this.finalizePublishedAssessment(candidate, currentPublisher, {
-        challengerCount: 0,
-        challengerRegime: null,
-        hysteresisActive: false,
-        lastPublishedAt: observedAt,
-        lastPublishedRegime: candidate.marketRegime,
-        nextPublishAt: observedAt + this.publishIntervalMs,
-        ready: true
-      });
-      this.store.setArchitectPublishedAssessment(symbol, published);
-      this.store.setArchitectPublisherState(symbol, {
+      const published = this.createPublishedAssessment(candidate, observedAt);
+      const nextPublisher = {
         ...currentPublisher,
         challengerCount: 0,
         challengerRegime: null,
@@ -194,14 +187,22 @@ class ArchitectService {
         lastObservedAt: observedAt,
         lastPublishedAt: observedAt,
         lastPublishedRegime: candidate.marketRegime,
+        lastRegimeSwitchAt: observedAt,
+        lastRegimeSwitchFrom: currentPublished.marketRegime,
+        lastRegimeSwitchTo: candidate.marketRegime,
         nextPublishAt: observedAt + this.publishIntervalMs,
         ready: true
-      });
+      };
+      this.store.setArchitectPublishedAssessment(symbol, published);
+      this.store.setArchitectPublisherState(symbol, nextPublisher);
       this.logger.info("architect_changed", this.buildPublishDiagnostics({
-        assessment: candidate,
+        candidate,
         context,
         previousRegime: currentPublished.marketRegime,
         published,
+        publishedPayloadChanged: true,
+        publisher: nextPublisher,
+        publisherMetadataOnly: false,
         symbol,
         via: canImmediateSwitch ? "switch_delta" : "challenger_persistence"
       }));
@@ -220,16 +221,7 @@ class ArchitectService {
       symbol
     });
 
-    const held = this.finalizePublishedAssessment(currentPublished, currentPublisher, {
-      challengerCount,
-      challengerRegime: candidate.marketRegime,
-      hysteresisActive: true,
-      lastPublishedAt: observedAt,
-      nextPublishAt: observedAt + this.publishIntervalMs,
-      ready: true
-    });
-    this.store.setArchitectPublishedAssessment(symbol, held);
-    this.store.setArchitectPublisherState(symbol, {
+    const nextPublisher = {
       ...currentPublisher,
       challengerCount,
       challengerRegime: candidate.marketRegime,
@@ -237,27 +229,28 @@ class ArchitectService {
       lastObservedAt: observedAt,
       lastPublishedAt: observedAt,
       lastPublishedRegime: currentPublished.marketRegime,
+      lastRegimeSwitchAt: currentPublisher.lastRegimeSwitchAt ?? null,
+      lastRegimeSwitchFrom: currentPublisher.lastRegimeSwitchFrom ?? null,
+      lastRegimeSwitchTo: currentPublisher.lastRegimeSwitchTo ?? null,
       nextPublishAt: observedAt + this.publishIntervalMs,
       ready: true
-    });
+    };
+    this.store.setArchitectPublisherState(symbol, nextPublisher);
     this.logger.info("architect_publish_held", this.buildPublishDiagnostics({
-      assessment: candidate,
-      candidateRegime: candidate.marketRegime,
-      candidateSummary: candidate.summary,
+      candidate,
       context,
       incumbentScore,
-      published: held,
+      previousRegime: currentPublished.marketRegime,
+      published: currentPublished,
+      publishedPayloadChanged: false,
+      publisher: nextPublisher,
+      publisherMetadataOnly: true,
       publishOutcome: "held",
       symbol
     }));
   }
 
-  finalizePublishedAssessment(
-    assessment: ArchitectAssessment,
-    publisher: ArchitectPublisherState,
-    patch: Partial<ArchitectPublisherState>
-  ): ArchitectAssessment {
-    const publishedAt = patch.lastPublishedAt ?? publisher.lastPublishedAt ?? assessment.updatedAt;
+  createPublishedAssessment(assessment: ArchitectAssessment, publishedAt: number): ArchitectAssessment {
     return {
       ...assessment,
       summary: assessment.summary,
@@ -273,50 +266,80 @@ class ArchitectService {
 
   buildPublishDiagnostics(params: {
     symbol: string;
-    assessment: ArchitectAssessment;
+    candidate: ArchitectAssessment;
     published: ArchitectAssessment;
+    publisher: ArchitectPublisherState;
     context: any;
     previousRegime?: MarketRegime | null;
     via?: string;
     publishOutcome?: string;
-    candidateRegime?: MarketRegime;
-    candidateSummary?: string;
     incumbentScore?: number;
+    publishedPayloadChanged: boolean;
+    publisherMetadataOnly: boolean;
   }) {
     const features = params.context?.features || {};
+    const candidate = params.candidate;
     const published = params.published;
-    const assessment = params.assessment;
     return {
-      absoluteConviction: this.roundMetric(assessment.absoluteConviction),
-      breakoutInstability: this.roundMetric(features.breakoutInstability),
-      breakoutQuality: this.roundMetric(features.breakoutQuality),
-      candidateRegime: params.candidateRegime || null,
-      candidateSummary: params.candidateSummary || null,
-      chopiness: this.roundMetric(features.chopiness),
-      contextMaturity: this.roundMetric(assessment.contextMaturity),
-      dataQuality: this.roundMetric(features.dataQuality),
-      decisionStrength: this.roundMetric(assessment.decisionStrength),
-      directionalEfficiency: this.roundMetric(features.directionalEfficiency),
-      featureConflict: this.roundMetric(features.featureConflict),
+      candidateAbsoluteConviction: this.roundMetric(candidate.absoluteConviction),
+      candidateContextMaturity: this.roundMetric(candidate.contextMaturity),
+      candidateDecisionStrength: this.roundMetric(candidate.decisionStrength),
+      candidateMarketRegime: candidate.marketRegime,
+      candidateObservedAt: candidate.updatedAt,
+      candidateRangeScore: this.roundMetric(candidate.regimeScores?.range),
+      candidateRecommendedFamily: candidate.recommendedFamily,
+      candidateSignalAgreement: this.roundMetric(candidate.signalAgreement),
+      candidateSummary: candidate.summary,
+      candidateTrendScore: this.roundMetric(candidate.regimeScores?.trend),
+      candidateVolatileScore: this.roundMetric(candidate.regimeScores?.volatile),
+      contextBreakoutInstability: this.roundMetric(features.breakoutInstability),
+      contextBreakoutQuality: this.roundMetric(features.breakoutQuality),
+      contextChopiness: this.roundMetric(features.chopiness),
+      contextDataQuality: this.roundMetric(features.dataQuality),
+      contextDirectionalEfficiency: this.roundMetric(features.directionalEfficiency),
+      contextEffectiveWindowSpanMs: Number(params.context?.effectiveWindowSpanMs || 0),
+      contextFeatureConflict: this.roundMetric(features.featureConflict),
+      contextPostSwitchCoveragePct: params.context?.postSwitchCoveragePct === null || params.context?.postSwitchCoveragePct === undefined
+        ? null
+        : this.roundMetric(params.context.postSwitchCoveragePct),
+      contextReversionStretch: this.roundMetric(features.reversionStretch),
+      contextRollingMaturity: this.roundMetric(params.context?.rollingMaturity),
+      contextSlopeConsistency: this.roundMetric(features.slopeConsistency),
+      contextVolatilityRisk: this.roundMetric(features.volatilityRisk),
+      contextWindowMode: params.context?.windowMode || "rolling_full",
       incumbentScore: params.incumbentScore === undefined ? null : this.roundMetric(params.incumbentScore),
-      marketRegime: published.marketRegime,
       previousRegime: params.previousRegime || null,
       publishOutcome: params.publishOutcome || "published",
-      rangeScore: this.roundMetric(assessment.regimeScores?.range),
-      recommendedFamily: published.recommendedFamily,
-      reversionStretch: this.roundMetric(features.reversionStretch),
-      signalAgreement: this.roundMetric(assessment.signalAgreement),
-      slopeConsistency: this.roundMetric(features.slopeConsistency),
-      structureState: assessment.structureState || params.context?.structureState || "choppy",
-      summary: published.summary,
+      publishedAbsoluteConviction: this.roundMetric(published.absoluteConviction),
+      publishedContextMaturity: this.roundMetric(published.contextMaturity),
+      publishedDecisionStrength: this.roundMetric(published.decisionStrength),
+      publishedMarketRegime: published.marketRegime,
+      publishedPayloadChanged: params.publishedPayloadChanged,
+      publishedPayloadUpdatedAt: published.updatedAt,
+      publishedRangeScore: this.roundMetric(published.regimeScores?.range),
+      publishedRecommendedFamily: published.recommendedFamily,
+      publishedSignalAgreement: this.roundMetric(published.signalAgreement),
+      publishedSummary: published.summary,
+      publishedTrendScore: this.roundMetric(published.regimeScores?.trend),
+      publishedVolatileScore: this.roundMetric(published.regimeScores?.volatile),
+      publisherChallengerCount: params.publisher.challengerCount,
+      publisherChallengerRegime: params.publisher.challengerRegime || null,
+      publisherChallengerRequired: params.publisher.challengerRequired,
+      publisherHysteresisActive: params.publisher.hysteresisActive,
+      publisherLastObservedAt: params.publisher.lastObservedAt,
+      publisherLastPublishedAt: params.publisher.lastPublishedAt,
+      publisherLastRegimeSwitchAt: params.publisher.lastRegimeSwitchAt,
+      publisherLastRegimeSwitchFrom: params.publisher.lastRegimeSwitchFrom,
+      publisherLastRegimeSwitchTo: params.publisher.lastRegimeSwitchTo,
+      publisherMetadataOnly: params.publisherMetadataOnly,
+      publisherNextPublishAt: params.publisher.nextPublishAt,
+      publisherReady: params.publisher.ready,
       symbol: params.symbol,
-      trendBias: assessment.trendBias || params.context?.trendBias || "neutral",
-      trendScore: this.roundMetric(assessment.regimeScores?.trend),
+      trendBias: candidate.trendBias || params.context?.trendBias || "neutral",
       updatedAt: published.updatedAt,
       via: params.via || null,
-      volatilityRisk: this.roundMetric(features.volatilityRisk),
-      volatilityState: assessment.volatilityState || params.context?.volatilityState || "normal",
-      volatileScore: this.roundMetric(assessment.regimeScores?.volatile)
+      volatilityState: candidate.volatilityState || params.context?.volatilityState || "normal",
+      structureState: candidate.structureState || params.context?.structureState || "choppy"
     };
   }
 

@@ -116,6 +116,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
   const indicatorEngine = new IndicatorEngine();
   const riskManager = new RiskManager();
+  const tradeConstraints = riskManager.getTradeConstraints();
   const performanceMonitor = new PerformanceMonitor();
   const strategySwitcher = new StrategySwitcher();
   const regimeDetector = new RegimeDetector();
@@ -125,6 +126,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     executionMode,
     feeRate: 0.001,
     logger: logger.child("execution"),
+    minTradeNotionalUsdt: tradeConstraints.minNotionalUsdt,
+    minTradeQuantity: tradeConstraints.minQuantity,
     store,
     userStream
   });

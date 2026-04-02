@@ -5,6 +5,7 @@ const { runActiveStrategiesTests } = require("./activeStrategies.test");
 const { runArchitectServiceTests } = require("./architectService.test");
 const { runBotArchitectTests } = require("./botArchitect.test");
 const { runContextServiceTests } = require("./contextService.test");
+const { runExecutionEngineTests } = require("./executionEngine.test");
 const { runOrchestratorTests } = require("./orchestrator.test");
 const { runSystemServerTests } = require("./systemServer.test");
 const { runServerTests } = require("./server.test");
@@ -23,6 +24,7 @@ async function main() {
     { name: "backtest", run: async () => runBacktestTests() },
     { name: "botArchitect", run: async () => runBotArchitectTests() },
     { name: "contextService", run: async () => runContextServiceTests() },
+    { name: "executionEngine", run: async () => runExecutionEngineTests() },
     { name: "orchestrator", run: async () => runOrchestratorTests() },
     { name: "strategy", run: async () => runStrategyTests() },
     { name: "strategySwitcher", run: async () => runStrategySwitcherTests() },

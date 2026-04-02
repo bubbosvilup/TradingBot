@@ -106,6 +106,81 @@ class SystemServer {
     };
   }
 
+  getArchitectWarmupRemainingMs(context: any) {
+    if (context?.warmupComplete || !context?.windowSpanMs) return 0;
+    return Math.max(0, 30_000 - context.windowSpanMs);
+  }
+
+  decorateArchitectAssessment(assessment: any, publisher: any, context: any, source: "published" | "observed") {
+    const contextFeatures = this.getArchitectContextFeatures(context);
+    return {
+      ...assessment,
+      authoritative: source === "published",
+      challenger: publisher?.challengerRegime ? {
+        count: publisher.challengerCount,
+        regime: publisher.challengerRegime,
+        required: publisher.challengerRequired
+      } : null,
+      contextFeatures,
+      dataQuality: contextFeatures?.dataQuality || 0,
+      hysteresisActive: publisher?.hysteresisActive || false,
+      nextPublishAt: publisher?.nextPublishAt || null,
+      publisherLastObservedAt: publisher?.lastObservedAt || null,
+      publisherLastPublishedAt: publisher?.lastPublishedAt || null,
+      ready: source === "published" ? (publisher ? publisher.ready : Boolean(assessment?.sufficientData)) : false,
+      source,
+      warmupRemainingMs: this.getArchitectWarmupRemainingMs(context)
+    };
+  }
+
+  buildSyntheticArchitect(params: { config: any; context: any; publisher: any }) {
+    const contextFeatures = this.getArchitectContextFeatures(params.context);
+    if (!params.publisher && !params.context) return null;
+    return {
+      authoritative: false,
+      challenger: params.publisher?.challengerRegime ? {
+        count: params.publisher.challengerCount,
+        regime: params.publisher.challengerRegime,
+        required: params.publisher.challengerRequired
+      } : null,
+      contextMaturity: params.context?.features?.maturity || 0,
+      contextFeatures,
+      dataMode: params.context?.dataMode || "unknown",
+      dataQuality: contextFeatures?.dataQuality || 0,
+      decisionStrength: 0,
+      familyScores: {
+        mean_reversion: 0,
+        no_trade: 1,
+        trend_following: 0
+      },
+      featureConflict: params.context?.features?.featureConflict || 0,
+      hysteresisActive: params.publisher?.hysteresisActive || false,
+      marketRegime: "unclear",
+      nextPublishAt: params.publisher?.nextPublishAt || null,
+      publisherLastObservedAt: params.publisher?.lastObservedAt || null,
+      publisherLastPublishedAt: params.publisher?.lastPublishedAt || null,
+      ready: false,
+      reasonCodes: [],
+      recommendedFamily: "no_trade",
+      regimeScores: {
+        range: 0,
+        trend: 0,
+        unclear: 1,
+        volatile: 0
+      },
+      sampleSize: params.context?.sampleSize || 0,
+      signalAgreement: 0,
+      source: "synthetic",
+      structureState: params.context?.structureState || "choppy",
+      summary: params.context?.summary || "Architect warming up.",
+      symbol: params.config.symbol,
+      trendBias: params.context?.trendBias || "neutral",
+      updatedAt: null,
+      volatilityState: params.context?.volatilityState || "normal",
+      warmupRemainingMs: this.getArchitectWarmupRemainingMs(params.context)
+    };
+  }
+
   buildSystemPayload() {
     const snapshot = this.store.getSystemSnapshot();
     const running = snapshot.botStates.filter((bot: any) => bot.status === "running").length;
@@ -136,12 +211,23 @@ class SystemServer {
       const performance = this.store.getPerformance(config.id);
       const position = this.store.getPosition(config.id);
       const latestPrice = this.store.getLatestPrice(config.symbol);
-      const architect = this.store.getArchitectAssessment(config.symbol);
+      const architectPublishedRaw = this.store.getArchitectAssessment(config.symbol);
+      const architectObservedRaw = this.store.getArchitectObservedAssessment(config.symbol);
       const architectPublisher = this.store.getArchitectPublisherState(config.symbol);
       const context = this.store.getContextSnapshot(config.symbol);
+      const architectPublished = architectPublishedRaw
+        ? this.decorateArchitectAssessment(architectPublishedRaw, architectPublisher, context, "published")
+        : null;
+      const architectObserved = architectObservedRaw
+        ? this.decorateArchitectAssessment(architectObservedRaw, architectPublisher, context, "observed")
+        : null;
+      const architectFallback = !architectPublished && !architectObserved
+        ? this.buildSyntheticArchitect({ config, context, publisher: architectPublisher })
+        : null;
+      const architect = architectPublished;
       const activeFamily = getStrategyFamily(state?.activeStrategyId || config.strategy);
-      const targetFamily = architect?.recommendedFamily && architect.recommendedFamily !== "no_trade"
-        ? architect.recommendedFamily
+      const targetFamily = architectPublished?.recommendedFamily && architectPublished.recommendedFamily !== "no_trade"
+        ? architectPublished.recommendedFamily
         : null;
       const cooldownRemainingMs = state?.cooldownUntil ? Math.max(0, state.cooldownUntil - now) : 0;
       const unrealizedPnl = position && latestPrice
@@ -152,69 +238,14 @@ class SystemServer {
         : architect
           ? "synced"
           : "pending";
-      const syncStatus = !state?.architectSyncStatus || state.architectSyncStatus === "pending"
-        ? derivedSyncStatus
-        : state.architectSyncStatus;
-      const contextFeatures = this.getArchitectContextFeatures(context);
+      const syncStatus = state?.architectSyncStatus || derivedSyncStatus;
 
       return {
         activeStrategyId: state?.activeStrategyId || config.strategy,
-        architect: architect ? {
-          ...architect,
-          challenger: architectPublisher?.challengerRegime ? {
-            count: architectPublisher.challengerCount,
-            regime: architectPublisher.challengerRegime,
-            required: architectPublisher.challengerRequired
-          } : null,
-          contextFeatures,
-          dataQuality: contextFeatures?.dataQuality || 0,
-          hysteresisActive: architectPublisher?.hysteresisActive || false,
-          nextPublishAt: architectPublisher?.nextPublishAt || null,
-          ready: architectPublisher ? architectPublisher.ready : true,
-          warmupRemainingMs: !context?.warmupComplete && context?.windowSpanMs
-            ? Math.max(0, 30_000 - context.windowSpanMs)
-            : 0
-        } : architectPublisher ? {
-          absoluteConviction: 0,
-          challenger: architectPublisher.challengerRegime ? {
-            count: architectPublisher.challengerCount,
-            regime: architectPublisher.challengerRegime,
-            required: architectPublisher.challengerRequired
-          } : null,
-          contextMaturity: context?.features?.maturity || 0,
-          contextFeatures,
-          dataMode: context?.dataMode || "unknown",
-          dataQuality: contextFeatures?.dataQuality || 0,
-          decisionStrength: 0,
-          familyScores: {
-            mean_reversion: 0,
-            no_trade: 1,
-            trend_following: 0
-          },
-          featureConflict: context?.features?.featureConflict || 0,
-          hysteresisActive: architectPublisher.hysteresisActive || false,
-          marketRegime: "unclear",
-          nextPublishAt: architectPublisher.nextPublishAt || null,
-          ready: architectPublisher.ready || false,
-          recommendedFamily: "no_trade",
-          regimeScores: {
-            range: 0,
-            trend: 0,
-            unclear: 1,
-            volatile: 0
-          },
-          reasonCodes: [],
-          sampleSize: context?.sampleSize || 0,
-          signalAgreement: 0,
-          structureState: context?.structureState || "choppy",
-          summary: context?.summary || "Architect warming up.",
-          trendBias: context?.trendBias || "neutral",
-          updatedAt: architectPublisher.lastPublishedAt || architectPublisher.lastObservedAt || now,
-          volatilityState: context?.volatilityState || "normal",
-          warmupRemainingMs: !context?.warmupComplete && context?.windowSpanMs
-            ? Math.max(0, 30_000 - context.windowSpanMs)
-            : 0
-        } : null,
+        architect,
+        architectFallback,
+        architectObserved,
+        architectPublished,
         availableBalanceUsdt: state?.availableBalanceUsdt || 0,
         botId: config.id,
         cooldownReason: state?.cooldownReason || null,
@@ -238,6 +269,7 @@ class SystemServer {
         performance,
         price: latestPrice,
         riskProfile: config.riskProfile,
+        syntheticArchitect: Boolean(architectFallback),
         syncStatus,
         status: state?.status || "idle",
         symbol: config.symbol

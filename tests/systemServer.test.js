@@ -109,6 +109,7 @@ function runSystemServerTests() {
     windowStartedAt: now - 240_000
   });
   store.setArchitectPublishedAssessment("BTC/USDT", createPublishedArchitect(now));
+  store.setArchitectObservedAssessment("BTC/USDT", createPublishedArchitect(now - 1000));
   store.setArchitectPublisherState("BTC/USDT", {
     challengerCount: 1,
     challengerRegime: "range",
@@ -122,6 +123,11 @@ function runSystemServerTests() {
     ready: true,
     symbol: "BTC/USDT",
     warmupStartedAt: now - 30_000
+  });
+  store.updateBotState("bot_a", {
+    architectRecommendedFamily: "trend_following",
+    architectSyncStatus: "synced",
+    lastArchitectAssessmentAt: now
   });
   store.appendClosedTrade("bot_a", {
     botId: "bot_a",
@@ -168,8 +174,14 @@ function runSystemServerTests() {
   if (!Array.isArray(bots) || bots.length !== 1 || bots[0].botId !== "bot_a") {
     throw new Error("bots payload invalid");
   }
-  if (bots[0].architect?.recommendedFamily !== "trend_following") {
+  if (bots[0].architect?.recommendedFamily !== "trend_following" || bots[0].architect?.authoritative !== true) {
     throw new Error("bots payload missing published architect assessment");
+  }
+  if (bots[0].architectPublished?.recommendedFamily !== "trend_following") {
+    throw new Error("bots payload missing authoritative architectPublished");
+  }
+  if (bots[0].architectObserved?.source !== "observed" || bots[0].architectObserved?.authoritative !== false) {
+    throw new Error("bots payload missing observed architect distinction");
   }
   if (bots[0].architect?.decisionStrength !== 0.18 || bots[0].architect?.signalAgreement !== 0.76) {
     throw new Error("bots payload missing architect diagnostics");
@@ -182,6 +194,9 @@ function runSystemServerTests() {
   }
   if (bots[0].architect?.challenger?.regime !== "range" || bots[0].architect?.hysteresisActive !== true) {
     throw new Error("bots payload missing publisher hysteresis state");
+  }
+  if (bots[0].syntheticArchitect !== false || bots[0].architectFallback !== null) {
+    throw new Error("bots payload should not mark published architect as synthetic");
   }
   if (bots[0].syncStatus !== "synced") {
     throw new Error(`unexpected bot sync status: ${bots[0].syncStatus}`);
@@ -206,6 +221,146 @@ function runSystemServerTests() {
   }
   if (!Array.isArray(trades) || trades.length !== 1 || trades[0].entryReason[0] !== "ema_cross_confirmed") {
     throw new Error("trades payload invalid");
+  }
+
+  const observedOnlyStore = new StateStore();
+  observedOnlyStore.registerBot({
+    allowedStrategies: ["emaCross", "rsiReversion"],
+    id: "bot_observed",
+    symbol: "ETH/USDT",
+    strategy: "emaCross",
+    enabled: true,
+    riskProfile: "medium"
+  });
+  observedOnlyStore.setContextSnapshot("ETH/USDT", {
+    dataMode: "live",
+    features: {
+      breakoutDirection: "none",
+      breakoutInstability: 0.04,
+      breakoutQuality: 0.18,
+      chopiness: 0.31,
+      dataQuality: 0.88,
+      directionalEfficiency: 0.58,
+      emaBias: 0.21,
+      emaSeparation: 0.51,
+      featureConflict: 0.09,
+      maturity: 0.74,
+      netMoveRatio: 0.01,
+      reversionStretch: 0.16,
+      rsiIntensity: 0.2,
+      slopeConsistency: 0.6,
+      volatilityRisk: 0.19
+    },
+    observedAt: now,
+    sampleSize: 100,
+    structureState: "trending",
+    summary: "Observed architect context.",
+    symbol: "ETH/USDT",
+    trendBias: "bullish",
+    volatilityState: "normal",
+    warmupComplete: true,
+    windowSpanMs: 180_000,
+    windowStartedAt: now - 180_000
+  });
+  observedOnlyStore.setArchitectObservedAssessment("ETH/USDT", {
+    ...createPublishedArchitect(now),
+    symbol: "ETH/USDT"
+  });
+  observedOnlyStore.setArchitectPublisherState("ETH/USDT", {
+    challengerCount: 0,
+    challengerRegime: null,
+    challengerRequired: 2,
+    hysteresisActive: false,
+    lastObservedAt: now,
+    lastPublishedAt: null,
+    lastPublishedRegime: null,
+    nextPublishAt: now + 30_000,
+    publishIntervalMs: 30_000,
+    ready: false,
+    symbol: "ETH/USDT",
+    warmupStartedAt: now - 15_000
+  });
+  const observedOnlyBots = new SystemServer({
+    executionMode: "paper",
+    feedMode: "mock",
+    logger: { info() {} },
+    port: 3102,
+    startedAt: now - 1000,
+    store: observedOnlyStore
+  }).buildBotsPayload();
+  if (observedOnlyBots[0].architect !== null || observedOnlyBots[0].architectPublished !== null) {
+    throw new Error("observed-only payload should not pretend published architect authority exists");
+  }
+  if (observedOnlyBots[0].architectObserved?.source !== "observed" || observedOnlyBots[0].syntheticArchitect !== false) {
+    throw new Error("observed-only payload did not preserve non-authoritative observed state");
+  }
+
+  const syntheticStore = new StateStore();
+  syntheticStore.registerBot({
+    allowedStrategies: ["emaCross", "rsiReversion"],
+    id: "bot_synthetic",
+    symbol: "SOL/USDT",
+    strategy: "emaCross",
+    enabled: true,
+    riskProfile: "medium"
+  });
+  syntheticStore.setContextSnapshot("SOL/USDT", {
+    dataMode: "live",
+    features: {
+      breakoutDirection: "none",
+      breakoutInstability: 0.02,
+      breakoutQuality: 0.08,
+      chopiness: 0.4,
+      dataQuality: 0.7,
+      directionalEfficiency: 0.22,
+      emaBias: 0.05,
+      emaSeparation: 0.1,
+      featureConflict: 0.12,
+      maturity: 0.14,
+      netMoveRatio: 0.003,
+      reversionStretch: 0.1,
+      rsiIntensity: 0.12,
+      slopeConsistency: 0.2,
+      volatilityRisk: 0.28
+    },
+    observedAt: now,
+    sampleSize: 20,
+    structureState: "choppy",
+    summary: "Warm-up context.",
+    symbol: "SOL/USDT",
+    trendBias: "neutral",
+    volatilityState: "normal",
+    warmupComplete: false,
+    windowSpanMs: 12_000,
+    windowStartedAt: now - 12_000
+  });
+  syntheticStore.setArchitectPublisherState("SOL/USDT", {
+    challengerCount: 0,
+    challengerRegime: null,
+    challengerRequired: 2,
+    hysteresisActive: false,
+    lastObservedAt: now,
+    lastPublishedAt: null,
+    lastPublishedRegime: null,
+    nextPublishAt: now + 18_000,
+    publishIntervalMs: 30_000,
+    ready: false,
+    symbol: "SOL/USDT",
+    warmupStartedAt: now - 12_000
+  });
+  const syntheticBots = new SystemServer({
+    executionMode: "paper",
+    feedMode: "mock",
+    logger: { info() {} },
+    port: 3103,
+    startedAt: now - 1000,
+    store: syntheticStore
+  }).buildBotsPayload();
+  if (syntheticBots[0].architect !== null || syntheticBots[0].architectObserved !== null) {
+    throw new Error("synthetic warm-up payload should not expose fake architect authority");
+  }
+  if (syntheticBots[0].syntheticArchitect !== true || syntheticBots[0].architectFallback?.source !== "synthetic") {
+    throw new Error("synthetic warm-up payload missing explicit synthetic architect marker");
   }
 }
 

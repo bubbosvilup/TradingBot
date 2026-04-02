@@ -17,6 +17,8 @@ class RiskManager {
     positionPct: number;
     reentryCooldownMs: number;
   }>;
+  minTradeNotionalUsdt: number;
+  minTradeQuantity: number;
 
   constructor() {
     this.profiles = {
@@ -24,10 +26,19 @@ class RiskManager {
       low: { cooldownMs: 120_000, emergencyStopPct: 0.008, entryDebounceTicks: 3, exitConfirmationTicks: 3, maxDrawdownPct: 4, maxLossStreak: 3, minHoldMs: 20_000, positionPct: 0.1, reentryCooldownMs: 20_000 },
       medium: { cooldownMs: 75_000, emergencyStopPct: 0.01, entryDebounceTicks: 2, exitConfirmationTicks: 2, maxDrawdownPct: 6, maxLossStreak: 4, minHoldMs: 15_000, positionPct: 0.16, reentryCooldownMs: 15_000 }
     };
+    this.minTradeNotionalUsdt = 25;
+    this.minTradeQuantity = 1e-6;
   }
 
   getProfile(riskProfile: RiskProfile) {
     return this.profiles[riskProfile];
+  }
+
+  getTradeConstraints() {
+    return {
+      minNotionalUsdt: this.minTradeNotionalUsdt,
+      minQuantity: this.minTradeQuantity
+    };
   }
 
   canOpenTrade(params: {

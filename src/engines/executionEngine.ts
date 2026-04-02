@@ -8,17 +8,36 @@ class ExecutionEngine {
   logger: any;
   feeRate: number;
   executionMode: string;
+  minTradeNotionalUsdt: number;
+  minTradeQuantity: number;
 
-  constructor(deps: { store: any; userStream: any; logger: any; feeRate?: number; executionMode?: string }) {
+  constructor(deps: {
+    store: any;
+    userStream: any;
+    logger: any;
+    feeRate?: number;
+    executionMode?: string;
+    minTradeNotionalUsdt?: number;
+    minTradeQuantity?: number;
+  }) {
     this.store = deps.store;
     this.userStream = deps.userStream;
     this.logger = deps.logger;
     this.feeRate = Math.max(deps.feeRate || 0.001, 0);
     this.executionMode = deps.executionMode || "paper";
+    this.minTradeNotionalUsdt = Math.max(Number(deps.minTradeNotionalUsdt) || 25, 0);
+    this.minTradeQuantity = Math.max(Number(deps.minTradeQuantity) || 1e-6, 0);
   }
 
   buildOrderId(botId: string) {
     return `${botId}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  }
+
+  getTradeConstraints() {
+    return {
+      minNotionalUsdt: this.minTradeNotionalUsdt,
+      minQuantity: this.minTradeQuantity
+    };
   }
 
   openLong(params: {
@@ -29,12 +48,37 @@ class ExecutionEngine {
     quantity: number;
     confidence: number;
     reason: string[];
-  }): PositionRecord {
+  }): PositionRecord | null {
+    const quantity = Math.max(Number(params.quantity) || 0, 0);
+    const price = Math.max(Number(params.price) || 0, 0);
+    const notionalUsdt = price * quantity;
+    const rejectReason = quantity < this.minTradeQuantity
+      ? "quantity_below_minimum"
+      : notionalUsdt < this.minTradeNotionalUsdt
+        ? "notional_below_minimum"
+        : null;
+
+    if (rejectReason) {
+      this.logger.info("position_open_rejected", {
+        botId: params.botId,
+        executionMode: this.executionMode,
+        minNotionalUsdt: Number(this.minTradeNotionalUsdt.toFixed(4)),
+        minQuantity: Number(this.minTradeQuantity.toFixed(8)),
+        notionalUsdt: Number(notionalUsdt.toFixed(4)),
+        price: price.toFixed(4),
+        quantity: quantity.toFixed(8),
+        reason: rejectReason,
+        strategy: params.strategyId,
+        symbol: params.symbol
+      });
+      return null;
+    }
+
     const order: OrderRecord = {
       botId: params.botId,
       id: this.buildOrderId(params.botId),
-      price: params.price,
-      quantity: params.quantity,
+      price,
+      quantity,
       reason: params.reason,
       side: "buy",
       strategyId: params.strategyId,
@@ -45,11 +89,11 @@ class ExecutionEngine {
     const position: PositionRecord = {
       botId: params.botId,
       confidence: params.confidence,
-      entryPrice: params.price,
+      entryPrice: price,
       id: order.id,
       notes: params.reason,
       openedAt: order.timestamp,
-      quantity: params.quantity,
+      quantity,
       strategyId: params.strategyId,
       symbol: params.symbol
     };
@@ -58,8 +102,8 @@ class ExecutionEngine {
     this.logger.info("position_opened", {
       botId: params.botId,
       executionMode: this.executionMode,
-      price: params.price.toFixed(4),
-      quantity: params.quantity.toFixed(6),
+      price: price.toFixed(4),
+      quantity: quantity.toFixed(6),
       strategy: params.strategyId,
       symbol: params.symbol
     });

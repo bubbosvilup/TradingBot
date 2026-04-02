@@ -412,26 +412,60 @@ function formatArchitectTitle(architect) {
   return `${architect.summary} Strength ${formatNumber(architect.decisionStrength, 2)} | Agreement ${formatUnitPercent(architect.signalAgreement)}.\n${formatArchitectScores(architect)}\n${formatArchitectFeatureSummary(architect)}${hysteresis}${challenger}${reasons}`;
 }
 
+function getPublishedArchitect(bot) {
+  return bot?.architectPublished || bot?.architect || null;
+}
+
+function getObservedArchitect(bot) {
+  return bot?.architectObserved || null;
+}
+
+function getFallbackArchitect(bot) {
+  return bot?.syntheticArchitect ? bot?.architectFallback || null : null;
+}
+
+function formatPublishedArchitectNote(architect) {
+  if (!architect) return "No published architect state yet.";
+  if (!architect.ready) {
+    return `${architect.summary || "Published architect warming up."} Publish in ${formatDuration(architect.warmupRemainingMs || 0)}.`;
+  }
+  return `${architect.summary} Published ${formatRelative(architect.updatedAt)}. ${formatArchitectScores(architect)}. ${formatArchitectFeatureSummary(architect)}.`;
+}
+
+function formatObservedArchitectNote(architect) {
+  if (!architect) return null;
+  return `Observed candidate: ${humanizeToken(architect.marketRegime)} / ${humanizeToken(architect.recommendedFamily)}. ${formatArchitectScores(architect)}.`;
+}
+
+function formatFallbackArchitectNote(architect) {
+  if (!architect) return null;
+  return `Warm-up / synthetic: ${architect.summary || "Architect warming up."} Ready in ${formatDuration(architect.warmupRemainingMs || 0)}.`;
+}
+
 function renderFocusMeta() {
   const focusBot = state.bots.find((bot) => bot.symbol === state.focusSymbol) || null;
   const focusPosition = state.positions.find((position) => position.symbol === state.focusSymbol) || null;
   const latency = focusBot?.latency || state.system?.latency || null;
-  const architect = focusBot?.architect || null;
+  const architect = getPublishedArchitect(focusBot);
+  const observedArchitect = getObservedArchitect(focusBot);
+  const fallbackArchitect = getFallbackArchitect(focusBot);
   const syncStatus = focusBot?.syncStatus || "pending";
   const architectReady = Boolean(architect?.ready);
-  const architectNote = architect
-    ? architectReady
-      ? `${architect.summary} Published ${formatRelative(architect.updatedAt)}. ${formatArchitectScores(architect)}. ${formatArchitectFeatureSummary(architect)}.`
-      : `${architect.summary || "Architect warming up."} Ready in ${formatDuration(architect.warmupRemainingMs || 0)}.`
-    : "Architect context not ready yet for this symbol.";
+  const architectNote = [
+    formatPublishedArchitectNote(architect),
+    formatObservedArchitectNote(observedArchitect),
+    formatFallbackArchitectNote(fallbackArchitect)
+  ].filter(Boolean).join(" ");
 
   setText(refs.focusTitle, state.focusSymbol || "No symbol selected");
   setText(refs.focusArchitectNote, architectNote);
   refs.focusMeta.innerHTML = [
     { label: "Strategy", value: focusBot?.activeStrategyId || "n/a" },
     { label: "Sync", value: humanizeToken(syncStatus) },
-    { label: "Regime", value: architect ? humanizeToken(architect.marketRegime) : "pending" },
+    { label: "Regime", value: architect ? humanizeToken(architect.marketRegime) : "No published state yet" },
     { label: "Family", value: architect ? humanizeToken(architect.recommendedFamily) : "n/a" },
+    { label: "Observed", value: observedArchitect ? `${humanizeToken(observedArchitect.marketRegime)} / ${humanizeToken(observedArchitect.recommendedFamily)}` : "n/a" },
+    { label: "Warm-up", value: fallbackArchitect ? `Synthetic | ${formatDuration(fallbackArchitect.warmupRemainingMs || 0)}` : "n/a" },
     { label: "Price", value: formatPrice(focusBot?.price ?? state.chartPayload?.lastPrice) },
     { label: "Position", value: focusPosition ? `${formatNumber(focusPosition.quantity, 6)} @ ${formatPrice(focusPosition.entryPrice)}` : "Flat" },
     { label: "Cooldown", value: focusBot?.cooldownRemainingMs > 0 ? formatDuration(focusBot.cooldownRemainingMs) : "Ready" },
@@ -455,20 +489,27 @@ function renderBots() {
   }
 
   refs.botsBody.innerHTML = state.bots.map((bot) => {
-    const architect = bot.architect || null;
+    const architect = getPublishedArchitect(bot);
+    const observedArchitect = getObservedArchitect(bot);
+    const fallbackArchitect = getFallbackArchitect(bot);
     const activeFamily = getStrategyFamily(bot.activeStrategyId);
     const architectFamily = architect?.recommendedFamily || null;
     const strategyNote = architect
       ? architectFamily && architectFamily !== "no_trade" && architectFamily !== activeFamily
         ? `Architect prefers ${humanizeToken(architectFamily)}`
         : humanizeToken(activeFamily)
-      : "Architect pending";
+      : "No published state yet";
     const architectReady = Boolean(architect?.ready);
     const architectNote = !architect
-      ? "Waiting for enough market context"
+      ? "No published state yet"
       : !architectReady
-        ? `Warm-up ${formatDuration(architect.warmupRemainingMs || 0)}`
-        : `${humanizeToken(architect.trendBias)} | ${formatArchitectScores(architect)} | DQ ${formatNumber(architect.dataQuality, 2)}`;
+        ? `Published authority warming | ${formatDuration(architect.warmupRemainingMs || 0)}`
+        : `Published authority | ${humanizeToken(architect.trendBias)} | ${formatArchitectScores(architect)} | DQ ${formatNumber(architect.dataQuality, 2)}`;
+    const architectSecondaryNote = observedArchitect
+      ? `Observed candidate | ${humanizeToken(observedArchitect.marketRegime)} | ${humanizeToken(observedArchitect.recommendedFamily)}`
+      : fallbackArchitect
+        ? `Warm-up / synthetic | ${formatDuration(fallbackArchitect.warmupRemainingMs || 0)}`
+        : null;
     const positionSummary = bot.openPosition
       ? `${formatPrice(bot.openPosition.entryPrice)} / ${formatSigned(bot.openPosition.unrealizedPnl)}`
       : "Flat";
@@ -488,6 +529,7 @@ function renderBots() {
               ${escapeHtml(formatArchitectBadge(architect))}
             </span>
             <span class="compact-note">${escapeHtml(architectNote)}</span>
+            ${architectSecondaryNote ? `<span class="compact-note">${escapeHtml(architectSecondaryNote)}</span>` : ""}
           </div>
         </td>
         <td><span class="${badgeClass(bot.status)}">${escapeHtml(bot.status)}</span></td>

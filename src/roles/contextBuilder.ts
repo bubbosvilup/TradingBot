@@ -1,6 +1,6 @@
 // Module responsibility: prepare interpretable rolling market features for the architect layer.
 
-import type { TrendBias, VolatilityState, StructureState, ArchitectDataMode } from "../types/architect.ts";
+import type { TrendBias, VolatilityState, StructureState, ArchitectDataMode, MarketRegime } from "../types/architect.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 import type { MarketTick } from "../types/market.ts";
 
@@ -16,13 +16,20 @@ class ContextBuilder {
   createSnapshot(params: {
     symbol: string;
     ticks: MarketTick[];
+    effectiveTicks?: MarketTick[];
     dataMode: ArchitectDataMode;
     observedAt: number;
     warmupMs: number;
     maxWindowMs: number;
+    lastPublishedRegimeSwitchAt?: number | null;
+    lastPublishedRegimeSwitchFrom?: MarketRegime | null;
+    lastPublishedRegimeSwitchTo?: MarketRegime | null;
   }): ContextSnapshot {
     const ticks = Array.isArray(params.ticks)
       ? params.ticks.filter((tick) => Number.isFinite(Number(tick?.price)) && Number.isFinite(Number(tick?.timestamp)))
+      : [];
+    const requestedEffectiveTicks = Array.isArray(params.effectiveTicks)
+      ? params.effectiveTicks.filter((tick) => Number.isFinite(Number(tick?.price)) && Number.isFinite(Number(tick?.timestamp)))
       : [];
     const observedAt = params.observedAt || Date.now();
 
@@ -30,14 +37,31 @@ class ContextBuilder {
       return this.createEmptySnapshot(params.symbol, params.dataMode, observedAt);
     }
 
-    const prices = ticks.map((tick) => Number(tick.price));
-    const timestamps = ticks.map((tick) => Number(tick.timestamp));
+    const rollingPrices = ticks.map((tick) => Number(tick.price));
+    const rollingTimestamps = ticks.map((tick) => Number(tick.timestamp));
+    const rollingLatestTimestamp = rollingTimestamps[rollingTimestamps.length - 1];
+    const rollingOldestTimestamp = rollingTimestamps[0];
+    const windowSpanMs = Math.max(0, rollingLatestTimestamp - rollingOldestTimestamp);
+    const rollingMaturity = clamp(windowSpanMs / params.maxWindowMs, 0, 1);
+    const warmupComplete = windowSpanMs >= params.warmupMs;
+    const hasPublishedRegimeSwitch = params.lastPublishedRegimeSwitchAt !== null
+      && params.lastPublishedRegimeSwitchAt !== undefined
+      && Number.isFinite(Number(params.lastPublishedRegimeSwitchAt));
+    const usePostSwitchSegment = hasPublishedRegimeSwitch
+      && requestedEffectiveTicks.length > 0
+      && requestedEffectiveTicks.length < ticks.length;
+    const effectiveTicks = usePostSwitchSegment ? requestedEffectiveTicks : ticks;
+    const prices = effectiveTicks.map((tick) => Number(tick.price));
+    const timestamps = effectiveTicks.map((tick) => Number(tick.timestamp));
     const latestPrice = prices[prices.length - 1];
     const latestTimestamp = timestamps[timestamps.length - 1];
     const oldestTimestamp = timestamps[0];
-    const windowSpanMs = Math.max(0, latestTimestamp - oldestTimestamp);
-    const maturity = clamp(windowSpanMs / params.maxWindowMs, 0, 1);
-    const warmupComplete = windowSpanMs >= params.warmupMs;
+    const effectiveWindowSpanMs = Math.max(0, latestTimestamp - oldestTimestamp);
+    const maturity = clamp(effectiveWindowSpanMs / params.maxWindowMs, 0, 1);
+    const effectiveWarmupComplete = effectiveWindowSpanMs >= params.warmupMs;
+    const postSwitchCoveragePct = usePostSwitchSegment && windowSpanMs > 0
+      ? clamp(effectiveWindowSpanMs / windowSpanMs, 0, 1)
+      : null;
 
     const diffs = prices.slice(1).map((value, index) => value - prices[index]);
     const absoluteDiffs = diffs.map((value) => Math.abs(value));
@@ -177,6 +201,10 @@ class ContextBuilder {
 
     return {
       dataMode: params.dataMode,
+      effectiveSampleSize: prices.length,
+      effectiveWarmupComplete,
+      effectiveWindowSpanMs,
+      effectiveWindowStartedAt: oldestTimestamp,
       features: {
         breakoutDirection,
         breakoutInstability,
@@ -195,21 +223,34 @@ class ContextBuilder {
         volatilityRisk
       },
       observedAt,
+      rollingSampleSize: ticks.length,
       sampleSize: prices.length,
       structureState,
-      summary: `${params.dataMode === "mock" ? "Mock" : "Market"} window ${Math.round(windowSpanMs / 1000)}s | maturity ${Math.round(maturity * 100)}% | quality ${Math.round(dataQuality * 100)}%.`,
+      summary: usePostSwitchSegment
+        ? `${params.dataMode === "mock" ? "Mock" : "Market"} window ${Math.round(windowSpanMs / 1000)}s | post-switch ${Math.round(effectiveWindowSpanMs / 1000)}s | maturity ${Math.round(maturity * 100)}% (rolling ${Math.round(rollingMaturity * 100)}%) | quality ${Math.round(dataQuality * 100)}%.`
+        : `${params.dataMode === "mock" ? "Mock" : "Market"} window ${Math.round(windowSpanMs / 1000)}s | maturity ${Math.round(maturity * 100)}% | quality ${Math.round(dataQuality * 100)}%.`,
+      lastPublishedRegimeSwitchAt: params.lastPublishedRegimeSwitchAt ?? null,
+      lastPublishedRegimeSwitchFrom: params.lastPublishedRegimeSwitchFrom ?? null,
+      lastPublishedRegimeSwitchTo: params.lastPublishedRegimeSwitchTo ?? null,
+      postSwitchCoveragePct,
+      rollingMaturity,
       symbol: params.symbol,
       trendBias,
       volatilityState,
       warmupComplete,
+      windowMode: usePostSwitchSegment ? "post_switch_segment" : "rolling_full",
       windowSpanMs,
-      windowStartedAt: oldestTimestamp
+      windowStartedAt: rollingOldestTimestamp
     };
   }
 
   createEmptySnapshot(symbol: string, dataMode: ArchitectDataMode, observedAt: number): ContextSnapshot {
     return {
       dataMode,
+      effectiveSampleSize: 0,
+      effectiveWarmupComplete: false,
+      effectiveWindowSpanMs: 0,
+      effectiveWindowStartedAt: null,
       features: {
         breakoutDirection: "none",
         breakoutInstability: 0,
@@ -227,7 +268,13 @@ class ContextBuilder {
         slopeConsistency: 0,
         volatilityRisk: 0
       },
+      lastPublishedRegimeSwitchAt: null,
+      lastPublishedRegimeSwitchFrom: null,
+      lastPublishedRegimeSwitchTo: null,
       observedAt,
+      postSwitchCoveragePct: null,
+      rollingSampleSize: 0,
+      rollingMaturity: 0,
       sampleSize: 0,
       structureState: "choppy",
       summary: "No market history available yet.",
@@ -235,6 +282,7 @@ class ContextBuilder {
       trendBias: "neutral",
       volatilityState: "normal",
       warmupComplete: false,
+      windowMode: "rolling_full",
       windowSpanMs: 0,
       windowStartedAt: null
     };

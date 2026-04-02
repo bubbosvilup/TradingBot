@@ -110,6 +110,26 @@ function runStrategySwitcherTests() {
   if (blockedSameFamily !== null) {
     throw new Error("same-family architect decision should not trigger switching");
   }
+
+  const blockedUnsupportedFamilyTarget = switcher.evaluate({
+    architect: createArchitect({
+      marketRegime: "range",
+      recommendedFamily: "mean_reversion"
+    }),
+    availableStrategies: ["breakout", "emaCross"],
+    botConfig: {
+      id: "bot_a",
+      symbol: "BTC/USDT"
+    },
+    now: Date.now(),
+    positionOpen: false,
+    state: {
+      activeStrategyId: "emaCross"
+    }
+  });
+  if (blockedUnsupportedFamilyTarget !== null) {
+    throw new Error("non-routable breakout strategy should not be treated as a family target");
+  }
 }
 
 module.exports = {

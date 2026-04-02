@@ -8,7 +8,7 @@ function createStrategy(config: { lookback?: number; breakoutPct?: number; minCo
       const lookback = Math.max(config.lookback || 15, 5);
       const prices = context.prices.slice(-lookback);
       const breakoutPct = config.breakoutPct || 0.004;
-      const reasons = [`regime=${context.marketRegime}`, `lookback=${lookback}`];
+      const reasons = [`localRegimeHint=${context.localRegimeHint}`, `lookback=${lookback}`];
 
       if (prices.length < lookback) {
         return { action: "hold", confidence: 0.12, reason: [...reasons, "insufficient_history"] };
@@ -42,4 +42,3 @@ function createStrategy(config: { lookback?: number; breakoutPct?: number; minCo
 module.exports = {
   createStrategy
 };
-

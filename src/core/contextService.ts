@@ -13,6 +13,7 @@ class ContextService {
   maxWindowMs: number;
   subscriptions: Array<() => void>;
   readyLoggedBySymbol: Set<string>;
+  lastWindowModeBySymbol: Map<string, string>;
 
   constructor(deps: {
     store: any;
@@ -30,6 +31,7 @@ class ContextService {
     this.maxWindowMs = Math.max(deps.maxWindowMs || 300_000, this.warmupMs);
     this.subscriptions = [];
     this.readyLoggedBySymbol = new Set();
+    this.lastWindowModeBySymbol = new Map();
   }
 
   start(symbols: string[]) {
@@ -59,8 +61,22 @@ class ContextService {
     const targetWindowMs = Math.min(this.maxWindowMs, Math.max(currentSpanMs, this.warmupMs));
     const windowStart = latestTimestamp - targetWindowMs;
     const ticks = history.filter((tick: MarketTick) => Number(tick.timestamp) >= windowStart);
+    const publisher = this.store.getArchitectPublisherState(symbol);
+    const hasPublishedRegimeSwitch = publisher?.lastRegimeSwitchAt !== null
+      && publisher?.lastRegimeSwitchAt !== undefined
+      && Number.isFinite(Number(publisher.lastRegimeSwitchAt));
+    const effectiveWindowStart = hasPublishedRegimeSwitch
+      ? Math.max(windowStart, Number(publisher?.lastRegimeSwitchAt))
+      : null;
+    const effectiveTicks = effectiveWindowStart === null
+      ? ticks
+      : ticks.filter((tick: MarketTick) => Number(tick.timestamp) >= effectiveWindowStart);
     const snapshot = this.contextBuilder.createSnapshot({
       dataMode: this.resolveDataMode(ticks),
+      effectiveTicks,
+      lastPublishedRegimeSwitchAt: publisher?.lastRegimeSwitchAt ?? null,
+      lastPublishedRegimeSwitchFrom: publisher?.lastRegimeSwitchFrom ?? null,
+      lastPublishedRegimeSwitchTo: publisher?.lastRegimeSwitchTo ?? null,
       maxWindowMs: this.maxWindowMs,
       observedAt,
       symbol,
@@ -69,12 +85,32 @@ class ContextService {
     });
     this.store.setContextSnapshot(symbol, snapshot);
 
+    const previousWindowMode = this.lastWindowModeBySymbol.get(symbol);
+    if (snapshot.windowMode !== previousWindowMode) {
+      this.lastWindowModeBySymbol.set(symbol, snapshot.windowMode);
+      if (snapshot.windowMode === "post_switch_segment") {
+        this.logger.info("context_window_segmented", {
+          effectiveMaturity: Number(snapshot.features.maturity.toFixed(4)),
+          effectiveWindowSec: Math.round(snapshot.effectiveWindowSpanMs / 1000),
+          lastPublishedRegimeSwitchAt: snapshot.lastPublishedRegimeSwitchAt,
+          lastPublishedRegimeSwitchFrom: snapshot.lastPublishedRegimeSwitchFrom,
+          lastPublishedRegimeSwitchTo: snapshot.lastPublishedRegimeSwitchTo,
+          postSwitchCoveragePct: snapshot.postSwitchCoveragePct === null ? null : Number(snapshot.postSwitchCoveragePct.toFixed(4)),
+          rollingMaturity: Number(snapshot.rollingMaturity.toFixed(4)),
+          rollingWindowSec: Math.round(snapshot.windowSpanMs / 1000),
+          symbol
+        });
+      }
+    }
+
     if (snapshot.warmupComplete && !this.readyLoggedBySymbol.has(symbol)) {
       this.readyLoggedBySymbol.add(symbol);
       this.logger.info("context_ready", {
         dataMode: snapshot.dataMode,
+        effectiveWindowSec: Math.round(snapshot.effectiveWindowSpanMs / 1000),
         quality: snapshot.features.dataQuality.toFixed(2),
         symbol,
+        windowMode: snapshot.windowMode,
         windowSec: Math.round(snapshot.windowSpanMs / 1000)
       });
     }

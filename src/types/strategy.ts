@@ -23,7 +23,7 @@ export interface MarketContext {
   latestPrice: number;
   prices: number[];
   indicators: IndicatorSnapshot;
-  marketRegime: string;
+  localRegimeHint: string;
   hasOpenPosition: boolean;
   unrealizedPnl: number;
   performance: {
@@ -41,4 +41,3 @@ export interface Strategy {
   id: string;
   evaluate(context: MarketContext): StrategyDecision;
 }
-

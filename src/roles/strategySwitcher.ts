@@ -20,7 +20,7 @@ class StrategySwitcher {
   }) {
     void params.botConfig;
 
-    const allowedStrategies = params.availableStrategies.filter(Boolean);
+    const allowedStrategies = this.getRoutableStrategies(params.availableStrategies);
     if (allowedStrategies.length <= 1) return null;
     if (params.positionOpen) return null;
     if (!params.architect || !params.architect.sufficientData) return null;
@@ -48,6 +48,10 @@ class StrategySwitcher {
     if (strategyId === "emaCross") return "trend_following";
     if (strategyId === "rsiReversion") return "mean_reversion";
     return "other";
+  }
+
+  getRoutableStrategies(strategyIds: string[]) {
+    return (strategyIds || []).filter((strategyId) => this.getStrategyFamily(strategyId) !== "other");
   }
 
   pickStrategyForFamily(family: RecommendedFamily, allowedStrategies: string[]) {

@@ -48,6 +48,9 @@ export interface ArchitectPublisherState {
   warmupStartedAt: number | null;
   lastObservedAt: number | null;
   lastPublishedAt: number | null;
+  lastRegimeSwitchAt: number | null;
+  lastRegimeSwitchFrom: MarketRegime | null;
+  lastRegimeSwitchTo: MarketRegime | null;
   nextPublishAt: number | null;
   publishIntervalMs: number;
   ready: boolean;

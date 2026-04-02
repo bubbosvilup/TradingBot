@@ -41,8 +41,13 @@ function createAssessment(symbol, marketRegime, recommendedFamily, regimeScores,
 }
 
 function createContext(symbol, observedAt, warmupComplete, label) {
+  const windowSpanMs = warmupComplete ? 60_000 : 10_000;
   return {
     dataMode: "live",
+    effectiveSampleSize: warmupComplete ? 120 : 10,
+    effectiveWarmupComplete: warmupComplete,
+    effectiveWindowSpanMs: windowSpanMs,
+    effectiveWindowStartedAt: observedAt - windowSpanMs,
     features: {
       breakoutDirection: "none",
       breakoutInstability: 0.1,
@@ -60,7 +65,13 @@ function createContext(symbol, observedAt, warmupComplete, label) {
       slopeConsistency: 0.59,
       volatilityRisk: 0.22
     },
+    lastPublishedRegimeSwitchAt: null,
+    lastPublishedRegimeSwitchFrom: null,
+    lastPublishedRegimeSwitchTo: null,
     observedAt,
+    postSwitchCoveragePct: null,
+    rollingMaturity: warmupComplete ? 0.8 : 0.06,
+    rollingSampleSize: warmupComplete ? 120 : 10,
     sampleSize: warmupComplete ? 120 : 10,
     stage: label,
     structureState: "trending",
@@ -69,8 +80,9 @@ function createContext(symbol, observedAt, warmupComplete, label) {
     trendBias: "bullish",
     volatilityState: "normal",
     warmupComplete,
-    windowSpanMs: warmupComplete ? 60_000 : 10_000,
-    windowStartedAt: observedAt - (warmupComplete ? 60_000 : 10_000)
+    windowMode: "rolling_full",
+    windowSpanMs,
+    windowStartedAt: observedAt - windowSpanMs
   };
 }
 
@@ -132,11 +144,14 @@ function runArchitectServiceTests() {
   if (!initialPublish) {
     throw new Error("missing architect_published audit log");
   }
-  if (initialPublish.metadata.trendScore !== 0.67 || initialPublish.metadata.rangeScore !== 0.24 || initialPublish.metadata.volatileScore !== 0.15) {
+  if (initialPublish.metadata.candidateTrendScore !== 0.67 || initialPublish.metadata.publishedRangeScore !== 0.24 || initialPublish.metadata.publishedVolatileScore !== 0.15) {
     throw new Error("architect publish log missing regime score diagnostics");
   }
-  if (initialPublish.metadata.dataQuality !== 0.92 || initialPublish.metadata.directionalEfficiency !== 0.62 || initialPublish.metadata.slopeConsistency !== 0.59) {
+  if (initialPublish.metadata.contextDataQuality !== 0.92 || initialPublish.metadata.contextDirectionalEfficiency !== 0.62 || initialPublish.metadata.contextSlopeConsistency !== 0.59) {
     throw new Error("architect publish log missing context feature diagnostics");
+  }
+  if (initialPublish.metadata.contextWindowMode !== "rolling_full" || initialPublish.metadata.publisherLastRegimeSwitchAt !== null) {
+    throw new Error("initial architect publish diagnostics should show the full rolling context with no prior regime switch");
   }
   if (initialPublish.metadata.trendBias !== "bullish" || initialPublish.metadata.volatilityState !== "normal" || initialPublish.metadata.structureState !== "trending") {
     throw new Error("architect publish log missing state labels");
@@ -156,14 +171,17 @@ function runArchitectServiceTests() {
   if (!published || published.marketRegime !== "trend") {
     throw new Error("tiny regime flip should have been blocked by hysteresis");
   }
-  if (published.updatedAt !== 60_000) {
-    throw new Error(`hold cycle did not refresh published updatedAt: ${published.updatedAt}`);
+  if (published.updatedAt !== 30_000) {
+    throw new Error(`held incumbent payload should retain its original updatedAt: ${published.updatedAt}`);
   }
   if (!publisherState || publisherState.hysteresisActive !== true || publisherState.challengerRegime !== "range" || publisherState.challengerCount !== 1) {
     throw new Error("challenger state not tracked correctly after hysteresis block");
   }
   if (publisherState.lastPublishedAt !== 60_000 || publisherState.lastPublishedRegime !== "trend") {
     throw new Error("publisher freshness metadata did not advance on held incumbent cycle");
+  }
+  if (publisherState.lastRegimeSwitchAt !== null || publisherState.lastRegimeSwitchFrom !== null || publisherState.lastRegimeSwitchTo !== null) {
+    throw new Error("publisher should not record a regime switch until the challenger actually becomes published");
   }
   const blockedAudit = logs.find((entry) => entry.event === "architect_switch_blocked");
   if (!blockedAudit || blockedAudit.metadata.currentRegime !== "trend" || blockedAudit.metadata.candidateRegime !== "range") {
@@ -173,11 +191,17 @@ function runArchitectServiceTests() {
     throw new Error(`unexpected blocked-switch reason: ${blockedAudit.metadata.reason}`);
   }
   const heldAudit = logs.find((entry) => entry.event === "architect_publish_held");
-  if (!heldAudit || heldAudit.metadata.marketRegime !== "trend" || heldAudit.metadata.candidateRegime !== "range") {
+  if (!heldAudit || heldAudit.metadata.publishedMarketRegime !== "trend" || heldAudit.metadata.candidateMarketRegime !== "range") {
     throw new Error("missing architect held-cycle diagnostics");
   }
-  if (heldAudit.metadata.publishOutcome !== "held" || heldAudit.metadata.reversionStretch !== 0.2 || heldAudit.metadata.breakoutInstability !== 0.1) {
+  if (heldAudit.metadata.publishOutcome !== "held" || heldAudit.metadata.contextReversionStretch !== 0.2 || heldAudit.metadata.contextBreakoutInstability !== 0.1) {
     throw new Error("held-cycle diagnostic fields are incomplete");
+  }
+  if (heldAudit.metadata.publishedPayloadChanged !== false || heldAudit.metadata.publisherMetadataOnly !== true) {
+    throw new Error("held-cycle log did not distinguish payload stability from publisher metadata refresh");
+  }
+  if (heldAudit.metadata.publishedPayloadUpdatedAt !== 30_000 || heldAudit.metadata.candidateObservedAt !== 60_000 || heldAudit.metadata.publisherLastPublishedAt !== 60_000) {
+    throw new Error("held-cycle log timestamp semantics are incorrect");
   }
 
   store.setContextSnapshot(symbol, createContext(symbol, 90_000, true, "range-small"));
@@ -185,6 +209,14 @@ function runArchitectServiceTests() {
   published = store.getArchitectPublishedAssessment(symbol);
   if (!published || published.marketRegime !== "range" || published.recommendedFamily !== "mean_reversion") {
     throw new Error("persistent challenger did not eventually become the published regime");
+  }
+  const switchedPublisherState = store.getArchitectPublisherState(symbol);
+  if (!switchedPublisherState || switchedPublisherState.lastRegimeSwitchAt !== 90_000 || switchedPublisherState.lastRegimeSwitchFrom !== "trend" || switchedPublisherState.lastRegimeSwitchTo !== "range") {
+    throw new Error("published regime switch metadata was not recorded when the incumbent actually changed");
+  }
+  const switchedAudit = logs.find((entry) => entry.event === "architect_changed");
+  if (!switchedAudit || switchedAudit.metadata.publisherLastRegimeSwitchAt !== 90_000 || switchedAudit.metadata.publisherLastRegimeSwitchFrom !== "trend" || switchedAudit.metadata.publisherLastRegimeSwitchTo !== "range") {
+    throw new Error("architect_changed diagnostics are missing published regime switch metadata");
   }
 }
 
