@@ -1,3 +1,12 @@
+WIP:
+
+La fotografia generale è questa: l’architettura regge. 
+Il cuore gerarchico è coerente con il disegno desiderato: 
+i bot consumano lo stato architect pubblicato, il routing resta fuori dalle strategy e il post-switch context è stato reso più pulito e osservabile
+Identificati un po di problemi da fixare cioè precisione economica, hardening dei bordi, e chiarezza operativa.
+working on it ora.
+
+
 # TradingBot
 
 TradingBot e un runtime multi-bot modulare per paper trading e osservabilita realtime.
