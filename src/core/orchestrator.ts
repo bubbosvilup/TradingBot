@@ -259,10 +259,26 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
 
   while (!stopped) {
     const snapshot = store.getSystemSnapshot();
+    const runningBots = snapshot.botStates.filter((bot: any) => bot.status === "running");
+    const latestPricesSummary = snapshot.latestPrices
+      .map((entry: any) => `${entry.symbol}:${entry.price.toFixed(2)}`)
+      .join(", ");
+    const botSummaries = runningBots.map((bot: any) => (
+      `${bot.botId}:${bot.activeStrategyId}/${bot.architectSyncStatus}/${bot.lastDecision}`
+      + ` eval=${bot.entryEvaluationsCount || 0}`
+      + ` logged=${bot.entryEvaluationLogsCount || 0}`
+      + ` blocked=${bot.entryBlockedCount || 0}`
+      + ` skipped=${bot.entrySkippedCount || 0}`
+      + ` opened=${bot.entryOpenedCount || 0}`
+    )).join("; ");
     logger.info("heartbeat", {
-      botsRunning: snapshot.botStates.filter((bot: any) => bot.status === "running").length,
+      botsRunning: runningBots.length,
+      botSummaries,
+      latestPrices: latestPricesSummary,
       openPositions: snapshot.openPositions.length,
-      symbols: snapshot.latestPrices.map((entry: any) => `${entry.symbol}:${entry.price.toFixed(2)}`).join(", ")
+      pendingBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "pending").length,
+      syncedBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "synced").length,
+      waitingFlatBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "waiting_flat").length
     });
 
     if (cli.durationMs && now() - startedAt >= cli.durationMs) {

@@ -38,6 +38,7 @@ export interface MarketContext {
 }
 
 export interface Strategy {
+  config?: Record<string, unknown>;
   id: string;
   evaluate(context: MarketContext): StrategyDecision;
 }

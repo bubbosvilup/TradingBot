@@ -40,6 +40,14 @@ function createAssessment(symbol, marketRegime, recommendedFamily, regimeScores,
   };
 }
 
+function createAssessmentWithMaturity(symbol, marketRegime, recommendedFamily, regimeScores, updatedAt, contextMaturity) {
+  return {
+    ...createAssessment(symbol, marketRegime, recommendedFamily, regimeScores, updatedAt),
+    contextMaturity,
+    sufficientData: true
+  };
+}
+
 function createContext(symbol, observedAt, warmupComplete, label) {
   const windowSpanMs = warmupComplete ? 60_000 : 10_000;
   return {
@@ -132,6 +140,65 @@ function runArchitectServiceTests() {
   service.observe(symbol, 10_000);
   if (store.getArchitectPublishedAssessment(symbol)) {
     throw new Error("architect published before warm-up completed");
+  }
+
+  const immatureStore = new StateStore();
+  const immatureLogs = [];
+  const immatureService = new ArchitectService({
+    botArchitect: {
+      minMaturity: 0.25,
+      assess(context) {
+        return context.stage === "immature"
+          ? createAssessmentWithMaturity(symbol, "trend", "trend_following", {
+              range: 0.24,
+              trend: 0.67,
+              unclear: 0.11,
+              volatile: 0.15
+            }, context.observedAt, 0.2)
+          : createAssessmentWithMaturity(symbol, "trend", "trend_following", {
+              range: 0.24,
+              trend: 0.67,
+              unclear: 0.11,
+              volatile: 0.15
+            }, context.observedAt, 0.3);
+      }
+    },
+    logger: {
+      info(event, metadata) {
+        immatureLogs.push({ event, metadata });
+      }
+    },
+    marketStream: {
+      subscribe() {
+        return () => {};
+      }
+    },
+    publishIntervalMs: 30_000,
+    requiredConfirmations: 2,
+    store: immatureStore,
+    switchDelta: 0.12
+  });
+  immatureStore.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "immature"));
+  immatureService.observe(symbol, 30_000);
+  if (immatureStore.getArchitectPublishedAssessment(symbol)) {
+    throw new Error("architect should not publish when context maturity is below the new 0.25 threshold");
+  }
+  const immaturePublisherState = immatureStore.getArchitectPublisherState(symbol);
+  if (!immaturePublisherState || immaturePublisherState.ready !== false || immaturePublisherState.lastPublishedAt !== null) {
+    throw new Error("publisher state should stay unready until maturity reaches the publish threshold");
+  }
+  if (immatureLogs.find((entry) => entry.event === "architect_published")) {
+    throw new Error("immature startup window should not emit architect_published");
+  }
+
+  immatureStore.setContextSnapshot(symbol, createContext(symbol, 60_000, true, "mature"));
+  immatureService.observe(symbol, 60_000);
+  const maturePublished = immatureStore.getArchitectPublishedAssessment(symbol);
+  if (!maturePublished || maturePublished.marketRegime !== "trend") {
+    throw new Error("architect should publish once maturity reaches the threshold");
+  }
+  if (!immatureLogs.find((entry) => entry.event === "architect_published")) {
+    throw new Error("mature publish should still emit architect_published");
   }
 
   store.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "trend"));

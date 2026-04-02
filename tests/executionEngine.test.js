@@ -109,6 +109,40 @@ function runExecutionEngineTests() {
     if (!logs.find((entry) => entry.event === "position_opened" && entry.metadata.botId === "bot_valid")) {
       throw new Error("missing position_opened log for valid order");
     }
+
+    const closed = engine.closePosition({
+      botId: "bot_valid",
+      price: 102,
+      reason: ["take_profit"]
+    });
+    if (!closed) {
+      throw new Error("execution engine rejected a valid close");
+    }
+    if (store.getPosition("bot_valid") !== null) {
+      throw new Error("execution engine did not clear persisted position state after close");
+    }
+    if (store.getClosedTrades("bot_valid").length !== 1) {
+      throw new Error(`execution engine should append exactly one closed trade on close, found ${store.getClosedTrades("bot_valid").length}`);
+    }
+    if (!logs.find((entry) => entry.event === "position_closed" && entry.metadata.botId === "bot_valid")) {
+      throw new Error("missing position_closed log for valid close");
+    }
+
+    store.setPosition("bot_missing", null);
+    const failedClose = engine.closePosition({
+      botId: "bot_missing",
+      price: 101,
+      reason: ["no_position"]
+    });
+    if (failedClose !== null) {
+      throw new Error("execution engine closed a missing position");
+    }
+    if (store.getPosition("bot_missing") !== null) {
+      throw new Error("execution engine should not mutate persisted position state on failed close");
+    }
+    if (store.getClosedTrades("bot_missing").length !== 0) {
+      throw new Error("execution engine should not append a closed trade on failed close");
+    }
   } finally {
     if (originalFeeBps === undefined) {
       delete process.env.FEE_BPS;

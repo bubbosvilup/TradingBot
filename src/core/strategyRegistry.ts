@@ -39,14 +39,17 @@ class StrategyRegistry {
       throw new Error(`Strategy module ${strategyId} does not export createStrategy()`);
     }
 
-    return strategyModule.createStrategy({
+    const strategy = strategyModule.createStrategy({
       ...strategyConfig,
       indicatorEngine: this.indicatorEngine
     });
+    return {
+      ...strategy,
+      config: strategyConfig
+    };
   }
 }
 
 module.exports = {
   StrategyRegistry
 };
-

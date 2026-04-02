@@ -7,6 +7,7 @@ import type { Strategy } from "../types/strategy.ts";
 import type { PositionRecord } from "../types/trade.ts";
 
 const { BaseBot } = require("./baseBot.ts");
+const { resolveLogType } = require("../utils/logger.ts");
 const { now } = require("../utils/time.ts");
 
 class TradingBot extends BaseBot {
@@ -22,6 +23,10 @@ class TradingBot extends BaseBot {
   entrySlippageBufferPct: number;
   entryProfitSafetyBufferPct: number;
   minExpectedNetEdgePct: number;
+  entryEvaluationLogSampleMs: number;
+  lastEntryEvaluationLogKey: string | null;
+  lastEntryEvaluationLogAt: number | null;
+  compactLogSignatures: Record<string, string | null>;
 
   constructor(config: BotConfig, deps: any) {
     super(config, deps);
@@ -39,6 +44,10 @@ class TradingBot extends BaseBot {
     this.entrySlippageBufferPct = 0.0005;
     this.entryProfitSafetyBufferPct = 0.0005;
     this.minExpectedNetEdgePct = 0.0005;
+    this.entryEvaluationLogSampleMs = 30_000;
+    this.lastEntryEvaluationLogKey = null;
+    this.lastEntryEvaluationLogAt = null;
+    this.compactLogSignatures = {};
   }
 
   start() {
@@ -110,6 +119,193 @@ class TradingBot extends BaseBot {
       architectBlockReason: architectState?.blockReason || null,
       reason: "architect_not_usable_for_entry"
     });
+    this.emitCompactBotLog("BLOCK_CHANGE", {
+      blockReason: "architect_not_usable_for_entry",
+      botId: this.config.id,
+      strategy: this.strategy.id,
+      symbol: this.config.symbol
+    }, "BLOCK_CHANGE");
+  }
+
+  buildEntryEvaluationLogKey(metadata: Record<string, any>) {
+    return [
+      metadata.outcome || "unknown",
+      metadata.blockReason || "none",
+      metadata.skipReason || "none",
+      metadata.architectUsable ? "usable" : "blocked",
+      metadata.signalEvaluated ? "evaluated" : "not_evaluated",
+      metadata.decisionAction || "not_evaluated"
+    ].join("|");
+  }
+
+  getLogType() {
+    return resolveLogType(process.env.LOG_TYPE);
+  }
+
+  emitCompactBotLog(message: string, metadata: Record<string, unknown>, dedupeKey?: string, signatureOverride?: string) {
+    if (this.getLogType() === "verbose") {
+      return;
+    }
+
+    if (dedupeKey) {
+      const signature = signatureOverride || JSON.stringify(metadata);
+      if (this.compactLogSignatures[dedupeKey] === signature) {
+        return;
+      }
+      this.compactLogSignatures[dedupeKey] = signature;
+    }
+
+    this.deps.logger.bot(this.config, message, metadata);
+  }
+
+  buildSetupLogMetadata(metadata: Record<string, any>) {
+    return {
+      allowReason: metadata.allowReason || null,
+      blockReason: metadata.blockReason || null,
+      botId: this.config.id,
+      decisionAction: metadata.decisionAction || "not_evaluated",
+      decisionConfidence: metadata.decisionConfidence ?? 0,
+      entryDebounceRequired: metadata.entryDebounceRequired ?? null,
+      entrySignalStreak: metadata.entrySignalStreak ?? 0,
+      estimatedCostPct: metadata.estimatedCostPct ?? null,
+      expectedGrossEdgePct: metadata.expectedGrossEdgePct ?? null,
+      expectedNetEdgePct: metadata.expectedNetEdgePct ?? null,
+      family: metadata.publishedFamily || metadata.targetFamily || null,
+      latestPrice: metadata.latestPrice ?? null,
+      regime: metadata.publishedRegime || null,
+      rsi: metadata.strategyRsi ?? null,
+      strategy: metadata.strategy || this.strategy.id,
+      symbol: this.config.symbol
+    };
+  }
+
+  buildSetupStateSignature(metadata: Record<string, any>) {
+    const debounceRequired = Number(metadata.entryDebounceRequired || 0);
+    const streak = Number(metadata.entrySignalStreak || 0);
+    const readinessState = metadata.decisionAction !== "buy"
+      ? "inactive"
+      : debounceRequired <= 0
+        ? "ready"
+        : streak >= debounceRequired
+          ? "ready"
+          : streak >= Math.max(debounceRequired - 1, 1)
+            ? "near_ready"
+            : streak > 0
+              ? "arming"
+              : "idle";
+
+    return JSON.stringify({
+      allowReason: metadata.allowReason || null,
+      blockReason: metadata.blockReason || null,
+      decisionAction: metadata.decisionAction || "not_evaluated",
+      family: metadata.publishedFamily || metadata.targetFamily || null,
+      readinessState,
+      regime: metadata.publishedRegime || null,
+      riskReason: metadata.riskReason || null,
+      strategy: metadata.strategy || this.strategy.id
+    });
+  }
+
+  maybeLogCompactSetup(metadata: Record<string, any>) {
+    const entryDebounceRequired = Number(metadata.entryDebounceRequired || 0);
+    const entrySignalStreak = Number(metadata.entrySignalStreak || 0);
+    const nearReady = entryDebounceRequired > 0 && entrySignalStreak >= Math.max(entryDebounceRequired - 1, 1);
+    const shouldLog = metadata.decisionAction === "buy"
+      || Boolean(metadata.allowReason)
+      || Boolean(metadata.blockReason)
+      || nearReady;
+    if (!shouldLog) {
+      return;
+    }
+
+    this.emitCompactBotLog(
+      "SETUP",
+      this.buildSetupLogMetadata(metadata),
+      "SETUP",
+      this.buildSetupStateSignature(metadata)
+    );
+  }
+
+  maybeLogCompactBlockChange(metadata: Record<string, any>) {
+    if (!metadata.blockReason) {
+      return;
+    }
+
+    const blockMetadata = {
+      blockReason: metadata.blockReason,
+      botId: this.config.id,
+      decisionAction: metadata.decisionAction || "not_evaluated",
+      entryDebounceRequired: metadata.entryDebounceRequired ?? null,
+      entrySignalStreak: metadata.entrySignalStreak ?? 0,
+      expectedNetEdgePct: metadata.expectedNetEdgePct ?? null,
+      latestPrice: metadata.latestPrice ?? null,
+      riskReason: metadata.riskReason || null,
+      strategy: metadata.strategy || this.strategy.id,
+      symbol: this.config.symbol
+    };
+
+    this.emitCompactBotLog("BLOCK_CHANGE", blockMetadata, "BLOCK_CHANGE", JSON.stringify({
+      blockReason: blockMetadata.blockReason,
+      decisionAction: blockMetadata.decisionAction,
+      riskReason: blockMetadata.riskReason,
+      strategy: blockMetadata.strategy
+    }));
+  }
+
+  logCompactRiskChange(metadata: Record<string, unknown>) {
+    this.emitCompactBotLog("RISK_CHANGE", {
+      botId: this.config.id,
+      strategy: this.strategy.id,
+      symbol: this.config.symbol,
+      ...metadata
+    }, "RISK_CHANGE");
+  }
+
+  logCompactArchitectChange(metadata: Record<string, unknown>) {
+    this.emitCompactBotLog("ARCHITECT_CHANGE", {
+      botId: this.config.id,
+      symbol: this.config.symbol,
+      ...metadata
+    }, "ARCHITECT_CHANGE");
+  }
+
+  logCompactBuy(metadata: Record<string, unknown>) {
+    this.emitCompactBotLog("BUY", {
+      botId: this.config.id,
+      symbol: this.config.symbol,
+      ...metadata
+    });
+  }
+
+  logCompactSell(metadata: Record<string, unknown>) {
+    this.emitCompactBotLog("SELL", {
+      botId: this.config.id,
+      symbol: this.config.symbol,
+      ...metadata
+    });
+  }
+
+  recordEntryEvaluationCounters(outcome: "allowed" | "blocked" | "opened" | "skipped", logged: boolean) {
+    const state = this.deps.store.getBotState(this.config.id);
+    if (!state) return;
+
+    const patch: any = {
+      entryEvaluationsCount: (state.entryEvaluationsCount || 0) + 1
+    };
+    if (logged) {
+      patch.entryEvaluationLogsCount = (state.entryEvaluationLogsCount || 0) + 1;
+    }
+    if (outcome === "blocked") {
+      patch.entryBlockedCount = (state.entryBlockedCount || 0) + 1;
+    } else if (outcome === "skipped") {
+      patch.entrySkippedCount = (state.entrySkippedCount || 0) + 1;
+    } else if (outcome === "opened") {
+      patch.entryOpenedCount = (state.entryOpenedCount || 0) + 1;
+    } else if (outcome === "allowed") {
+      patch.entryAllowedCount = (state.entryAllowedCount || 0) + 1;
+    }
+
+    this.deps.store.updateBotState(this.config.id, patch);
   }
 
   logEntryEvaluation(params: {
@@ -151,14 +347,30 @@ class TradingBot extends BaseBot {
       ? { ...baseDiagnostics, ...params.diagnostics }
       : baseDiagnostics;
 
-    this.deps.logger.bot(this.config, "entry_evaluated", {
+    const metadata = {
       ...diagnostics,
       allowReason: params.allowReason || null,
       blockReason: params.blockReason || null,
       outcome: params.outcome,
       signalEvaluated: params.signalEvaluated !== false,
       skipReason: params.skipReason || null
-    });
+    };
+    this.maybeLogCompactSetup(metadata);
+    this.maybeLogCompactBlockChange(metadata);
+    const logAt = Number.isFinite(Number(params.tick?.timestamp)) ? Number(params.tick.timestamp) : now();
+    const logKey = this.buildEntryEvaluationLogKey(metadata);
+    const shouldLog = this.lastEntryEvaluationLogKey !== logKey
+      || this.lastEntryEvaluationLogAt === null
+      || (logAt - this.lastEntryEvaluationLogAt) >= this.entryEvaluationLogSampleMs;
+
+    this.recordEntryEvaluationCounters(params.outcome, shouldLog);
+    if (!shouldLog) {
+      return;
+    }
+
+    this.lastEntryEvaluationLogKey = logKey;
+    this.lastEntryEvaluationLogAt = logAt;
+    this.deps.logger.bot(this.config, "entry_evaluated", metadata);
   }
 
   ensureCooldownState(timestamp: number) {
@@ -173,17 +385,37 @@ class TradingBot extends BaseBot {
         reason: state.cooldownReason || "cooldown_active",
         until: state.cooldownUntil
       });
+      this.logCompactRiskChange({
+        cooldownReason: state.cooldownReason || "cooldown_active",
+        cooldownUntil: state.cooldownUntil || null,
+        lossStreak: state.lossStreak || 0,
+        status: "cooldown_started"
+      });
       return state;
     }
 
     if (!cooldownActive && this.cooldownWasActive) {
       this.cooldownWasActive = false;
       this.cooldownWindowLoggedUntil = null;
+      const profile = this.deps.riskManager.getProfile(this.config.riskProfile);
+      const shouldRelaxLossStreak = state.cooldownReason === "loss_cooldown"
+        && state.lossStreak >= profile.maxLossStreak;
       this.deps.store.updateBotState(this.config.id, {
         cooldownReason: null,
-        cooldownUntil: null
+        cooldownUntil: null,
+        lossStreak: shouldRelaxLossStreak
+          ? Math.max(state.lossStreak - 1, 0)
+          : state.lossStreak
       });
       this.deps.logger.bot(this.config, "cooldown_ended");
+      this.logCompactRiskChange({
+        cooldownReason: null,
+        cooldownUntil: null,
+        lossStreak: shouldRelaxLossStreak
+          ? Math.max(state.lossStreak - 1, 0)
+          : state.lossStreak,
+        status: "cooldown_ended"
+      });
       return this.deps.store.getBotState(this.config.id);
     }
 
@@ -194,10 +426,14 @@ class TradingBot extends BaseBot {
     hasPosition: boolean;
     decisionAction: "buy" | "sell" | "hold";
     state: any;
+    timestamp: number;
   }) {
-    const nextEntrySignalStreak = !params.hasPosition && params.decisionAction === "buy"
-      ? params.state.entrySignalStreak + 1
-      : 0;
+    const cooldownActive = Boolean(params.state.cooldownUntil && params.state.cooldownUntil > params.timestamp);
+    const nextEntrySignalStreak = cooldownActive
+      ? params.state.entrySignalStreak
+      : !params.hasPosition && params.decisionAction === "buy"
+        ? params.state.entrySignalStreak + 1
+        : 0;
     const nextExitSignalStreak = params.hasPosition && params.decisionAction === "sell"
       ? params.state.exitSignalStreak + 1
       : 0;
@@ -445,6 +681,13 @@ class TradingBot extends BaseBot {
       reason: switchPlan.reason,
       targetFamily: switchPlan.targetFamily
     });
+    this.logCompactArchitectChange({
+      nextStrategy: switchPlan.nextStrategyId,
+      publishedFamily: published.recommendedFamily,
+      publishedRegime: published.marketRegime,
+      reason: switchPlan.reason,
+      targetFamily: switchPlan.targetFamily
+    });
   }
 
   estimateEntryEconomics(params: {
@@ -460,15 +703,29 @@ class TradingBot extends BaseBot {
     const meanReversionGapPct = Number.isFinite(emaSlow)
       ? Math.abs(latestPrice - emaSlow) / latestPrice
       : 0;
+    const downsideMeanReversionGapPct = Number.isFinite(emaSlow)
+      ? Math.max(0, emaSlow - latestPrice) / latestPrice
+      : 0;
     const emaGapPct = Number.isFinite(emaFast) && Number.isFinite(emaSlow)
       ? Math.abs(emaFast - emaSlow) / latestPrice
       : 0;
     const momentumEdgePct = Number.isFinite(momentum)
       ? Math.abs(momentum) / latestPrice
       : 0;
+    const exitTarget = Number.isFinite(emaSlow)
+      ? emaSlow * 1.015
+      : latestPrice;
+    const captureGapPct = Number.isFinite(emaSlow)
+      ? Math.min(0.03, Math.max(0, exitTarget - latestPrice) / latestPrice)
+      : 0;
     const strategyId = params.context?.strategyId || this.strategy?.id || "";
     const expectedGrossEdgePct = strategyId === "rsiReversion"
-      ? Math.max(0, (0.6 * meanReversionGapPct) + (0.25 * emaGapPct) + (0.15 * momentumEdgePct))
+      ? Math.min(0.02, Math.max(0,
+        (0.7 * captureGapPct) +
+        (0.2 * downsideMeanReversionGapPct) +
+        (0.07 * emaGapPct) +
+        (0.03 * momentumEdgePct)
+      ))
       : strategyId === "emaCross"
         ? Math.max(0, (0.5 * emaGapPct) + (0.35 * momentumEdgePct) + (0.15 * meanReversionGapPct))
         : Math.max(0, (0.4 * meanReversionGapPct) + (0.35 * emaGapPct) + (0.25 * momentumEdgePct));
@@ -480,7 +737,13 @@ class TradingBot extends BaseBot {
     const profitSafetyBufferPct = this.entryProfitSafetyBufferPct;
     const requiredEdgePct = estimatedEntryFeePct + estimatedExitFeePct + estimatedSlippagePct + profitSafetyBufferPct;
     const expectedNetEdgePct = expectedGrossEdgePct - requiredEdgePct;
-    const minExpectedNetEdgePct = this.minExpectedNetEdgePct;
+    const configuredMinExpectedNetEdgePct = Number(this.strategy?.config?.minExpectedNetEdgePct);
+    const minExpectedNetEdgePct = Math.max(
+      Number.isFinite(configuredMinExpectedNetEdgePct)
+        ? configuredMinExpectedNetEdgePct
+        : this.minExpectedNetEdgePct,
+      0
+    );
     const quantity = Number.isFinite(Number(params.quantity)) ? Number(params.quantity) : 0;
     const notionalUsdt = latestPrice * Math.max(quantity, 0);
 
@@ -770,7 +1033,8 @@ class TradingBot extends BaseBot {
     const signalState = this.updateSignalState({
       decisionAction: decision.action,
       hasPosition: Boolean(position),
-      state: this.deps.store.getBotState(this.config.id)
+      state: this.deps.store.getBotState(this.config.id),
+      timestamp: tick.timestamp
     });
     const profile = this.deps.riskManager.getProfile(this.config.riskProfile);
 
@@ -957,6 +1221,14 @@ class TradingBot extends BaseBot {
           strategy: this.strategy.id,
           symbol: this.config.symbol
         });
+        this.logCompactBuy({
+          decisionConfidence: Number(Number(decision.confidence || 0).toFixed(4)),
+          expectedGrossEdgePct: Number(Number(finalEntryGate.diagnostics.expectedGrossEdgePct || 0).toFixed(4)),
+          expectedNetEdgePct: Number(Number(finalEntryGate.diagnostics.expectedNetEdgePct || 0).toFixed(4)),
+          latestPrice: Number(Number(tick.price || 0).toFixed(4)),
+          quantity: Number(Number(opened.quantity || 0).toFixed(8)),
+          strategy: this.strategy.id
+        });
         this.lastNonCooldownBlockReason = null;
         return;
       }
@@ -1082,6 +1354,20 @@ class TradingBot extends BaseBot {
       realizedPnl: signalState.realizedPnl + closedTrade.netPnl,
       status: nextPerformance.drawdown >= this.deps.riskManager.profiles[this.config.riskProfile].maxDrawdownPct ? "paused" : signalState.status,
       pausedReason: nextPerformance.drawdown >= this.deps.riskManager.profiles[this.config.riskProfile].maxDrawdownPct ? "max_drawdown_reached" : null
+    });
+    this.logCompactRiskChange({
+      cooldownReason: balancePatch.cooldownReason,
+      cooldownUntil: balancePatch.cooldownUntil,
+      lossStreak: balancePatch.lossStreak,
+      status: "trade_closed"
+    });
+    this.logCompactSell({
+      closeReason: Array.isArray(exitPlan.reason) ? exitPlan.reason.join(",") : null,
+      latestPrice: Number(Number(tick.price || 0).toFixed(4)),
+      netPnl: Number(Number(closedTrade.netPnl || 0).toFixed(4)),
+      outcome: closedTrade.netPnl > 0 ? "profit" : closedTrade.netPnl < 0 ? "loss" : "flat",
+      quantity: Number(Number(closedTrade.quantity || 0).toFixed(8)),
+      strategy: this.strategy.id
     });
     this.deps.store.recordExecution(this.config.id, this.config.symbol, closedTrade.closedAt);
     this.ensureCooldownState(closedTrade.closedAt);

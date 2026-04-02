@@ -11,7 +11,7 @@ class BotArchitect {
   minStrength: number;
 
   constructor(options: { minMaturity?: number; minDataQuality?: number; minStrength?: number } = {}) {
-    this.minMaturity = options.minMaturity ?? 0.1;
+    this.minMaturity = options.minMaturity ?? 0.25;
     this.minDataQuality = options.minDataQuality ?? 0.45;
     this.minStrength = options.minStrength ?? 0.38;
   }

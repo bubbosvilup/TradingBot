@@ -3,6 +3,7 @@
 async function runOrchestratorTests() {
   const { parseArgs, startOrchestrator } = require("../src/core/orchestrator.ts");
   const originalFeeBps = process.env.FEE_BPS;
+  const originalLogType = process.env.LOG_TYPE;
 
   const kebabArgs = parseArgs(["--market-mode=live", "--execution-mode=paper", "--duration-ms=2200", "--summary-ms=1000"]);
   if (kebabArgs.marketMode !== "live" || kebabArgs.executionMode !== "paper") {
@@ -26,6 +27,7 @@ async function runOrchestratorTests() {
     captured.push(args.join(" "));
   };
   process.env.FEE_BPS = "17";
+  process.env.LOG_TYPE = "verbose";
 
   try {
     await startOrchestrator({ durationMs: 2200, serverEnabled: false, summaryEveryMs: 1000 });
@@ -35,6 +37,11 @@ async function runOrchestratorTests() {
       delete process.env.FEE_BPS;
     } else {
       process.env.FEE_BPS = originalFeeBps;
+    }
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
     }
   }
 
@@ -53,6 +60,9 @@ async function runOrchestratorTests() {
   }
   if (!transcript.includes("heartbeat")) {
     throw new Error(`orchestrator did not emit heartbeat\n${transcript}`);
+  }
+  if (!transcript.includes("botSummaries=") || !transcript.includes("latestPrices=")) {
+    throw new Error(`orchestrator heartbeat did not include summary-oriented bot state\n${transcript}`);
   }
   if (!transcript.includes("system_stopped")) {
     throw new Error(`orchestrator did not stop cleanly\n${transcript}`);

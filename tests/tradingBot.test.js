@@ -151,6 +151,7 @@ function createHarness(strategyEvaluate, options = {}) {
     strategyRegistry: {
       createStrategy(strategyId) {
         return {
+          config: options.strategyConfigById?.[strategyId],
           evaluate: strategyEvaluate,
           id: strategyId
         };
@@ -243,6 +244,7 @@ function createHarness(strategyEvaluate, options = {}) {
 
 function runTradingBotTests() {
   const originalNow = Date.now;
+  const originalLogType = process.env.LOG_TYPE;
   let clock = 1_000_000;
   Date.now = () => clock;
 
@@ -321,6 +323,153 @@ function runTradingBotTests() {
     }
     if (endedCount !== 1) {
       throw new Error(`expected one cooldown_ended log, found ${endedCount}`);
+    }
+
+    process.env.LOG_TYPE = "strategy_debug";
+    clock += 10_000;
+    const strategyDebugHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"]
+    }));
+    strategyDebugHarness.store.updateBotState("bot_test", {
+      cooldownReason: "loss_cooldown",
+      cooldownUntil: clock + 60_000,
+      entrySignalStreak: 1
+    });
+    strategyDebugHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    strategyDebugHarness.bot.onMarketTick({ price: 100.3, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const strategyDebugSetups = strategyDebugHarness.botLogs.filter((entry) => entry.message === "SETUP");
+    const strategyDebugBlockChanges = strategyDebugHarness.botLogs.filter((entry) => entry.message === "BLOCK_CHANGE");
+    if (strategyDebugSetups.length !== 1) {
+      throw new Error(`strategy_debug should dedupe identical SETUP logs, found ${strategyDebugSetups.length}`);
+    }
+    if (strategyDebugBlockChanges.length !== 1) {
+      throw new Error(`strategy_debug should dedupe identical BLOCK_CHANGE logs, found ${strategyDebugBlockChanges.length}`);
+    }
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
+
+    clock += 10_000;
+    const mediumLossStreakLimit = new RiskManager().getProfile("medium").maxLossStreak;
+    const lossLatchHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"]
+    }));
+    lossLatchHarness.store.updateBotState("bot_test", {
+      cooldownReason: "loss_cooldown",
+      cooldownUntil: clock + 60_000,
+      entrySignalStreak: 1,
+      lossStreak: mediumLossStreakLimit
+    });
+    lossLatchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    let lossLatchState = lossLatchHarness.store.getBotState("bot_test");
+    if (lossLatchState.lossStreak !== mediumLossStreakLimit || lossLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("maxed loss streak should remain blocked during active loss cooldown");
+    }
+    clock += 61_000;
+    lossLatchHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    lossLatchState = lossLatchHarness.store.getBotState("bot_test");
+    if (lossLatchState.lossStreak !== (mediumLossStreakLimit - 1)) {
+      throw new Error(`loss cooldown expiry should reduce the latched streak by exactly one: ${lossLatchState.lossStreak}`);
+    }
+    if (!lossLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("post-expiry loss streak decrement should allow a valid recovery entry");
+    }
+    clock += 1_000;
+    lossLatchHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (lossLatchHarness.store.getBotState("bot_test").lossStreak !== (mediumLossStreakLimit - 1)) {
+      throw new Error("loss cooldown expiry should not decrement the streak multiple times");
+    }
+
+    clock += 10_000;
+    const nonLossCooldownHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"]
+    }));
+    nonLossCooldownHarness.store.updateBotState("bot_test", {
+      cooldownReason: "post_exit_reentry_guard",
+      cooldownUntil: clock + 60_000,
+      entrySignalStreak: 1,
+      lossStreak: mediumLossStreakLimit
+    });
+    nonLossCooldownHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 61_000;
+    nonLossCooldownHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const nonLossCooldownState = nonLossCooldownHarness.store.getBotState("bot_test");
+    if (nonLossCooldownState.lossStreak !== mediumLossStreakLimit) {
+      throw new Error(`non-loss cooldown expiry should not change loss streak: ${nonLossCooldownState.lossStreak}`);
+    }
+    if (nonLossCooldownHarness.store.getPosition("bot_test")) {
+      throw new Error("non-loss cooldown expiry should keep loss_streak_limit behavior unchanged");
+    }
+
+    clock += 10_000;
+    const frozenCooldownHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"]
+    }));
+    frozenCooldownHarness.store.updateBotState("bot_test", {
+      cooldownReason: "loss_cooldown",
+      cooldownUntil: clock + 60_000,
+      entrySignalStreak: 1
+    });
+
+    frozenCooldownHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    let frozenState = frozenCooldownHarness.store.getBotState("bot_test");
+    if (frozenState.entrySignalStreak !== 1) {
+      throw new Error(`entrySignalStreak should be preserved during cooldown, received ${frozenState.entrySignalStreak}`);
+    }
+    clock += 1_000;
+    frozenCooldownHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    frozenState = frozenCooldownHarness.store.getBotState("bot_test");
+    if (frozenState.entrySignalStreak !== 1) {
+      throw new Error(`entrySignalStreak should not increment during cooldown, received ${frozenState.entrySignalStreak}`);
+    }
+    if (frozenCooldownHarness.store.getPosition("bot_test")) {
+      throw new Error("cooldown freeze test should not open during cooldown");
+    }
+
+    clock += 61_000;
+    frozenCooldownHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!frozenCooldownHarness.store.getPosition("bot_test")) {
+      throw new Error("preserved entrySignalStreak should allow debounce to complete immediately after cooldown ends");
+    }
+
+    clock += 10_000;
+    let dynamicAction = "buy";
+    const resetHarness = createHarness(() => ({
+      action: dynamicAction,
+      confidence: 0.8,
+      reason: [dynamicAction === "buy" ? "buy_signal" : "no_trade"]
+    }));
+    resetHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (resetHarness.store.getBotState("bot_test").entrySignalStreak !== 1) {
+      throw new Error("entrySignalStreak should start accumulating outside cooldown");
+    }
+    dynamicAction = "hold";
+    clock += 1_000;
+    resetHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (resetHarness.store.getBotState("bot_test").entrySignalStreak !== 0) {
+      throw new Error("entrySignalStreak should still reset when the signal disappears outside cooldown");
+    }
+    dynamicAction = "buy";
+    clock += 1_000;
+    resetHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (resetHarness.store.getPosition("bot_test")) {
+      throw new Error("signal reset outside cooldown should require debounce to restart");
+    }
+    clock += 1_000;
+    resetHarness.bot.onMarketTick({ price: 100.3, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!resetHarness.store.getPosition("bot_test")) {
+      throw new Error("debounce should still complete normally after a genuine reset outside cooldown");
     }
 
     clock += 10_000;
@@ -468,6 +617,44 @@ function runTradingBotTests() {
     }
     if (noTradeHarness.store.getBotState("bot_test").architectSyncStatus !== "pending") {
       throw new Error("no_trade architect state should keep bot sync status pending");
+    }
+
+    clock += 10_000;
+    const dedupHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        marketRegime: "volatile",
+        recommendedFamily: "no_trade",
+        updatedAt: clock
+      })
+    });
+    dedupHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    dedupHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    dedupHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    let dedupEvaluations = dedupHarness.botLogs.filter((entry) =>
+      entry.message === "entry_evaluated"
+      && entry.metadata.blockReason === "architect_no_trade"
+    );
+    if (dedupEvaluations.length !== 1) {
+      throw new Error(`repeated identical entry blocks should be deduplicated, found ${dedupEvaluations.length} logs`);
+    }
+    clock += 31_000;
+    dedupHarness.bot.onMarketTick({ price: 100.3, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    dedupEvaluations = dedupHarness.botLogs.filter((entry) =>
+      entry.message === "entry_evaluated"
+      && entry.metadata.blockReason === "architect_no_trade"
+    );
+    if (dedupEvaluations.length !== 2) {
+      throw new Error(`identical blocked state should be sampled again after 30s, found ${dedupEvaluations.length} logs`);
+    }
+    const dedupState = dedupHarness.store.getBotState("bot_test");
+    if (dedupState.entryEvaluationsCount !== 4 || dedupState.entryEvaluationLogsCount !== 2 || dedupState.entryBlockedCount !== 4) {
+      throw new Error(`entry evaluation counters did not track deduped states correctly: ${JSON.stringify(dedupState)}`);
     }
 
     clock += 10_000;
@@ -815,6 +1002,9 @@ function runTradingBotTests() {
     if (conservativeTrendEconomics.expectedGrossEdgePct >= 0.0002) {
       throw new Error(`trend edge estimate should be more conservative than max-proxy behavior: ${conservativeTrendEconomics.expectedGrossEdgePct}`);
     }
+    if (conservativeTrendEconomics.minExpectedNetEdgePct !== 0.0005) {
+      throw new Error(`strategies without an override should keep the default minExpectedNetEdgePct: ${conservativeTrendEconomics.minExpectedNetEdgePct}`);
+    }
     if (conservativeTrendEconomics.requiredEdgePct !== 0.003) {
       throw new Error(`economic gate should use the reduced paper/mock hurdle buffers: ${conservativeTrendEconomics.requiredEdgePct}`);
     }
@@ -828,14 +1018,14 @@ function runTradingBotTests() {
       throw new Error("missing insufficient_edge_after_costs block log");
     }
 
-    const conservativeReversionEconomics = edgeHarness.bot.estimateEntryEconomics({
+    const flatRangeReversionEconomics = edgeHarness.bot.estimateEntryEconomics({
       context: {
         indicators: {
           emaBaseline: 100,
           emaFast: 100.02,
           emaSlow: 100,
           momentum: 0.02,
-          rsi: 33,
+          rsi: 24,
           volatility: 0.01
         },
         strategyId: "rsiReversion"
@@ -843,8 +1033,116 @@ function runTradingBotTests() {
       price: 100,
       quantity: 1
     });
-    if (conservativeReversionEconomics.expectedGrossEdgePct >= 0.0002) {
-      throw new Error(`reversion edge estimate should be more conservative than max-proxy behavior: ${conservativeReversionEconomics.expectedGrossEdgePct}`);
+    if (flatRangeReversionEconomics.minExpectedNetEdgePct !== 0.0005) {
+      throw new Error(`rsiReversion should fall back to the default threshold when no strategy override is attached: ${flatRangeReversionEconomics.minExpectedNetEdgePct}`);
+    }
+
+    const reversionThresholdHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          minExpectedNetEdgePct: 0.0003
+        }
+      }
+    });
+    const configuredReversionEconomics = reversionThresholdHarness.bot.estimateEntryEconomics({
+      context: {
+        indicators: {
+          emaBaseline: 100,
+          emaFast: 100.02,
+          emaSlow: 100,
+          momentum: 0.02,
+          rsi: 24,
+          volatility: 0.01
+        },
+        strategyId: "rsiReversion"
+      },
+      price: 100,
+      quantity: 1
+    });
+    if (configuredReversionEconomics.minExpectedNetEdgePct !== 0.0003) {
+      throw new Error(`rsiReversion should use its configured lower minExpectedNetEdgePct override: ${configuredReversionEconomics.minExpectedNetEdgePct}`);
+    }
+    const flatRangeExitTarget = 100 * 1.015;
+    const flatRangeCaptureGapPct = Math.max(0, flatRangeExitTarget - 100) / 100;
+    if (flatRangeReversionEconomics.expectedGrossEdgePct <= 0.01) {
+      throw new Error(`reversion edge estimate should be meaningfully positive when price is below the strategy exit target: ${flatRangeReversionEconomics.expectedGrossEdgePct}`);
+    }
+    if (flatRangeReversionEconomics.expectedGrossEdgePct >= flatRangeCaptureGapPct) {
+      throw new Error(`reversion edge estimate should stay below full raw capture to remain conservative: ${flatRangeReversionEconomics.expectedGrossEdgePct}`);
+    }
+    if (flatRangeReversionEconomics.expectedNetEdgePct <= flatRangeReversionEconomics.minExpectedNetEdgePct) {
+      throw new Error(`reversion edge estimate should no longer be trivially crushed after costs in flat/range conditions: ${flatRangeReversionEconomics.expectedNetEdgePct}`);
+    }
+
+    const strictThresholdHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          minExpectedNetEdgePct: 0.008
+        }
+      }
+    });
+    const strictThresholdGate = strictThresholdHarness.bot.evaluateFinalEntryGate({
+      context: {
+        indicators: {
+          emaBaseline: 100,
+          emaFast: 100.02,
+          emaSlow: 100,
+          momentum: 0.02,
+          rsi: 24,
+          volatility: 0.01
+        },
+        strategyId: "rsiReversion"
+      },
+      decision: {
+        action: "buy",
+        confidence: 0.95,
+        reason: ["buy_signal"]
+      },
+      quantity: 1,
+      tick: {
+        price: 101.2,
+        source: "mock",
+        symbol: "BTC/USDT",
+        timestamp: clock
+      }
+    });
+    if (strictThresholdGate.allowed || strictThresholdGate.diagnostics.minExpectedNetEdgePct !== 0.008 || strictThresholdGate.diagnostics.blockReason !== "insufficient_edge_after_costs") {
+      throw new Error(`entry gate should enforce the configured strategy-specific net edge threshold: ${JSON.stringify(strictThresholdGate.diagnostics)}`);
+    }
+
+    const boundedReversionEconomics = edgeHarness.bot.estimateEntryEconomics({
+      context: {
+        indicators: {
+          emaBaseline: 100,
+          emaFast: 100.02,
+          emaSlow: 100,
+          momentum: 0.02,
+          rsi: 20,
+          volatility: 0.01
+        },
+        strategyId: "rsiReversion"
+      },
+      price: 95,
+      quantity: 1
+    });
+    if (boundedReversionEconomics.expectedGrossEdgePct > 0.02) {
+      throw new Error(`reversion edge estimate should remain bounded during deep dislocations: ${boundedReversionEconomics.expectedGrossEdgePct}`);
     }
 
     clock += 10_000;
@@ -918,6 +1216,11 @@ function runTradingBotTests() {
     }
   } finally {
     Date.now = originalNow;
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
   }
 }
 

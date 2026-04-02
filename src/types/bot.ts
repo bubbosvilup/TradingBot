@@ -39,6 +39,12 @@ export interface BotRuntimeState {
   cooldownUntil: number | null;
   entrySignalStreak: number;
   exitSignalStreak: number;
+  entryEvaluationsCount: number;
+  entryEvaluationLogsCount: number;
+  entryBlockedCount: number;
+  entrySkippedCount: number;
+  entryOpenedCount: number;
+  entryAllowedCount: number;
   lossStreak: number;
   realizedPnl: number;
   availableBalanceUsdt: number;

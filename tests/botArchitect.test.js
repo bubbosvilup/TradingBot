@@ -103,6 +103,18 @@ function runBotArchitectTests() {
     throw new Error("volatile regime did not explicitly win its weighted score race");
   }
 
+  const lowMaturityAssessment = architect.assess(createContextSnapshot({
+    features: {
+      maturity: 0.24
+    }
+  }));
+  if (lowMaturityAssessment.marketRegime !== "unclear" || lowMaturityAssessment.recommendedFamily !== "no_trade") {
+    throw new Error("default architect maturity gate should block sub-0.25 contexts from classifying");
+  }
+  if (!lowMaturityAssessment.reasonCodes.includes("maturity_gate")) {
+    throw new Error("low-maturity architect output should include maturity_gate diagnostics");
+  }
+
   const warmupAssessment = architect.assess(createContextSnapshot({
     dataMode: "mock",
     features: {

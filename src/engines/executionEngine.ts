@@ -104,6 +104,7 @@ class ExecutionEngine {
     };
 
     this.userStream.publishOrderUpdate({ order, position, type: "opened" });
+    this.store.setPosition(params.botId, position);
     this.logger.info("position_opened", {
       botId: params.botId,
       executionMode: this.executionMode,
@@ -154,6 +155,7 @@ class ExecutionEngine {
     };
 
     this.userStream.publishOrderUpdate({ order, position: null, trade: closedTrade, type: "closed" });
+    this.store.setPosition(params.botId, null);
     this.logger.info("position_closed", {
       botId: params.botId,
       executionMode: this.executionMode,

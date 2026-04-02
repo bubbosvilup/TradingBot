@@ -100,6 +100,10 @@ class ArchitectService {
     if (!context.warmupComplete || (publisher.nextPublishAt && observedAt < publisher.nextPublishAt)) {
       return assessment;
     }
+    const minPublishMaturity = Math.max(Number(this.botArchitect?.minMaturity) || 0, 0);
+    if (assessment.contextMaturity < minPublishMaturity) {
+      return assessment;
+    }
 
     this.publish(symbol, assessment, observedAt, context);
     return assessment;

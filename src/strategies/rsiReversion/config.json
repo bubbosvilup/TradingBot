@@ -2,6 +2,6 @@
   "buyRsi": 33,
   "sellRsi": 58,
   "emaBaseline": 34,
+  "minExpectedNetEdgePct": 0.0003,
   "minConfidence": 0.55
 }
-
