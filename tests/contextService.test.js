@@ -62,6 +62,9 @@ function runContextServiceTests() {
   if (snapshot.features.maturity <= 0 || snapshot.features.dataQuality <= 0) {
     throw new Error("context features were not populated after warm-up");
   }
+  if (typeof snapshot.features.contextRsi !== "number" || !Number.isFinite(snapshot.features.contextRsi)) {
+    throw new Error("context snapshot should expose the raw architect context RSI alongside rsiIntensity");
+  }
 
   for (let index = 70; index < 420; index += 1) {
     const timestamp = start + (index * 1_000);

@@ -3,6 +3,7 @@
 export interface PerformanceSnapshot {
   botId: string;
   pnl: number;
+  avgTradePnlUsdt: number;
   winRate: number;
   drawdown: number;
   profitFactor: number;
@@ -13,7 +14,5 @@ export interface PerformanceSnapshot {
   losses: number;
   peakEquity: number;
   currentEquity: number;
-  expectancy: number;
   recentNetPnl: number[];
 }
-

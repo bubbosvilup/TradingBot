@@ -85,6 +85,7 @@ function runSystemServerTests() {
       breakoutInstability: 0.08,
       breakoutQuality: 0.63,
       chopiness: 0.24,
+      contextRsi: 64,
       dataQuality: 0.91,
       directionalEfficiency: 0.74,
       emaBias: 0.42,
@@ -98,6 +99,16 @@ function runSystemServerTests() {
       volatilityRisk: 0.2
     },
     observedAt: now,
+    effectiveSampleSize: 60,
+    effectiveWarmupComplete: true,
+    effectiveWindowSpanMs: 90_000,
+    effectiveWindowStartedAt: now - 90_000,
+    lastPublishedRegimeSwitchAt: now - 90_000,
+    lastPublishedRegimeSwitchFrom: "range",
+    lastPublishedRegimeSwitchTo: "trend",
+    postSwitchCoveragePct: 0.375,
+    rollingMaturity: 0.82,
+    rollingSampleSize: 140,
     sampleSize: 140,
     structureState: "trending",
     summary: "Context ready.",
@@ -105,6 +116,7 @@ function runSystemServerTests() {
     trendBias: "bullish",
     volatilityState: "normal",
     warmupComplete: true,
+    windowMode: "post_switch_segment",
     windowSpanMs: 240_000,
     windowStartedAt: now - 240_000
   });
@@ -192,6 +204,12 @@ function runSystemServerTests() {
   if (bots[0].architect?.contextFeatures?.directionalEfficiency !== 0.74 || bots[0].architect?.contextFeatures?.volatilityRisk !== 0.2) {
     throw new Error("bots payload missing architect context features");
   }
+  if (bots[0].architect?.contextFeatures?.architectContextRsi !== 64 || bots[0].architect?.contextFeatures?.architectRsiIntensity !== 0.28) {
+    throw new Error("bots payload should distinguish architect context RSI diagnostics");
+  }
+  if (bots[0].architect?.effectiveWindowStartedAt !== now - 90_000 || bots[0].architect?.postSwitchCoveragePct !== 0.375 || bots[0].architect?.rollingMaturity !== 0.82) {
+    throw new Error("bots payload missing post-switch warmup diagnostics");
+  }
   if (bots[0].architect?.challenger?.regime !== "range" || bots[0].architect?.hysteresisActive !== true) {
     throw new Error("bots payload missing publisher hysteresis state");
   }
@@ -200,6 +218,9 @@ function runSystemServerTests() {
   }
   if (bots[0].syncStatus !== "synced") {
     throw new Error(`unexpected bot sync status: ${bots[0].syncStatus}`);
+  }
+  if (bots[0].performance?.avgTradePnlUsdt !== 0) {
+    throw new Error("bots payload should expose avgTradePnlUsdt on performance");
   }
   if (!Array.isArray(prices) || prices.length !== 1 || prices[0].symbol !== "BTC/USDT") {
     throw new Error("prices payload invalid");

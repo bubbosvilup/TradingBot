@@ -32,7 +32,7 @@ export interface MarketContext {
     drawdown: number;
     profitFactor: number;
     tradesCount: number;
-    expectancy: number;
+    avgTradePnlUsdt: number;
   };
   metadata?: Record<string, unknown>;
 }

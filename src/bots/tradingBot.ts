@@ -17,6 +17,7 @@ class TradingBot extends BaseBot {
   lastNonCooldownBlockReason: string | null;
   architectDivergenceActive: boolean;
   minEntryContextMaturity: number;
+  minPostSwitchEntryContextMaturity: number;
   maxArchitectStateAgeMs: number;
   entrySlippageBufferPct: number;
   entryProfitSafetyBufferPct: number;
@@ -33,9 +34,10 @@ class TradingBot extends BaseBot {
     this.lastNonCooldownBlockReason = null;
     this.architectDivergenceActive = false;
     this.minEntryContextMaturity = 0.5;
+    this.minPostSwitchEntryContextMaturity = 0.3;
     this.maxArchitectStateAgeMs = 90_000;
-    this.entrySlippageBufferPct = 0.001;
-    this.entryProfitSafetyBufferPct = 0.001;
+    this.entrySlippageBufferPct = 0.0005;
+    this.entryProfitSafetyBufferPct = 0.0005;
     this.minExpectedNetEdgePct = 0.0005;
   }
 
@@ -43,6 +45,14 @@ class TradingBot extends BaseBot {
     if (this.started || !this.config.enabled) return;
     this.started = true;
     this.deps.store.updateBotState(this.config.id, { status: "running" });
+    const nonRoutableStrategies = this.getNonRoutableAllowedStrategies();
+    if (nonRoutableStrategies.length > 0) {
+      this.deps.logger.bot(this.config, "non_routable_allowed_strategies", {
+        allowedStrategies: this.allowedStrategies.join(","),
+        nonRoutableStrategies: nonRoutableStrategies.join(","),
+        note: "ignored_for_architect_family_switching"
+      });
+    }
     this.unsubscribe = this.deps.marketStream.subscribe(this.config.symbol, (tick: MarketTick) => {
       this.onMarketTick(tick);
     });
@@ -74,8 +84,8 @@ class TradingBot extends BaseBot {
         updatedAt: tick.timestamp
       },
       performance: {
+        avgTradePnlUsdt: performance?.avgTradePnlUsdt || 0,
         drawdown: performance?.drawdown || 0,
-        expectancy: performance?.expectancy || 0,
         pnl: performance?.pnl || 0,
         profitFactor: performance?.profitFactor || 0,
         tradesCount: performance?.tradesCount || 0,
@@ -106,6 +116,7 @@ class TradingBot extends BaseBot {
     allowReason?: string | null;
     architectState: any;
     blockReason?: string | null;
+    context?: any;
     contextSnapshot: any;
     decision?: any;
     diagnostics?: any;
@@ -123,6 +134,7 @@ class TradingBot extends BaseBot {
   }) {
     const baseDiagnostics = this.buildEntryDiagnostics({
       architectState: params.architectState,
+      context: params.context,
       contextSnapshot: params.contextSnapshot,
       decision: params.decision,
       economics: params.economics,
@@ -260,8 +272,32 @@ class TradingBot extends BaseBot {
     }
   }
 
+  getNonRoutableAllowedStrategies() {
+    if (typeof this.deps.strategySwitcher?.getNonRoutableStrategies === "function") {
+      return this.deps.strategySwitcher.getNonRoutableStrategies(this.allowedStrategies);
+    }
+    return (this.allowedStrategies || []).filter((strategyId) => {
+      if (typeof this.deps.strategySwitcher?.getStrategyFamily !== "function") return false;
+      return this.deps.strategySwitcher.getStrategyFamily(strategyId) === "other";
+    });
+  }
+
   getPublishedArchitectAssessment(): ArchitectAssessment | null {
     return this.deps.store.getArchitectPublishedAssessment(this.config.symbol);
+  }
+
+  resolveArchitectMaturityBlockReason(contextSnapshot: any) {
+    if (contextSnapshot?.windowMode === "post_switch_segment") {
+      return "architect_post_switch_low_maturity";
+    }
+    return "architect_low_maturity";
+  }
+
+  resolveEntryMaturityThreshold(contextSnapshot: any) {
+    if (contextSnapshot?.windowMode === "post_switch_segment") {
+      return this.minPostSwitchEntryContextMaturity;
+    }
+    return this.minEntryContextMaturity;
   }
 
   evaluateArchitectUsability(params: {
@@ -269,8 +305,10 @@ class TradingBot extends BaseBot {
     timestamp?: number;
   } = {}) {
     const architect = this.getPublishedArchitectAssessment();
+    const contextSnapshot = this.deps.store.getContextSnapshot(this.config.symbol);
     const publisher = this.deps.store.getArchitectPublisherState(this.config.symbol);
     const evaluatedAt = Number.isFinite(Number(params.timestamp)) ? Number(params.timestamp) : now();
+    const entryMaturityThreshold = this.resolveEntryMaturityThreshold(contextSnapshot);
     const currentFamily = params.currentFamily || this.deps.strategySwitcher.getStrategyFamily(this.strategy.id);
     const architectAgeMs = architect?.updatedAt ? Math.max(0, evaluatedAt - architect.updatedAt) : null;
     const staleThresholdMs = Math.max((publisher?.publishIntervalMs || 30_000) * 2, this.maxArchitectStateAgeMs);
@@ -292,8 +330,8 @@ class TradingBot extends BaseBot {
       blockReason = "architect_no_trade";
     } else if (architectStale) {
       blockReason = "architect_stale";
-    } else if (architect.contextMaturity < this.minEntryContextMaturity) {
-      blockReason = "architect_low_maturity";
+    } else if (architect.contextMaturity < entryMaturityThreshold) {
+      blockReason = this.resolveArchitectMaturityBlockReason(contextSnapshot);
     }
 
     const familyMatch = actionableFamily ? currentFamily === actionableFamily : null;
@@ -304,6 +342,7 @@ class TradingBot extends BaseBot {
       architectStale,
       blockReason,
       currentFamily,
+      entryMaturityThreshold,
       familyMatch,
       publisher,
       ready: Boolean(architect && publisher?.ready && architect.sufficientData),
@@ -382,6 +421,16 @@ class TradingBot extends BaseBot {
     });
 
     if (!switchPlan) return;
+    const livePosition = this.deps.store.getPosition(this.config.id);
+    if (livePosition) {
+      this.updateArchitectSyncState(livePosition, timestamp);
+      this.deps.logger.bot(this.config, "strategy_alignment_skipped", {
+        nextStrategy: switchPlan.nextStrategyId,
+        reason: "position_opened_before_apply",
+        targetFamily: switchPlan.targetFamily
+      });
+      return;
+    }
     this.strategy = this.deps.strategyRegistry.createStrategy(switchPlan.nextStrategyId);
     this.deps.store.updateBotState(this.config.id, {
       activeStrategyId: switchPlan.nextStrategyId,
@@ -417,8 +466,14 @@ class TradingBot extends BaseBot {
     const momentumEdgePct = Number.isFinite(momentum)
       ? Math.abs(momentum) / latestPrice
       : 0;
-    const expectedGrossEdgePct = Math.max(meanReversionGapPct, emaGapPct, momentumEdgePct, 0);
-    const feeRate = Math.max(Number(this.deps.executionEngine?.feeRate) || 0.001, 0);
+    const strategyId = params.context?.strategyId || this.strategy?.id || "";
+    const expectedGrossEdgePct = strategyId === "rsiReversion"
+      ? Math.max(0, (0.6 * meanReversionGapPct) + (0.25 * emaGapPct) + (0.15 * momentumEdgePct))
+      : strategyId === "emaCross"
+        ? Math.max(0, (0.5 * emaGapPct) + (0.35 * momentumEdgePct) + (0.15 * meanReversionGapPct))
+        : Math.max(0, (0.4 * meanReversionGapPct) + (0.35 * emaGapPct) + (0.25 * momentumEdgePct));
+    const resolvedFeeRate = Number(this.deps.executionEngine?.feeRate);
+    const feeRate = Math.max(Number.isFinite(resolvedFeeRate) ? resolvedFeeRate : 0, 0);
     const estimatedEntryFeePct = feeRate;
     const estimatedExitFeePct = feeRate;
     const estimatedSlippagePct = this.entrySlippageBufferPct;
@@ -446,6 +501,7 @@ class TradingBot extends BaseBot {
 
   buildEntryDiagnostics(params: {
     architectState: any;
+    context?: any;
     contextSnapshot: any;
     decision?: any;
     economics: any;
@@ -463,13 +519,41 @@ class TradingBot extends BaseBot {
     const state = params.state || {};
     const signalState = params.signalState || state;
     const latestPrice = Number(params.tick?.price || 0);
+    const strategyRsiRaw = params.context?.indicators?.rsi;
+    const strategyRsi = Number.isFinite(Number(strategyRsiRaw))
+      ? Number(Number(strategyRsiRaw).toFixed(4))
+      : null;
     const cooldownUntil = signalState?.cooldownUntil || state.cooldownUntil || null;
     const estimatedFeePct = params.economics.estimatedEntryFeePct + params.economics.estimatedExitFeePct;
     const estimatedCostPct = estimatedFeePct + params.economics.estimatedSlippagePct;
     const contextMaturity = architect?.contextMaturity ?? params.contextSnapshot?.features?.maturity ?? null;
+    const architectContextRsiRaw = params.contextSnapshot?.features?.contextRsi;
+    const architectContextRsi = Number.isFinite(Number(architectContextRsiRaw))
+      ? Number(Number(architectContextRsiRaw).toFixed(4))
+      : null;
+    const architectRsiIntensityRaw = params.contextSnapshot?.features?.rsiIntensity;
+    const architectRsiIntensity = architectRsiIntensityRaw === undefined || architectRsiIntensityRaw === null
+      ? null
+      : Number(Number(architectRsiIntensityRaw).toFixed(4));
     const dataQuality = params.contextSnapshot?.features?.dataQuality !== undefined
       ? Number(Number(params.contextSnapshot.features.dataQuality).toFixed(4))
       : null;
+    const rollingMaturityRaw = params.contextSnapshot?.rollingMaturity;
+    const rollingMaturity = rollingMaturityRaw === undefined || rollingMaturityRaw === null
+      ? null
+      : Number(Number(rollingMaturityRaw).toFixed(4));
+    const postSwitchCoveragePctRaw = params.contextSnapshot?.postSwitchCoveragePct;
+    const postSwitchCoveragePct = postSwitchCoveragePctRaw === undefined || postSwitchCoveragePctRaw === null
+      ? null
+      : Number(Number(postSwitchCoveragePctRaw).toFixed(4));
+    const contextWindowMode = params.contextSnapshot?.windowMode || null;
+    const effectiveWindowStartedAt = params.contextSnapshot?.effectiveWindowStartedAt ?? null;
+    const entryMaturityThreshold = Number(Number(
+      params.architectState.entryMaturityThreshold ?? this.resolveEntryMaturityThreshold(params.contextSnapshot)
+    ).toFixed(4));
+    const postSwitchWarmupActive = contextWindowMode === "post_switch_segment"
+      && contextMaturity !== null
+      && contextMaturity < entryMaturityThreshold;
     const architectPublishedAt = params.architectState.publisher?.lastPublishedAt || architect?.updatedAt || null;
     const architectSymbol = architect?.symbol || null;
     const architectSymbolMatch = architectSymbol ? architectSymbol === this.config.symbol : null;
@@ -488,6 +572,9 @@ class TradingBot extends BaseBot {
       architectPublishedAt,
       architectReady: params.architectState.ready,
       architectSourceUsed: architect ? "published" : "none",
+      architectContextRsi,
+      architectContextRsiSource: architectContextRsi === null ? null : "effective_context_window",
+      architectRsiIntensity,
       architectStale: params.architectState.architectStale,
       architectSymbol,
       architectSymbolMatch,
@@ -502,9 +589,11 @@ class TradingBot extends BaseBot {
       cooldownUntil,
       currentFamily: params.architectState.currentFamily,
       contextMaturity: contextMaturity === null ? null : Number(Number(contextMaturity).toFixed(4)),
+      contextWindowMode,
       dataQuality,
       decisionAction: params.decision?.action || "not_evaluated",
       decisionConfidence: params.decision ? Number(Number(params.decision.confidence || 0).toFixed(4)) : 0,
+      entryMaturityThreshold,
       entryDebounceRequired: debounceRequired,
       entrySignalStreak,
       estimatedCostPct: Number(estimatedCostPct.toFixed(4)),
@@ -523,6 +612,9 @@ class TradingBot extends BaseBot {
       minNotionalUsdt: Number(tradeConstraints.minNotionalUsdt.toFixed(4)),
       minQuantity: Number(tradeConstraints.minQuantity.toFixed(8)),
       notionalUsdt: Number(params.economics.notionalUsdt.toFixed(4)),
+      postSwitchCoveragePct,
+      postSwitchWarmupActive,
+      postSwitchWarmupReason: postSwitchWarmupActive ? "post_switch_context_immature" : null,
       publisherLastObservedAt: params.architectState.publisher?.lastObservedAt || null,
       publisherLastPublishedAt: params.architectState.publisher?.lastPublishedAt || null,
       publishedFamily: architect?.recommendedFamily || null,
@@ -532,14 +624,18 @@ class TradingBot extends BaseBot {
       requiredEdgePct: Number(params.economics.requiredEdgePct.toFixed(4)),
       riskAllowed: params.riskGate ? Boolean(params.riskGate.allowed) : null,
       riskReason: params.riskGate?.reason || null,
+      rollingMaturity,
       signalAgreement: architect ? Number(architect.signalAgreement.toFixed(4)) : null,
       signalEvaluated: params.signalEvaluated !== false,
+      strategyRsi,
+      strategyRsiSource: strategyRsi === null ? null : "strategy_indicator_snapshot",
       strategy: params.strategyId,
       targetFamily: params.architectState.actionableFamily || null,
       symbol: this.config.symbol,
       tickSymbol,
       tickSymbolMatch,
-      tickTimestamp: params.tick?.timestamp || null
+      tickTimestamp: params.tick?.timestamp || null,
+      effectiveWindowStartedAt
     };
   }
 
@@ -563,6 +659,7 @@ class TradingBot extends BaseBot {
     const tradeConstraints = this.deps.riskManager.getTradeConstraints();
     const diagnostics = this.buildEntryDiagnostics({
       architectState,
+      context: params.context,
       contextSnapshot,
       decision: params.decision,
       economics,
@@ -643,6 +740,7 @@ class TradingBot extends BaseBot {
       this.logEntryEvaluation({
         architectState,
         blockReason: architectState.blockReason,
+        context: null,
         contextSnapshot: shortCircuitContextSnapshot,
         decision: null,
         economics: shortCircuitEconomics,
@@ -715,6 +813,7 @@ class TradingBot extends BaseBot {
           this.logEntryEvaluation({
             architectState: currentArchitectState,
             contextSnapshot: latestContextSnapshot,
+            context,
             decision,
             economics: sizingEconomics,
             outcome: "skipped",
@@ -742,6 +841,7 @@ class TradingBot extends BaseBot {
           this.logEntryEvaluation({
             architectState: currentArchitectState,
             blockReason: finalEntryGate.diagnostics.blockReason,
+            context,
             contextSnapshot: latestContextSnapshot,
             decision,
             diagnostics: finalEntryGate.diagnostics,
@@ -795,6 +895,7 @@ class TradingBot extends BaseBot {
           this.logEntryEvaluation({
             architectState: currentArchitectState,
             blockReason: executionRejectReason,
+            context,
             contextSnapshot: latestContextSnapshot,
             decision,
             diagnostics: executionDiagnostics,
@@ -821,6 +922,7 @@ class TradingBot extends BaseBot {
         this.logEntryEvaluation({
           allowReason: "entry_opened",
           architectState: currentArchitectState,
+          context,
           contextSnapshot: latestContextSnapshot,
           decision,
           diagnostics: finalEntryGate.diagnostics,
@@ -863,6 +965,7 @@ class TradingBot extends BaseBot {
         const blockedDiagnostics = {
           ...this.buildEntryDiagnostics({
             architectState: currentArchitectState,
+            context,
             contextSnapshot: latestContextSnapshot,
             decision,
             economics: baseEconomics,
@@ -880,6 +983,7 @@ class TradingBot extends BaseBot {
         this.logEntryEvaluation({
           architectState: currentArchitectState,
           blockReason: riskGate.reason,
+          context,
           contextSnapshot: latestContextSnapshot,
           decision,
           diagnostics: blockedDiagnostics,
@@ -899,6 +1003,7 @@ class TradingBot extends BaseBot {
       } else if (decision.action === "buy") {
         this.logEntryEvaluation({
           architectState: currentArchitectState,
+          context,
           contextSnapshot: latestContextSnapshot,
           decision,
           economics: baseEconomics,
@@ -917,6 +1022,7 @@ class TradingBot extends BaseBot {
       } else if (decision.action !== "buy") {
         this.logEntryEvaluation({
           architectState: currentArchitectState,
+          context,
           contextSnapshot: latestContextSnapshot,
           decision,
           economics: baseEconomics,

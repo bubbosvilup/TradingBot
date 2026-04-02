@@ -10,6 +10,7 @@ export interface ContextFeatures {
   emaSeparation: number;
   slopeConsistency: number;
   reversionStretch: number;
+  contextRsi: number | null;
   rsiIntensity: number;
   volatilityRisk: number;
   chopiness: number;

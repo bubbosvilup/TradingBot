@@ -195,6 +195,7 @@ function createHarness(strategyEvaluate, options = {}) {
       breakoutInstability: 0.08,
       breakoutQuality: 0.64,
       chopiness: 0.22,
+      contextRsi: 62,
       dataQuality: 0.92,
       directionalEfficiency: 0.74,
       emaBias: 0.4,
@@ -208,6 +209,16 @@ function createHarness(strategyEvaluate, options = {}) {
       volatilityRisk: 0.18
     },
     observedAt: Date.now(),
+    effectiveSampleSize: 120,
+    effectiveWarmupComplete: true,
+    effectiveWindowSpanMs: 240_000,
+    effectiveWindowStartedAt: Date.now() - 240_000,
+    lastPublishedRegimeSwitchAt: null,
+    lastPublishedRegimeSwitchFrom: null,
+    lastPublishedRegimeSwitchTo: null,
+    postSwitchCoveragePct: null,
+    rollingMaturity: 0.82,
+    rollingSampleSize: 120,
     sampleSize: 120,
     structureState: "trending",
     summary: "Context ready.",
@@ -215,6 +226,7 @@ function createHarness(strategyEvaluate, options = {}) {
     trendBias: "bullish",
     volatilityState: "normal",
     warmupComplete: true,
+    windowMode: "rolling_full",
     windowSpanMs: 240_000,
     windowStartedAt: Date.now() - 240_000
   });
@@ -251,6 +263,9 @@ function runTradingBotTests() {
     }
     if (debounceEvaluation.metadata.architectSourceUsed !== "published" || debounceEvaluation.metadata.architectUpdatedAt !== 1_000_000) {
       throw new Error("debounce evaluation log missing published architect snapshot details");
+    }
+    if (debounceEvaluation.metadata.strategyRsi !== 55 || debounceEvaluation.metadata.architectContextRsi !== 62 || debounceEvaluation.metadata.architectRsiIntensity !== 0.24) {
+      throw new Error("debounce evaluation log should distinguish strategy RSI from architect context RSI diagnostics");
     }
 
     clock += 1_000;
@@ -334,6 +349,65 @@ function runTradingBotTests() {
     }
     if (!realignHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.skipReason === "no_entry_signal")) {
       throw new Error("missing structured entry evaluation log for no_entry_signal");
+    }
+
+    clock += 10_000;
+    const nonRoutableHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["no_trade"]
+    }), {
+      allowedStrategies: ["breakout", "emaCross"],
+      strategy: "emaCross",
+      strategySwitcher: new StrategySwitcher()
+    });
+    const nonRoutableLog = nonRoutableHarness.botLogs.find((entry) => entry.message === "non_routable_allowed_strategies");
+    if (!nonRoutableLog) {
+      throw new Error("missing non_routable_allowed_strategies warning when breakout is configured for architect switching");
+    }
+    if (nonRoutableLog.metadata.nonRoutableStrategies !== "breakout") {
+      throw new Error(`unexpected non-routable strategy warning payload: ${JSON.stringify(nonRoutableLog.metadata)}`);
+    }
+
+    clock += 10_000;
+    let raceStore = null;
+    const raceSwitcher = new StrategySwitcher();
+    raceSwitcher.evaluate = function evaluateWithInjectedPosition() {
+      raceStore.setPosition("bot_test", {
+        botId: "bot_test",
+        confidence: 0.75,
+        entryPrice: 100,
+        id: "pos-race",
+        notes: ["injected_race_position"],
+        openedAt: clock - 1_000,
+        quantity: 0.25,
+        strategyId: "emaCross",
+        symbol: "BTC/USDT"
+      });
+      return {
+        nextStrategyId: "rsiReversion",
+        reason: "architect_family_mean_reversion",
+        targetFamily: "mean_reversion"
+      };
+    };
+    const raceHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["position_managed"]
+    }), {
+      allowedStrategies: ["emaCross", "rsiReversion"],
+      publishedArchitect: createPublishedArchitect(),
+      strategy: "emaCross",
+      strategySwitcher: raceSwitcher
+    });
+    raceStore = raceHarness.store;
+    raceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const raceState = raceHarness.store.getBotState("bot_test");
+    if (raceState.activeStrategyId !== "emaCross") {
+      throw new Error(`bot should not switch strategy if a position appears before apply: ${raceState.activeStrategyId}`);
+    }
+    if (!raceHarness.botLogs.find((entry) => entry.message === "strategy_alignment_skipped" && entry.metadata.reason === "position_opened_before_apply")) {
+      throw new Error("missing strategy_alignment_skipped log when switch apply loses flat state");
     }
 
     clock += 10_000;
@@ -452,6 +526,217 @@ function runTradingBotTests() {
     }
 
     clock += 10_000;
+    const rollingPartialMaturityHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      contextSnapshot: {
+        dataMode: "live",
+        effectiveSampleSize: 42,
+        effectiveWarmupComplete: true,
+        effectiveWindowSpanMs: 105_000,
+        effectiveWindowStartedAt: clock - 105_000,
+        features: {
+          breakoutDirection: "up",
+          breakoutInstability: 0.07,
+          breakoutQuality: 0.43,
+          chopiness: 0.31,
+          contextRsi: 58,
+          dataQuality: 0.93,
+          directionalEfficiency: 0.63,
+          emaBias: 0.18,
+          emaSeparation: 0.41,
+          featureConflict: 0.12,
+          maturity: 0.35,
+          netMoveRatio: 0.008,
+          reversionStretch: 0.16,
+          rsiIntensity: 0.16,
+          slopeConsistency: 0.56,
+          volatilityRisk: 0.2
+        },
+        lastPublishedRegimeSwitchAt: null,
+        lastPublishedRegimeSwitchFrom: null,
+        lastPublishedRegimeSwitchTo: null,
+        observedAt: clock,
+        postSwitchCoveragePct: null,
+        rollingMaturity: 0.35,
+        rollingSampleSize: 42,
+        sampleSize: 42,
+        structureState: "trending",
+        summary: "Rolling window partially mature.",
+        symbol: "BTC/USDT",
+        trendBias: "bullish",
+        volatilityState: "normal",
+        warmupComplete: true,
+        windowMode: "rolling_full",
+        windowSpanMs: 105_000,
+        windowStartedAt: clock - 105_000
+      },
+      publishedArchitect: createTrendArchitect({
+        contextMaturity: 0.35,
+        updatedAt: clock
+      })
+    });
+    rollingPartialMaturityHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (rollingPartialMaturityHarness.store.getPosition("bot_test")) {
+      throw new Error("rolling_full context should still block entries below the 0.5 maturity threshold");
+    }
+    const rollingPartialBlock = rollingPartialMaturityHarness.botLogs.find((entry) =>
+      entry.message === "entry_evaluated"
+      && entry.metadata.blockReason === "architect_low_maturity"
+    );
+    if (!rollingPartialBlock || rollingPartialBlock.metadata.entryMaturityThreshold !== 0.5) {
+      throw new Error("rolling_full maturity gate should remain unchanged at 0.5");
+    }
+
+    clock += 10_000;
+    const postSwitchImmatureHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      contextSnapshot: {
+        dataMode: "live",
+        effectiveSampleSize: 18,
+        effectiveWarmupComplete: false,
+        effectiveWindowSpanMs: 18_000,
+        effectiveWindowStartedAt: clock - 18_000,
+        features: {
+          breakoutDirection: "down",
+          breakoutInstability: 0.11,
+          breakoutQuality: 0.29,
+          chopiness: 0.44,
+          contextRsi: 34,
+          dataQuality: 0.9,
+          directionalEfficiency: 0.42,
+          emaBias: -0.08,
+          emaSeparation: 0.21,
+          featureConflict: 0.16,
+          maturity: 0.2,
+          netMoveRatio: -0.004,
+          reversionStretch: 0.52,
+          rsiIntensity: 0.32,
+          slopeConsistency: 0.34,
+          volatilityRisk: 0.22
+        },
+        lastPublishedRegimeSwitchAt: clock - 18_000,
+        lastPublishedRegimeSwitchFrom: "trend",
+        lastPublishedRegimeSwitchTo: "range",
+        observedAt: clock,
+        postSwitchCoveragePct: 0.08,
+        rollingMaturity: 0.83,
+        rollingSampleSize: 120,
+        sampleSize: 18,
+        structureState: "choppy",
+        summary: "Post-switch segment still warming up.",
+        symbol: "BTC/USDT",
+        trendBias: "neutral",
+        volatilityState: "normal",
+        warmupComplete: true,
+        windowMode: "post_switch_segment",
+        windowSpanMs: 240_000,
+        windowStartedAt: clock - 240_000
+      },
+      publishedArchitect: createTrendArchitect({
+        contextMaturity: 0.2,
+        updatedAt: clock
+      }),
+      publisherState: {
+        lastRegimeSwitchAt: clock - 18_000,
+        lastRegimeSwitchFrom: "trend",
+        lastRegimeSwitchTo: "range",
+        ready: true
+      }
+    });
+    postSwitchImmatureHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (postSwitchImmatureHarness.store.getPosition("bot_test")) {
+      throw new Error("bot opened a position during post-switch low-maturity warmup");
+    }
+    const postSwitchBlock = postSwitchImmatureHarness.botLogs.find((entry) =>
+      entry.message === "entry_evaluated"
+      && entry.metadata.blockReason === "architect_post_switch_low_maturity"
+    );
+    if (!postSwitchBlock) {
+      throw new Error("missing architect_post_switch_low_maturity diagnostics");
+    }
+    if (postSwitchBlock.metadata.postSwitchCoveragePct !== 0.08 || postSwitchBlock.metadata.rollingMaturity !== 0.83 || postSwitchBlock.metadata.postSwitchWarmupReason !== "post_switch_context_immature") {
+      throw new Error("post-switch low-maturity diagnostics missing warmup quality metadata");
+    }
+    if (postSwitchBlock.metadata.effectiveWindowStartedAt !== clock - 18_000 || postSwitchBlock.metadata.contextWindowMode !== "post_switch_segment") {
+      throw new Error("post-switch low-maturity diagnostics missing effective window metadata");
+    }
+    if (postSwitchBlock.metadata.entryMaturityThreshold !== 0.3) {
+      throw new Error("post-switch low-maturity diagnostics should reflect the reduced 0.3 entry threshold");
+    }
+
+    clock += 10_000;
+    const postSwitchReadyHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      contextSnapshot: {
+        dataMode: "live",
+        effectiveSampleSize: 60,
+        effectiveWarmupComplete: true,
+        effectiveWindowSpanMs: 105_000,
+        effectiveWindowStartedAt: clock - 105_000,
+        features: {
+          breakoutDirection: "up",
+          breakoutInstability: 0.08,
+          breakoutQuality: 0.48,
+          chopiness: 0.28,
+          contextRsi: 57,
+          dataQuality: 0.94,
+          directionalEfficiency: 0.66,
+          emaBias: 0.24,
+          emaSeparation: 0.46,
+          featureConflict: 0.09,
+          maturity: 0.35,
+          netMoveRatio: 0.011,
+          reversionStretch: 0.14,
+          rsiIntensity: 0.14,
+          slopeConsistency: 0.61,
+          volatilityRisk: 0.18
+        },
+        lastPublishedRegimeSwitchAt: clock - 105_000,
+        lastPublishedRegimeSwitchFrom: "range",
+        lastPublishedRegimeSwitchTo: "trend",
+        observedAt: clock,
+        postSwitchCoveragePct: 0.35,
+        rollingMaturity: 0.82,
+        rollingSampleSize: 120,
+        sampleSize: 60,
+        structureState: "trending",
+        summary: "Post-switch segment mature enough for entry.",
+        symbol: "BTC/USDT",
+        trendBias: "bullish",
+        volatilityState: "normal",
+        warmupComplete: true,
+        windowMode: "post_switch_segment",
+        windowSpanMs: 300_000,
+        windowStartedAt: clock - 300_000
+      },
+      publishedArchitect: createTrendArchitect({
+        contextMaturity: 0.35,
+        updatedAt: clock
+      }),
+      publisherState: {
+        lastRegimeSwitchAt: clock - 105_000,
+        lastRegimeSwitchFrom: "range",
+        lastRegimeSwitchTo: "trend",
+        ready: true
+      }
+    });
+    postSwitchReadyHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    postSwitchReadyHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!postSwitchReadyHarness.store.getPosition("bot_test")) {
+      throw new Error("post_switch_segment context should allow entries once maturity reaches the reduced 0.3 threshold");
+    }
+
+    clock += 10_000;
     const staleHarness = createHarness(() => ({
       action: "buy",
       confidence: 0.91,
@@ -519,6 +804,20 @@ function runTradingBotTests() {
         updatedAt: clock
       })
     });
+    const conservativeTrendEconomics = edgeHarness.bot.estimateEntryEconomics({
+      context: {
+        indicators: edgeHarness.bot.buildContext({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock }).indicators,
+        strategyId: "emaCross"
+      },
+      price: 100,
+      quantity: 1
+    });
+    if (conservativeTrendEconomics.expectedGrossEdgePct >= 0.0002) {
+      throw new Error(`trend edge estimate should be more conservative than max-proxy behavior: ${conservativeTrendEconomics.expectedGrossEdgePct}`);
+    }
+    if (conservativeTrendEconomics.requiredEdgePct !== 0.003) {
+      throw new Error(`economic gate should use the reduced paper/mock hurdle buffers: ${conservativeTrendEconomics.requiredEdgePct}`);
+    }
     edgeHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     clock += 1_000;
     edgeHarness.bot.onMarketTick({ price: 100.01, source: "mock", symbol: "BTC/USDT", timestamp: clock });
@@ -527,6 +826,25 @@ function runTradingBotTests() {
     }
     if (!edgeHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "insufficient_edge_after_costs")) {
       throw new Error("missing insufficient_edge_after_costs block log");
+    }
+
+    const conservativeReversionEconomics = edgeHarness.bot.estimateEntryEconomics({
+      context: {
+        indicators: {
+          emaBaseline: 100,
+          emaFast: 100.02,
+          emaSlow: 100,
+          momentum: 0.02,
+          rsi: 33,
+          volatility: 0.01
+        },
+        strategyId: "rsiReversion"
+      },
+      price: 100,
+      quantity: 1
+    });
+    if (conservativeReversionEconomics.expectedGrossEdgePct >= 0.0002) {
+      throw new Error(`reversion edge estimate should be more conservative than max-proxy behavior: ${conservativeReversionEconomics.expectedGrossEdgePct}`);
     }
 
     clock += 10_000;

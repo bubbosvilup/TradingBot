@@ -79,7 +79,7 @@ class ContextBuilder {
     const emaSlow = this.indicatorEngine.ema(prices, Math.min(21, Math.max(5, Math.floor(prices.length / 3))));
     const emaFastPrev = prices.length > 5 ? this.indicatorEngine.ema(prices.slice(0, -5), Math.min(9, Math.max(3, Math.floor((prices.length - 5) / 6)))) : null;
     const emaSlowPrev = prices.length > 5 ? this.indicatorEngine.ema(prices.slice(0, -5), Math.min(21, Math.max(5, Math.floor((prices.length - 5) / 3)))) : null;
-    const rsi = this.indicatorEngine.rsi(prices, Math.min(14, Math.max(5, Math.floor(prices.length / 4))));
+    const contextRsi = this.indicatorEngine.rsi(prices, Math.min(14, Math.max(5, Math.floor(prices.length / 4))));
     const epsilon = Math.max(latestPrice * 1e-6, 1e-8);
     const netChange = Math.abs(latestPrice - prices[0]);
     const travel = absoluteDiffs.reduce((sum, value) => sum + value, 0);
@@ -106,7 +106,7 @@ class ContextBuilder {
 
     const zScore = rollingStd > 0 ? (latestPrice - rollingMean) / (rollingStd + epsilon) : 0;
     const reversionStretch = clamp(Math.abs(zScore) / 2.5, 0, 1);
-    const rsiIntensity = rsi === null ? 0 : clamp(Math.abs(rsi - 50) / 50, 0, 1);
+    const rsiIntensity = contextRsi === null ? 0 : clamp(Math.abs(contextRsi - 50) / 50, 0, 1);
 
     const baselineVol = stddev(returns);
     const recentVol = stddev(recentReturns);
@@ -210,6 +210,7 @@ class ContextBuilder {
         breakoutInstability,
         breakoutQuality,
         chopiness,
+        contextRsi,
         dataQuality,
         directionalEfficiency,
         emaBias,
@@ -256,6 +257,7 @@ class ContextBuilder {
         breakoutInstability: 0,
         breakoutQuality: 0,
         chopiness: 0,
+        contextRsi: null,
         dataQuality: 0,
         directionalEfficiency: 0,
         emaBias: 0,

@@ -18,8 +18,8 @@ function buildContext(overrides = {}) {
     latestPrice: 100.4,
     localRegimeHint: "range",
     performance: {
+      avgTradePnlUsdt: 0,
       drawdown: 0,
-      expectancy: 0,
       pnl: 0,
       profitFactor: 0,
       tradesCount: 0,
@@ -41,8 +41,8 @@ function buildContext(overrides = {}) {
       ...(overrides.indicators || {})
     },
     performance: {
+      avgTradePnlUsdt: 0,
       drawdown: 0,
-      expectancy: 0,
       pnl: 0,
       profitFactor: 0,
       tradesCount: 0,
@@ -157,8 +157,8 @@ function runActiveStrategiesTests() {
     latestPrice: 99.5,
     localRegimeHint: "trend",
     performance: {
+      avgTradePnlUsdt: 0,
       drawdown: 0,
-      expectancy: 0,
       pnl: 0,
       profitFactor: 0,
       tradesCount: 0,
@@ -218,8 +218,8 @@ function runActiveStrategiesTests() {
     latestPrice: 100.4,
     localRegimeHint: "range",
     performance: {
+      avgTradePnlUsdt: 0,
       drawdown: 0,
-      expectancy: 0,
       pnl: 0,
       profitFactor: 0,
       tradesCount: 0,

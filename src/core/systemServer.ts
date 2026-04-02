@@ -91,7 +91,14 @@ class SystemServer {
   getArchitectContextFeatures(context: any) {
     const features = context?.features || null;
     if (!features) return null;
+    const architectContextRsi = Number.isFinite(Number(features.contextRsi))
+      ? Number(features.contextRsi)
+      : null;
+    const architectRsiIntensity = Number(features.rsiIntensity || 0);
     return {
+      architectContextRsi,
+      architectContextRsiSource: architectContextRsi === null ? null : "effective_context_window",
+      architectRsiIntensity,
       breakoutInstability: Number(features.breakoutInstability || 0),
       breakoutQuality: Number(features.breakoutQuality || 0),
       chopiness: Number(features.chopiness || 0),
@@ -100,7 +107,7 @@ class SystemServer {
       emaSeparation: Number(features.emaSeparation || 0),
       featureConflict: Number(features.featureConflict || 0),
       reversionStretch: Number(features.reversionStretch || 0),
-      rsiIntensity: Number(features.rsiIntensity || 0),
+      rsiIntensity: architectRsiIntensity,
       slopeConsistency: Number(features.slopeConsistency || 0),
       volatilityRisk: Number(features.volatilityRisk || 0)
     };
@@ -122,12 +129,16 @@ class SystemServer {
         required: publisher.challengerRequired
       } : null,
       contextFeatures,
+      contextWindowMode: context?.windowMode || null,
       dataQuality: contextFeatures?.dataQuality || 0,
+      effectiveWindowStartedAt: context?.effectiveWindowStartedAt ?? null,
       hysteresisActive: publisher?.hysteresisActive || false,
       nextPublishAt: publisher?.nextPublishAt || null,
+      postSwitchCoveragePct: context?.postSwitchCoveragePct ?? null,
       publisherLastObservedAt: publisher?.lastObservedAt || null,
       publisherLastPublishedAt: publisher?.lastPublishedAt || null,
       ready: source === "published" ? (publisher ? publisher.ready : Boolean(assessment?.sufficientData)) : false,
+      rollingMaturity: context?.rollingMaturity ?? null,
       source,
       warmupRemainingMs: this.getArchitectWarmupRemainingMs(context)
     };
@@ -145,9 +156,11 @@ class SystemServer {
       } : null,
       contextMaturity: params.context?.features?.maturity || 0,
       contextFeatures,
+      contextWindowMode: params.context?.windowMode || null,
       dataMode: params.context?.dataMode || "unknown",
       dataQuality: contextFeatures?.dataQuality || 0,
       decisionStrength: 0,
+      effectiveWindowStartedAt: params.context?.effectiveWindowStartedAt ?? null,
       familyScores: {
         mean_reversion: 0,
         no_trade: 1,
@@ -157,6 +170,7 @@ class SystemServer {
       hysteresisActive: params.publisher?.hysteresisActive || false,
       marketRegime: "unclear",
       nextPublishAt: params.publisher?.nextPublishAt || null,
+      postSwitchCoveragePct: params.context?.postSwitchCoveragePct ?? null,
       publisherLastObservedAt: params.publisher?.lastObservedAt || null,
       publisherLastPublishedAt: params.publisher?.lastPublishedAt || null,
       ready: false,
@@ -177,6 +191,7 @@ class SystemServer {
       trendBias: params.context?.trendBias || "neutral",
       updatedAt: null,
       volatilityState: params.context?.volatilityState || "normal",
+      rollingMaturity: params.context?.rollingMaturity ?? null,
       warmupRemainingMs: this.getArchitectWarmupRemainingMs(params.context)
     };
   }

@@ -22,6 +22,7 @@ const { RegimeDetector } = require("../roles/regimeDetector.ts");
 const { BotArchitect } = require("../roles/botArchitect.ts");
 const { StateStore } = require("./stateStore.ts");
 const { createLogger } = require("../utils/logger.ts");
+const { resolveFeeRateFromEnv } = require("../utils/executionConfig.ts");
 const { formatDuration, now, sleep } = require("../utils/time.ts");
 
 function parseArgs(argv: string[]) {
@@ -117,6 +118,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const indicatorEngine = new IndicatorEngine();
   const riskManager = new RiskManager();
   const tradeConstraints = riskManager.getTradeConstraints();
+  const executionFee = resolveFeeRateFromEnv();
   const performanceMonitor = new PerformanceMonitor();
   const strategySwitcher = new StrategySwitcher();
   const regimeDetector = new RegimeDetector();
@@ -124,7 +126,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const botArchitect = new BotArchitect();
   const executionEngine = new ExecutionEngine({
     executionMode,
-    feeRate: 0.001,
+    feeRate: executionFee.feeRate,
     logger: logger.child("execution"),
     minTradeNotionalUsdt: tradeConstraints.minNotionalUsdt,
     minTradeQuantity: tradeConstraints.minQuantity,
@@ -219,6 +221,9 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     backtestEngine: backtestEngine.run().ok,
     bots: enabledBots.length,
     executionMode,
+    feeRate: executionFee.feeRate,
+    feeRateBps: executionFee.feeBps,
+    feeRateSource: executionFee.source,
     executionSafety: simulatedExecutionOnly ? "simulated_only" : "exchange_execution_enabled",
     marketMode,
     marketModeSource,

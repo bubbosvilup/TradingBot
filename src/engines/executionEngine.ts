@@ -2,6 +2,8 @@
 
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 
+const { resolveFeeRateFromEnv } = require("../utils/executionConfig.ts");
+
 class ExecutionEngine {
   store: any;
   userStream: any;
@@ -20,10 +22,13 @@ class ExecutionEngine {
     minTradeNotionalUsdt?: number;
     minTradeQuantity?: number;
   }) {
+    const resolvedFeeRate = deps.feeRate === undefined || deps.feeRate === null
+      ? resolveFeeRateFromEnv().feeRate
+      : Number(deps.feeRate);
     this.store = deps.store;
     this.userStream = deps.userStream;
     this.logger = deps.logger;
-    this.feeRate = Math.max(deps.feeRate || 0.001, 0);
+    this.feeRate = Math.max(Number.isFinite(resolvedFeeRate) ? resolvedFeeRate : 0, 0);
     this.executionMode = deps.executionMode || "paper";
     this.minTradeNotionalUsdt = Math.max(Number(deps.minTradeNotionalUsdt) || 25, 0);
     this.minTradeQuantity = Math.max(Number(deps.minTradeQuantity) || 1e-6, 0);

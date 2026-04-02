@@ -7,6 +7,7 @@ const { runBotArchitectTests } = require("./botArchitect.test");
 const { runContextServiceTests } = require("./contextService.test");
 const { runExecutionEngineTests } = require("./executionEngine.test");
 const { runOrchestratorTests } = require("./orchestrator.test");
+const { runRiskManagerTests } = require("./riskManager.test");
 const { runSystemServerTests } = require("./systemServer.test");
 const { runServerTests } = require("./server.test");
 const { runRuntimeTests } = require("./runtime.test");
@@ -26,6 +27,7 @@ async function main() {
     { name: "contextService", run: async () => runContextServiceTests() },
     { name: "executionEngine", run: async () => runExecutionEngineTests() },
     { name: "orchestrator", run: async () => runOrchestratorTests() },
+    { name: "riskManager", run: async () => runRiskManagerTests() },
     { name: "strategy", run: async () => runStrategyTests() },
     { name: "strategySwitcher", run: async () => runStrategySwitcherTests() },
     { name: "tradingBot", run: async () => runTradingBotTests() },

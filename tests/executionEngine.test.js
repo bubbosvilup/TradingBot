@@ -22,6 +22,7 @@ function createUserStream(store) {
 }
 
 function runExecutionEngineTests() {
+  const originalFeeBps = process.env.FEE_BPS;
   const store = new StateStore();
   const logs = [];
   const engine = new ExecutionEngine({
@@ -38,61 +39,82 @@ function runExecutionEngineTests() {
     userStream: createUserStream(store)
   });
 
-  const rejectedByQuantity = engine.openLong({
-    botId: "bot_qty",
-    confidence: 0.8,
-    price: 100,
-    quantity: 1e-7,
-    reason: ["test_order"],
-    strategyId: "emaCross",
-    symbol: "BTC/USDT"
-  });
-  if (rejectedByQuantity !== null) {
-    throw new Error("execution engine accepted quantity below minimum");
-  }
-  if (store.getPosition("bot_qty")) {
-    throw new Error("execution engine should not create a position when quantity is below minimum");
-  }
-  if (!logs.find((entry) => entry.event === "position_open_rejected" && entry.metadata.reason === "quantity_below_minimum")) {
-    throw new Error("missing quantity_below_minimum rejection log");
-  }
+  try {
+    process.env.FEE_BPS = "19";
+    const envResolvedEngine = new ExecutionEngine({
+      executionMode: "paper",
+      logger: {
+        info() {}
+      },
+      store: new StateStore(),
+      userStream: createUserStream(new StateStore())
+    });
+    if (envResolvedEngine.feeRate !== 0.0019) {
+      throw new Error(`execution engine did not resolve fee rate from env: ${envResolvedEngine.feeRate}`);
+    }
 
-  const rejectedByNotional = engine.openLong({
-    botId: "bot_notional",
-    confidence: 0.8,
-    price: 100,
-    quantity: 0.1,
-    reason: ["test_order"],
-    strategyId: "emaCross",
-    symbol: "BTC/USDT"
-  });
-  if (rejectedByNotional !== null) {
-    throw new Error("execution engine accepted notional below minimum");
-  }
-  if (store.getPosition("bot_notional")) {
-    throw new Error("execution engine should not create a position when notional is below minimum");
-  }
-  if (!logs.find((entry) => entry.event === "position_open_rejected" && entry.metadata.reason === "notional_below_minimum")) {
-    throw new Error("missing notional_below_minimum rejection log");
-  }
+    const rejectedByQuantity = engine.openLong({
+      botId: "bot_qty",
+      confidence: 0.8,
+      price: 100,
+      quantity: 1e-7,
+      reason: ["test_order"],
+      strategyId: "emaCross",
+      symbol: "BTC/USDT"
+    });
+    if (rejectedByQuantity !== null) {
+      throw new Error("execution engine accepted quantity below minimum");
+    }
+    if (store.getPosition("bot_qty")) {
+      throw new Error("execution engine should not create a position when quantity is below minimum");
+    }
+    if (!logs.find((entry) => entry.event === "position_open_rejected" && entry.metadata.reason === "quantity_below_minimum")) {
+      throw new Error("missing quantity_below_minimum rejection log");
+    }
 
-  const opened = engine.openLong({
-    botId: "bot_valid",
-    confidence: 0.8,
-    price: 100,
-    quantity: 0.5,
-    reason: ["test_order"],
-    strategyId: "emaCross",
-    symbol: "BTC/USDT"
-  });
-  if (!opened) {
-    throw new Error("execution engine rejected a valid open");
-  }
-  if (!store.getPosition("bot_valid")) {
-    throw new Error("execution engine did not persist a valid opened position");
-  }
-  if (!logs.find((entry) => entry.event === "position_opened" && entry.metadata.botId === "bot_valid")) {
-    throw new Error("missing position_opened log for valid order");
+    const rejectedByNotional = engine.openLong({
+      botId: "bot_notional",
+      confidence: 0.8,
+      price: 100,
+      quantity: 0.1,
+      reason: ["test_order"],
+      strategyId: "emaCross",
+      symbol: "BTC/USDT"
+    });
+    if (rejectedByNotional !== null) {
+      throw new Error("execution engine accepted notional below minimum");
+    }
+    if (store.getPosition("bot_notional")) {
+      throw new Error("execution engine should not create a position when notional is below minimum");
+    }
+    if (!logs.find((entry) => entry.event === "position_open_rejected" && entry.metadata.reason === "notional_below_minimum")) {
+      throw new Error("missing notional_below_minimum rejection log");
+    }
+
+    const opened = engine.openLong({
+      botId: "bot_valid",
+      confidence: 0.8,
+      price: 100,
+      quantity: 0.5,
+      reason: ["test_order"],
+      strategyId: "emaCross",
+      symbol: "BTC/USDT"
+    });
+    if (!opened) {
+      throw new Error("execution engine rejected a valid open");
+    }
+    if (!store.getPosition("bot_valid")) {
+      throw new Error("execution engine did not persist a valid opened position");
+    }
+    if (!logs.find((entry) => entry.event === "position_opened" && entry.metadata.botId === "bot_valid")) {
+      throw new Error("missing position_opened log for valid order");
+    }
+  } finally {
+    if (originalFeeBps === undefined) {
+      delete process.env.FEE_BPS;
+    } else {
+      process.env.FEE_BPS = originalFeeBps;
+    }
   }
 }
 

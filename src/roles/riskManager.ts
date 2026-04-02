@@ -19,6 +19,7 @@ class RiskManager {
   }>;
   minTradeNotionalUsdt: number;
   minTradeQuantity: number;
+  lossStreakResetWinUsdt: number;
 
   constructor() {
     this.profiles = {
@@ -28,6 +29,9 @@ class RiskManager {
     };
     this.minTradeNotionalUsdt = 25;
     this.minTradeQuantity = 1e-6;
+    // Require a small but real net win before clearing consecutive-loss memory.
+    // This avoids dust wins or near-flat closes resetting the streak too easily.
+    this.lossStreakResetWinUsdt = 0.1;
   }
 
   getProfile(riskProfile: RiskProfile) {
@@ -87,12 +91,17 @@ class RiskManager {
   onTradeClosed(params: { now: number; netPnl: number; riskProfile: RiskProfile; state: BotRuntimeState }) {
     const profile = this.profiles[params.riskProfile];
     const loss = params.netPnl <= 0;
+    const meaningfulWin = params.netPnl >= this.lossStreakResetWinUsdt;
     const reentryCooldownUntil = params.now + profile.reentryCooldownMs;
     const lossCooldownUntil = params.now + profile.cooldownMs;
     return {
       cooldownReason: loss ? "loss_cooldown" : "post_exit_reentry_guard",
       cooldownUntil: loss ? Math.max(lossCooldownUntil, reentryCooldownUntil) : reentryCooldownUntil,
-      lossStreak: loss ? params.state.lossStreak + 1 : 0
+      lossStreak: loss
+        ? params.state.lossStreak + 1
+        : meaningfulWin
+          ? 0
+          : params.state.lossStreak
     };
   }
 }

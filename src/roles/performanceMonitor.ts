@@ -1,4 +1,4 @@
-// Module responsibility: incremental PnL, win rate, drawdown and expectancy tracking per bot.
+// Module responsibility: incremental PnL, win rate, drawdown and average trade PnL tracking per bot.
 
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ClosedTradeRecord } from "../types/trade.ts";
@@ -18,9 +18,9 @@ class PerformanceMonitor {
 
     return {
       ...snapshot,
+      avgTradePnlUsdt: tradesCount > 0 ? pnl / tradesCount : 0,
       currentEquity,
       drawdown,
-      expectancy: tradesCount > 0 ? pnl / tradesCount : 0,
       grossLoss,
       grossProfit,
       losses,
@@ -38,4 +38,3 @@ class PerformanceMonitor {
 module.exports = {
   PerformanceMonitor
 };
-

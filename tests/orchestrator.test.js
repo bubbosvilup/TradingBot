@@ -2,6 +2,7 @@
 
 async function runOrchestratorTests() {
   const { parseArgs, startOrchestrator } = require("../src/core/orchestrator.ts");
+  const originalFeeBps = process.env.FEE_BPS;
 
   const kebabArgs = parseArgs(["--market-mode=live", "--execution-mode=paper", "--duration-ms=2200", "--summary-ms=1000"]);
   if (kebabArgs.marketMode !== "live" || kebabArgs.executionMode !== "paper") {
@@ -24,11 +25,17 @@ async function runOrchestratorTests() {
   console.log = (...args) => {
     captured.push(args.join(" "));
   };
+  process.env.FEE_BPS = "17";
 
   try {
     await startOrchestrator({ durationMs: 2200, serverEnabled: false, summaryEveryMs: 1000 });
   } finally {
     console.log = originalLog;
+    if (originalFeeBps === undefined) {
+      delete process.env.FEE_BPS;
+    } else {
+      process.env.FEE_BPS = originalFeeBps;
+    }
   }
 
   const transcript = captured.join("\n");
@@ -40,6 +47,9 @@ async function runOrchestratorTests() {
   }
   if (!transcript.includes("executionSafety=simulated_only")) {
     throw new Error(`orchestrator did not log simulated execution safety\n${transcript}`);
+  }
+  if (!transcript.includes("feeRate=0.0017") || !transcript.includes("feeRateSource=FEE_BPS")) {
+    throw new Error(`orchestrator did not log resolved fee configuration\n${transcript}`);
   }
   if (!transcript.includes("heartbeat")) {
     throw new Error(`orchestrator did not emit heartbeat\n${transcript}`);

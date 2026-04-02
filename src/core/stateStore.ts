@@ -121,10 +121,10 @@ class StateStore {
     this.closedTrades.set(config.id, []);
     this.positions.set(config.id, null);
     this.performance.set(config.id, {
+      avgTradePnlUsdt: 0,
       botId: config.id,
       currentEquity: initialBalance,
       drawdown: 0,
-      expectancy: 0,
       grossLoss: 0,
       grossProfit: 0,
       peakEquity: initialBalance,

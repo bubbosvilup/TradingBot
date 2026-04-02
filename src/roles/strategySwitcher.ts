@@ -54,6 +54,10 @@ class StrategySwitcher {
     return (strategyIds || []).filter((strategyId) => this.getStrategyFamily(strategyId) !== "other");
   }
 
+  getNonRoutableStrategies(strategyIds: string[]) {
+    return (strategyIds || []).filter((strategyId) => this.getStrategyFamily(strategyId) === "other");
+  }
+
   pickStrategyForFamily(family: RecommendedFamily, allowedStrategies: string[]) {
     const target = family === "trend_following"
       ? "emaCross"

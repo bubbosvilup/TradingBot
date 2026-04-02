@@ -43,6 +43,11 @@ function runStrategySwitcherTests() {
     activeStrategyId: "rsiReversion"
   };
 
+  const nonRoutable = switcher.getNonRoutableStrategies(["breakout", "emaCross"]);
+  if (nonRoutable.length !== 1 || nonRoutable[0] !== "breakout") {
+    throw new Error(`non-routable strategy detection returned an unexpected result: ${nonRoutable.join(",")}`);
+  }
+
   const switched = switcher.evaluate({
     architect: createArchitect(),
     availableStrategies: ["emaCross", "rsiReversion"],
