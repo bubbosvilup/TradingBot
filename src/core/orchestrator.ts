@@ -120,7 +120,6 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const tradeConstraints = riskManager.getTradeConstraints();
   const executionFee = resolveFeeRateFromEnv();
   const performanceMonitor = new PerformanceMonitor();
-  const strategySwitcher = new StrategySwitcher();
   const regimeDetector = new RegimeDetector();
   const contextBuilder = new ContextBuilder({ indicatorEngine });
   const botArchitect = new BotArchitect();
@@ -136,6 +135,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const backtestEngine = new BacktestEngine();
   const strategyRegistry = new StrategyRegistry({ configLoader, indicatorEngine });
   strategyRegistry.load();
+  const resolveStrategyFamily = (strategyId: string | null | undefined) => strategyRegistry.getStrategyFamily(strategyId);
+  const strategySwitcher = new StrategySwitcher({ resolveStrategyFamily });
 
   const enabledBots = (botConfig.bots || []).filter((bot: any) => bot.enabled);
   const marketStream = new MarketStream({
@@ -175,6 +176,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     logger,
     port: runtimeOptions.port ?? Number(process.env.PORT || 3000),
     publicDir: require("node:path").resolve(process.cwd(), "public"),
+    resolveStrategyFamily,
     startedAt,
     store
   });

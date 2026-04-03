@@ -12,12 +12,6 @@ function getMimeType(filePath: string) {
   return "text/html; charset=utf-8";
 }
 
-function getStrategyFamily(strategyId: string | null | undefined) {
-  if (strategyId === "emaCross") return "trend_following";
-  if (strategyId === "rsiReversion") return "mean_reversion";
-  return "other";
-}
-
 class SystemServer {
   store: any;
   logger: any;
@@ -29,8 +23,9 @@ class SystemServer {
   server: any;
   feedMode: string;
   executionMode: string;
+  resolveStrategyFamily: (strategyId: string | null | undefined) => string;
 
-  constructor(deps: { store: any; logger: any; host?: string; port?: number; publicDir?: string; uiDir?: string; startedAt?: number; feedMode?: string; executionMode?: string }) {
+  constructor(deps: { store: any; logger: any; host?: string; port?: number; publicDir?: string; uiDir?: string; startedAt?: number; feedMode?: string; executionMode?: string; resolveStrategyFamily?: (strategyId: string | null | undefined) => string }) {
     this.store = deps.store;
     this.logger = deps.logger;
     this.host = deps.host || "127.0.0.1";
@@ -41,6 +36,9 @@ class SystemServer {
     this.server = null;
     this.feedMode = deps.feedMode || "mock";
     this.executionMode = deps.executionMode || "paper";
+    this.resolveStrategyFamily = typeof deps.resolveStrategyFamily === "function"
+      ? deps.resolveStrategyFamily
+      : () => "other";
   }
 
   start() {
@@ -226,7 +224,7 @@ class SystemServer {
       const performance = this.store.getPerformance(config.id);
       const position = this.store.getPosition(config.id);
       const latestPrice = this.store.getLatestPrice(config.symbol);
-      const architectPublishedRaw = this.store.getArchitectAssessment(config.symbol);
+      const architectPublishedRaw = this.store.getArchitectPublishedAssessment(config.symbol);
       const architectObservedRaw = this.store.getArchitectObservedAssessment(config.symbol);
       const architectPublisher = this.store.getArchitectPublisherState(config.symbol);
       const context = this.store.getContextSnapshot(config.symbol);
@@ -240,7 +238,7 @@ class SystemServer {
         ? this.buildSyntheticArchitect({ config, context, publisher: architectPublisher })
         : null;
       const architect = architectPublished;
-      const activeFamily = getStrategyFamily(state?.activeStrategyId || config.strategy);
+      const activeFamily = this.resolveStrategyFamily(state?.activeStrategyId || config.strategy);
       const targetFamily = architectPublished?.recommendedFamily && architectPublished.recommendedFamily !== "no_trade"
         ? architectPublished.recommendedFamily
         : null;

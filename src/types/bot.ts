@@ -15,6 +15,8 @@ export interface BotConfig {
   riskProfile: RiskProfile;
   allowedStrategies?: string[];
   initialBalanceUsdt?: number;
+  maxArchitectStateAgeMs?: number;
+  postLossArchitectLatchPublishesRequired?: number;
 }
 
 export interface BotRuntimeState {
@@ -46,6 +48,11 @@ export interface BotRuntimeState {
   entryOpenedCount: number;
   entryAllowedCount: number;
   lossStreak: number;
+  postLossArchitectLatchActive: boolean;
+  postLossArchitectLatchActivatedAt: number | null;
+  postLossArchitectLatchFreshPublishCount: number;
+  postLossArchitectLatchLastCountedPublishedAt: number | null;
+  postLossArchitectLatchStrategyId: string | null;
   realizedPnl: number;
   availableBalanceUsdt: number;
 }

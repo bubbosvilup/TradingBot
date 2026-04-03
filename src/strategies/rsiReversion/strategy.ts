@@ -1,6 +1,8 @@
 // Module responsibility: mean reversion strategy for range-like conditions.
 
 import type { MarketContext, Strategy, StrategyDecision } from "../../types/strategy.ts";
+const { resolveExitPolicy } = require("../../roles/exitPolicyRegistry.ts");
+const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../../roles/recoveryTargetResolver.ts");
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -20,7 +22,14 @@ function resolvePriceScale(...values: Array<number | null | undefined>) {
   return Math.max(...finiteValues, 0.01);
 }
 
-function createStrategy(config: { buyRsi?: number; sellRsi?: number; minConfidence?: number } = {}): Strategy {
+function createStrategy(config: {
+  buyRsi?: number;
+  sellRsi?: number;
+  minConfidence?: number;
+  exitPolicyId?: string;
+  exitPolicy?: Record<string, unknown>;
+} = {}): Strategy {
+  const exitPolicy = resolveExitPolicy(config, "RSI_REVERSION_PRO");
   return {
     evaluate(context: MarketContext): StrategyDecision {
       const rsi = context.indicators.rsi;
@@ -43,7 +52,13 @@ function createStrategy(config: { buyRsi?: number; sellRsi?: number; minConfiden
         0.4,
         0.9
       );
-      const exitPriceThreshold = emaSlow * 1.015;
+      const reversionTargetPolicy = resolveRecoveryTargetPolicy(exitPolicy);
+      const resolvedRecoveryTarget = resolveRecoveryTarget({
+        context,
+        targetOffsetPct: reversionTargetPolicy.targetOffsetPct,
+        targetSource: reversionTargetPolicy.targetSource
+      });
+      const exitPriceThreshold = resolvedRecoveryTarget.targetPrice ?? (emaSlow * 1.015);
       const rsiExitDistance = Math.max(0, rsi - sellRsi);
       const priceExtensionPct = Math.max(0, context.latestPrice - exitPriceThreshold) / priceScale;
       const sellConfidence = clamp(
@@ -60,8 +75,15 @@ function createStrategy(config: { buyRsi?: number; sellRsi?: number; minConfiden
         return { action: "buy", confidence: buyConfidence, reason: [...reasons, "oversold_mean_reversion"] };
       }
 
-      if (context.hasOpenPosition && (rsi >= sellRsi || context.latestPrice > exitPriceThreshold)) {
-        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "reversion_target_hit"] };
+      const priceTargetHit = context.latestPrice > exitPriceThreshold;
+      const rsiExitThresholdHit = rsi >= sellRsi;
+
+      if (context.hasOpenPosition && priceTargetHit) {
+        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "reversion_price_target_hit"] };
+      }
+
+      if (context.hasOpenPosition && rsiExitThresholdHit) {
+        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "rsi_exit_threshold_hit"] };
       }
 
       return { action: "hold", confidence: config.minConfidence ?? 0.55, reason: [...reasons, "mean_reversion_not_ready"] };

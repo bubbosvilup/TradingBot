@@ -22,9 +22,10 @@ function runLoggerTests() {
     minimalLogger.info("system_ready", { bots: 2 });
     minimalLogger.info("architect_publish_refreshed", { regime: "trend" });
     minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "entry_evaluated", { outcome: "blocked" });
+    minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "entry_blocked", { reason: "architect_stale" });
     minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "loss_streak_limit" });
     minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BUY", { latestPrice: 100 });
-    if (lines.length !== 3 || lines.some((line) => line.includes("entry_evaluated"))) {
+    if (lines.length !== 4 || lines.some((line) => line.includes("entry_evaluated"))) {
       throw new Error(`minimal mode should suppress evaluation spam and keep essential events: ${JSON.stringify(lines)}`);
     }
 
@@ -44,12 +45,14 @@ function runLoggerTests() {
     strategyDebugLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "loss_streak_limit" });
     strategyDebugLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "RISK_CHANGE", { cooldownReason: "loss_cooldown" });
     strategyDebugLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "ARCHITECT_CHANGE", { nextStrategy: "rsiReversion" });
+    strategyDebugLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "rsi_exit_deferred", { exitEvent: "rsi_exit_deferred" });
+    strategyDebugLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "failed_rsi_exit", { closeClassification: "failed_rsi_exit" });
     strategyDebugLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BUY", { latestPrice: 100 });
     strategyDebugLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "SELL", { netPnl: 0.8 });
     strategyDebugLogger.info("architect_publish_refreshed", { regime: "trend" });
     strategyDebugLogger.info("heartbeat", { bots: 1 });
     strategyDebugLogger.info("ws_connected", { channel: "ticker" });
-    if (lines.length !== 6 || lines.some((line) => line.includes("heartbeat")) || lines.some((line) => line.includes("ws_connected")) || lines.some((line) => line.includes("architect_publish_refreshed"))) {
+    if (lines.length !== 8 || lines.some((line) => line.includes("heartbeat")) || lines.some((line) => line.includes("ws_connected")) || lines.some((line) => line.includes("architect_publish_refreshed"))) {
       throw new Error(`strategy_debug mode should keep only strategy-tuning events: ${JSON.stringify(lines)}`);
     }
   } finally {

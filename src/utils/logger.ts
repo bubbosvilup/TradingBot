@@ -38,6 +38,14 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
   if (message === "BLOCK_CHANGE") return "blocked";
   if (message === "RISK_CHANGE") return "risk_change";
   if (message === "ARCHITECT_CHANGE") return "architect_change";
+  if (message === "entry_blocked") return "blocked";
+  if (message === "failed_rsi_exit") return "trade_close";
+  if (message === "rsi_exit_deferred" || message === "managed_recovery_entered" || message === "managed_recovery_updated" || message === "managed_recovery_exited") {
+    return "risk_change";
+  }
+  if (message === "post_loss_architect_latch_activated" || message === "post_loss_architect_latch_publish_counted" || message === "post_loss_architect_latch_released") {
+    return "risk_change";
+  }
 
   if (message === "started" || message === "system_ready" || message === "market_stream_started" || message === "context_ready" || message === "dashboard_ready" || message === "execution_mode_forced_paper" || message === "non_routable_allowed_strategies") {
     return "startup";
@@ -55,7 +63,7 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
     return "evaluation";
   }
   if (message === "architect_published") {
-    return "startup";
+    return "architect_change";
   }
   if (message === "strategy_aligned" || message === "architect_changed" || message === "architect_strategy_divergence") {
     return "architect_change";

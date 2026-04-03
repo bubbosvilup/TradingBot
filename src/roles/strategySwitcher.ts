@@ -5,9 +5,13 @@ import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
 
 class StrategySwitcher {
   maxDecisionAgeMs: number;
+  resolveStrategyFamily: (strategyId: string | null | undefined) => RecommendedFamily | "other";
 
-  constructor(options: { maxDecisionAgeMs?: number } = {}) {
+  constructor(options: { maxDecisionAgeMs?: number; resolveStrategyFamily?: (strategyId: string | null | undefined) => RecommendedFamily | "other" } = {}) {
     this.maxDecisionAgeMs = Math.max(options.maxDecisionAgeMs || 0, 0);
+    this.resolveStrategyFamily = typeof options.resolveStrategyFamily === "function"
+      ? options.resolveStrategyFamily
+      : () => "other";
   }
 
   evaluate(params: {
@@ -45,9 +49,7 @@ class StrategySwitcher {
   }
 
   getStrategyFamily(strategyId: string | null | undefined): RecommendedFamily | "other" {
-    if (strategyId === "emaCross") return "trend_following";
-    if (strategyId === "rsiReversion") return "mean_reversion";
-    return "other";
+    return this.resolveStrategyFamily(strategyId);
   }
 
   getRoutableStrategies(strategyIds: string[]) {
@@ -59,13 +61,8 @@ class StrategySwitcher {
   }
 
   pickStrategyForFamily(family: RecommendedFamily, allowedStrategies: string[]) {
-    const target = family === "trend_following"
-      ? "emaCross"
-      : family === "mean_reversion"
-        ? "rsiReversion"
-        : null;
-    if (!target) return null;
-    return allowedStrategies.find((strategyId) => strategyId === target) || null;
+    if (family === "no_trade") return null;
+    return allowedStrategies.find((strategyId) => this.getStrategyFamily(strategyId) === family) || null;
   }
 }
 

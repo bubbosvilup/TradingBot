@@ -1,5 +1,7 @@
 // Module responsibility: trade, order and position models shared by execution and state.
 
+import type { PositionLifecycleEvent, PositionLifecycleState } from "./positionLifecycle.ts";
+
 export interface OrderRecord {
   id: string;
   botId: string;
@@ -22,6 +24,13 @@ export interface PositionRecord {
   openedAt: number;
   confidence: number;
   notes: string[];
+  lifecycleState?: PositionLifecycleState;
+  lastLifecycleEvent?: PositionLifecycleEvent | null;
+  lifecycleUpdatedAt?: number | null;
+  lifecycleMode?: "normal" | "managed_recovery";
+  managedRecoveryStartedAt?: number | null;
+  managedRecoveryDeferredReason?: string | null;
+  managedRecoveryExitFloorNetPnlUsdt?: number | null;
 }
 
 export interface ClosedTradeRecord {
@@ -41,4 +50,6 @@ export interface ClosedTradeRecord {
   entryReason: string[];
   exitReason: string[];
   reason: string[];
+  lifecycleEvent?: PositionLifecycleEvent | null;
+  lifecycleState?: PositionLifecycleState | null;
 }

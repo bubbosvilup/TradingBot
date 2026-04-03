@@ -5,9 +5,23 @@ import type { ArchitectAssessment } from "../types/architect.ts";
 import type { MarketTick } from "../types/market.ts";
 import type { Strategy } from "../types/strategy.ts";
 import type { PositionRecord } from "../types/trade.ts";
+import type { ExitPolicy, InvalidationMode } from "../types/exitPolicy.ts";
+import type { PositionExitMechanism } from "../types/positionLifecycle.ts";
 
 const { BaseBot } = require("./baseBot.ts");
 const { resolveLogType } = require("../utils/logger.ts");
+const {
+  beginPositionExit,
+  closePositionLifecycle,
+  enterManagedRecovery,
+  getManagedRecoveryPolicy,
+  getPositionLifecycleState,
+  isManagedRecoveryPosition,
+  POSITION_LIFECYCLE_EVENTS,
+  resolveLifecycleEventFromReasons
+} = require("../roles/positionLifecycleManager.ts");
+const { resolveExitPolicy } = require("../roles/exitPolicyRegistry.ts");
+const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../roles/recoveryTargetResolver.ts");
 const { now } = require("../utils/time.ts");
 
 class TradingBot extends BaseBot {
@@ -27,6 +41,7 @@ class TradingBot extends BaseBot {
   lastEntryEvaluationLogKey: string | null;
   lastEntryEvaluationLogAt: number | null;
   compactLogSignatures: Record<string, string | null>;
+  postLossArchitectLatchPublishesRequired: number;
 
   constructor(config: BotConfig, deps: any) {
     super(config, deps);
@@ -40,7 +55,12 @@ class TradingBot extends BaseBot {
     this.architectDivergenceActive = false;
     this.minEntryContextMaturity = 0.5;
     this.minPostSwitchEntryContextMaturity = 0.3;
-    this.maxArchitectStateAgeMs = 90_000;
+    this.maxArchitectStateAgeMs = Math.max(
+      Number.isFinite(Number(config.maxArchitectStateAgeMs))
+        ? Number(config.maxArchitectStateAgeMs)
+        : 90_000,
+      0
+    );
     this.entrySlippageBufferPct = 0.0005;
     this.entryProfitSafetyBufferPct = 0.0005;
     this.minExpectedNetEdgePct = 0.0005;
@@ -48,6 +68,12 @@ class TradingBot extends BaseBot {
     this.lastEntryEvaluationLogKey = null;
     this.lastEntryEvaluationLogAt = null;
     this.compactLogSignatures = {};
+    this.postLossArchitectLatchPublishesRequired = Math.max(
+      Number.isFinite(Number(config.postLossArchitectLatchPublishesRequired))
+        ? Number(config.postLossArchitectLatchPublishesRequired)
+        : 2,
+      1
+    );
   }
 
   start() {
@@ -116,7 +142,9 @@ class TradingBot extends BaseBot {
 
     this.lastNonCooldownBlockReason = blockKey;
     this.deps.logger.bot(this.config, "entry_blocked", {
+      architectAgeMs: architectState?.architectAgeMs || null,
       architectBlockReason: architectState?.blockReason || null,
+      architectStaleThresholdMs: architectState?.staleThresholdMs || null,
       reason: "architect_not_usable_for_entry"
     });
     this.emitCompactBotLog("BLOCK_CHANGE", {
@@ -425,16 +453,25 @@ class TradingBot extends BaseBot {
   updateSignalState(params: {
     hasPosition: boolean;
     decisionAction: "buy" | "sell" | "hold";
+    decisionReasons?: string[];
+    managedRecoveryPriceTargetHit?: boolean;
+    position?: PositionRecord | null;
     state: any;
     timestamp: number;
   }) {
     const cooldownActive = Boolean(params.state.cooldownUntil && params.state.cooldownUntil > params.timestamp);
+    const decisionReasons = Array.isArray(params.decisionReasons) ? params.decisionReasons : [];
+    const inManagedRecovery = isManagedRecoveryPosition(params.position || null);
+    const managedRecoveryPriceTargetSignal = inManagedRecovery && Boolean(params.managedRecoveryPriceTargetHit);
     const nextEntrySignalStreak = cooldownActive
       ? params.state.entrySignalStreak
       : !params.hasPosition && params.decisionAction === "buy"
         ? params.state.entrySignalStreak + 1
         : 0;
-    const nextExitSignalStreak = params.hasPosition && params.decisionAction === "sell"
+    const nextExitSignalStreak = params.hasPosition && (
+      (!inManagedRecovery && params.decisionAction === "sell")
+      || managedRecoveryPriceTargetSignal
+    )
       ? params.state.exitSignalStreak + 1
       : 0;
 
@@ -446,6 +483,464 @@ class TradingBot extends BaseBot {
     return this.deps.store.getBotState(this.config.id);
   }
 
+  getPostLossArchitectLatchState(state?: any) {
+    const runtimeState = state || this.deps.store.getBotState(this.config.id) || {};
+    const publisher = this.deps.store.getArchitectPublisherState(this.config.symbol);
+    const strategyId = runtimeState.postLossArchitectLatchStrategyId || null;
+    const active = Boolean(runtimeState.postLossArchitectLatchActive);
+    return {
+      activatedAt: runtimeState.postLossArchitectLatchActivatedAt || null,
+      active,
+      blocking: active && Boolean(strategyId) && strategyId === this.strategy.id,
+      freshPublishCount: Number(runtimeState.postLossArchitectLatchFreshPublishCount || 0),
+      lastCountedPublishedAt: runtimeState.postLossArchitectLatchLastCountedPublishedAt || null,
+      latestPublishedAt: publisher?.lastPublishedAt || null,
+      requiredPublishes: this.postLossArchitectLatchPublishesRequired,
+      strategyId
+    };
+  }
+
+  activatePostLossArchitectLatch(params: { closedAt: number; netPnl: number; strategyId: string }) {
+    if (!(Number(params.netPnl) < 0)) {
+      return;
+    }
+
+    this.deps.store.updateBotState(this.config.id, {
+      postLossArchitectLatchActive: true,
+      postLossArchitectLatchActivatedAt: params.closedAt,
+      postLossArchitectLatchFreshPublishCount: 0,
+      postLossArchitectLatchLastCountedPublishedAt: null,
+      postLossArchitectLatchStrategyId: params.strategyId
+    });
+    this.deps.logger.bot(this.config, "post_loss_architect_latch_activated", {
+      activatedAt: params.closedAt,
+      netPnl: Number(Number(params.netPnl).toFixed(4)),
+      requiredPublishes: this.postLossArchitectLatchPublishesRequired,
+      strategy: params.strategyId
+    });
+    this.logCompactRiskChange({
+      freshPublishCount: 0,
+      requiredPublishes: this.postLossArchitectLatchPublishesRequired,
+      status: "post_loss_architect_latch_activated",
+      strategy: params.strategyId
+    });
+  }
+
+  refreshPostLossArchitectLatch() {
+    const state = this.deps.store.getBotState(this.config.id);
+    if (!state?.postLossArchitectLatchActive) {
+      return state;
+    }
+
+    const activatedAt = Number(state.postLossArchitectLatchActivatedAt || 0);
+    const publisher = this.deps.store.getArchitectPublisherState(this.config.symbol);
+    const latestPublishedAt = Number(publisher?.lastPublishedAt || 0);
+    const lastCountedPublishedAt = Number(state.postLossArchitectLatchLastCountedPublishedAt || 0);
+
+    if (!Number.isFinite(latestPublishedAt) || latestPublishedAt <= 0 || latestPublishedAt <= activatedAt || latestPublishedAt <= lastCountedPublishedAt) {
+      return state;
+    }
+
+    const freshPublishCount = Number(state.postLossArchitectLatchFreshPublishCount || 0) + 1;
+    this.deps.store.updateBotState(this.config.id, {
+      postLossArchitectLatchFreshPublishCount: freshPublishCount,
+      postLossArchitectLatchLastCountedPublishedAt: latestPublishedAt
+    });
+    this.deps.logger.bot(this.config, "post_loss_architect_latch_publish_counted", {
+      freshPublishCount,
+      lastPublishedAt: latestPublishedAt,
+      requiredPublishes: this.postLossArchitectLatchPublishesRequired,
+      strategy: state.postLossArchitectLatchStrategyId || this.strategy.id
+    });
+    this.logCompactRiskChange({
+      freshPublishCount,
+      lastPublishedAt: latestPublishedAt,
+      requiredPublishes: this.postLossArchitectLatchPublishesRequired,
+      status: "post_loss_architect_latch_publish_counted",
+      strategy: state.postLossArchitectLatchStrategyId || this.strategy.id
+    });
+
+    if (freshPublishCount < this.postLossArchitectLatchPublishesRequired) {
+      return this.deps.store.getBotState(this.config.id);
+    }
+
+    this.deps.store.updateBotState(this.config.id, {
+      postLossArchitectLatchActive: false,
+      postLossArchitectLatchActivatedAt: null,
+      postLossArchitectLatchFreshPublishCount: freshPublishCount,
+      postLossArchitectLatchLastCountedPublishedAt: latestPublishedAt,
+      postLossArchitectLatchStrategyId: null
+    });
+    this.deps.logger.bot(this.config, "post_loss_architect_latch_released", {
+      freshPublishCount,
+      lastPublishedAt: latestPublishedAt,
+      requiredPublishes: this.postLossArchitectLatchPublishesRequired,
+      strategy: state.postLossArchitectLatchStrategyId || this.strategy.id
+    });
+    this.logCompactRiskChange({
+      freshPublishCount,
+      lastPublishedAt: latestPublishedAt,
+      requiredPublishes: this.postLossArchitectLatchPublishesRequired,
+      status: "post_loss_architect_latch_released",
+      strategy: state.postLossArchitectLatchStrategyId || this.strategy.id
+    });
+    return this.deps.store.getBotState(this.config.id);
+  }
+
+  classifyClosedTrade(closedTrade: any) {
+    const exitReasons = Array.isArray(closedTrade?.exitReason)
+      ? closedTrade.exitReason
+      : Array.isArray(closedTrade?.reason)
+        ? closedTrade.reason
+        : [];
+    const rsiExit = this.isRsiExitReason(exitReasons);
+    const failedRsiExit = rsiExit && Number(closedTrade?.netPnl) < 0;
+    return {
+      closeClassification: failedRsiExit ? "failed_rsi_exit" : "confirmed_exit",
+      failedRsiExit,
+      rsiExit
+    };
+  }
+
+  isRsiExitReason(exitReasons: string[]) {
+    return exitReasons.includes("rsi_exit_confirmed") || exitReasons.includes("rsi_exit_threshold_hit");
+  }
+
+  getDecisionReasons(decision: any) {
+    return Array.isArray(decision?.reason) ? decision.reason : [];
+  }
+
+  getPositionStatus(position: PositionRecord | null | undefined) {
+    if (!position) return "flat";
+    return getPositionLifecycleState(position);
+  }
+
+  getProtectiveStopLevel(position: PositionRecord | null | undefined) {
+    if (!position) return null;
+    const profile = this.deps.riskManager.getProfile(this.config.riskProfile);
+    if (!Number.isFinite(Number(position.entryPrice))) return null;
+    return Number((Number(position.entryPrice) * (1 - profile.emergencyStopPct)).toFixed(4));
+  }
+
+  getProtectionStopMode() {
+    const stopMode = String(this.getExitPolicy()?.protection?.stopMode || "fixed_pct");
+    return stopMode === "structural_min" || stopMode === "atr_trailing" || stopMode === "fixed_pct"
+      ? stopMode
+      : "fixed_pct";
+  }
+
+  extractPrimaryExitEvent(exitReasons: string[]) {
+    const prioritizedEvents = [
+      "rsi_exit_deferred",
+      "rsi_exit_confirmed",
+      "reversion_price_target_hit",
+      "regime_invalidation_exit",
+      "protective_stop_exit",
+      "time_exhaustion_exit"
+    ];
+    return prioritizedEvents.find((reason) => exitReasons.includes(reason)) || (exitReasons[0] || null);
+  }
+
+  resolveExitMechanism(exitReasons: string[], lifecycleEvent?: any): PositionExitMechanism | null {
+    if (exitReasons.includes("protective_stop_exit") || lifecycleEvent === POSITION_LIFECYCLE_EVENTS.PROTECTIVE_STOP_HIT) {
+      return "protection";
+    }
+    if (exitReasons.includes("regime_invalidation_exit") || lifecycleEvent === POSITION_LIFECYCLE_EVENTS.REGIME_INVALIDATION) {
+      return "invalidation";
+    }
+    if (
+      exitReasons.includes("reversion_price_target_hit")
+      || exitReasons.includes("time_exhaustion_exit")
+      || lifecycleEvent === POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
+      || lifecycleEvent === POSITION_LIFECYCLE_EVENTS.RECOVERY_TIMEOUT
+    ) {
+      return "recovery";
+    }
+    if (
+      exitReasons.includes("rsi_exit_confirmed")
+      || exitReasons.includes("rsi_exit_deferred")
+      || exitReasons.includes("rsi_exit_threshold_hit")
+      || lifecycleEvent === POSITION_LIFECYCLE_EVENTS.RSI_EXIT_HIT
+      || lifecycleEvent === POSITION_LIFECYCLE_EVENTS.FAILED_RSI_EXIT
+    ) {
+      return "qualification";
+    }
+    return null;
+  }
+
+  resolveInvalidationLevel(architectState: any, invalidationMode?: InvalidationMode | null) {
+    return architectState?.blockReason || invalidationMode || null;
+  }
+
+  getArchitectTimingMetadata(timestamp: number) {
+    const architect = this.getPublishedArchitectAssessment();
+    const publisher = this.deps.store.getArchitectPublisherState(this.config.symbol);
+    const publishedAt = publisher?.lastPublishedAt || architect?.updatedAt || null;
+    return {
+      architectDecisionAgeMs: architect?.updatedAt ? Math.max(0, timestamp - architect.updatedAt) : null,
+      architectPublishAgeMs: publishedAt ? Math.max(0, timestamp - publishedAt) : null
+    };
+  }
+
+  buildExitTelemetry(params: {
+    architectState?: any;
+    closedTrade?: any;
+    exitMechanism?: PositionExitMechanism | null;
+    executionTimestamp?: number | null;
+    exitReasons: string[];
+    invalidationMode?: InvalidationMode | null;
+    lifecycleEvent?: any;
+    invalidationLevel?: string | null;
+    managedRecoveryTarget?: any;
+    position: PositionRecord;
+    protectionMode?: string | null;
+    signalTimestamp: number;
+    tick: MarketTick;
+  }) {
+    const exitPolicy = this.getExitPolicy();
+    const managedRecoveryPolicy = getManagedRecoveryPolicy(exitPolicy);
+    const signalTimestamp = Number(params.signalTimestamp);
+    const executionTimestamp = Number.isFinite(Number(params.executionTimestamp))
+      ? Number(params.executionTimestamp)
+      : null;
+    const architectTiming = this.getArchitectTimingMetadata(signalTimestamp);
+    const timeoutRemainingMs = isManagedRecoveryPosition(params.position)
+      ? Math.max(
+          0,
+          (Number(params.position.managedRecoveryStartedAt || params.position.openedAt || signalTimestamp) + managedRecoveryPolicy.timeoutMs) - signalTimestamp
+        )
+      : null;
+
+    return {
+      architectDecisionAgeMs: architectTiming.architectDecisionAgeMs,
+      architectPublishAgeMs: architectTiming.architectPublishAgeMs,
+      closeClassification: null,
+      closeReason: params.exitReasons.join(","),
+      exitMechanism: params.exitMechanism || this.resolveExitMechanism(params.exitReasons, params.lifecycleEvent),
+      executionTimestamp,
+      exitEvent: this.extractPrimaryExitEvent(params.exitReasons),
+      invalidationMode: params.invalidationMode || null,
+      lifecycleEvent: params.lifecycleEvent || resolveLifecycleEventFromReasons(params.exitReasons),
+      fees: params.closedTrade ? Number(Number(params.closedTrade.fees || 0).toFixed(4)) : null,
+      grossPnl: params.closedTrade ? Number(Number(params.closedTrade.pnl || 0).toFixed(4)) : null,
+      invalidationLevel: params.invalidationLevel || this.resolveInvalidationLevel(params.architectState, params.invalidationMode),
+      netPnl: params.closedTrade ? Number(Number(params.closedTrade.netPnl || 0).toFixed(4)) : null,
+      policyId: exitPolicy?.id || null,
+      positionStatus: this.getPositionStatus(params.position),
+      protectionMode: params.protectionMode || null,
+      signalTimestamp,
+      signalToExecutionMs: executionTimestamp === null ? null : Math.max(0, executionTimestamp - signalTimestamp),
+      stopLevel: this.getProtectiveStopLevel(params.position),
+      targetPrice: Number.isFinite(Number(params.managedRecoveryTarget?.targetPrice))
+        ? Number(Number(params.managedRecoveryTarget.targetPrice).toFixed(4))
+        : null,
+      targetSource: params.managedRecoveryTarget?.source || null,
+      timeoutRemainingMs
+    };
+  }
+
+  logManagedRecoveryUpdate(metadata: Record<string, unknown>) {
+    const signature = JSON.stringify({
+      exitEvent: metadata.exitEvent || null,
+      invalidationLevel: metadata.invalidationLevel || null,
+      positionStatus: metadata.positionStatus || null,
+      status: metadata.status || null,
+      targetPrice: metadata.targetPrice || null,
+      timeoutRemainingMs: metadata.timeoutRemainingMs || null
+    });
+
+    this.emitCompactBotLog("RISK_CHANGE", {
+      botId: this.config.id,
+      strategy: this.strategy.id,
+      symbol: this.config.symbol,
+      ...metadata
+    }, "MANAGED_RECOVERY", signature);
+  }
+
+  buildExitReason(decisionReasons: string[], primaryReason: string, confirmationTicks?: number | null) {
+    const nextReasons = decisionReasons.filter((reason) =>
+      reason !== "rsi_exit_threshold_hit"
+      && reason !== "emergency_stop"
+      && reason !== "managed_recovery_rsi_ignored"
+    );
+    if (!nextReasons.includes(primaryReason)) {
+      nextReasons.push(primaryReason);
+    }
+    if (Number.isFinite(Number(confirmationTicks)) && Number(confirmationTicks) > 0) {
+      nextReasons.push(`exit_confirmed_${Number(confirmationTicks)}ticks`);
+    }
+    return nextReasons;
+  }
+
+  estimateExitEconomics(position: PositionRecord, price: number) {
+    if (typeof this.deps.executionEngine?.calculateCloseEconomics === "function") {
+      return this.deps.executionEngine.calculateCloseEconomics(position, price);
+    }
+
+    const entryPrice = Math.max(Number(position?.entryPrice) || 0, 0);
+    const exitPrice = Math.max(Number(price) || 0, 0);
+    const quantity = Math.max(Number(position?.quantity) || 0, 0);
+    const feeRate = Math.max(Number(this.deps.executionEngine?.feeRate) || 0, 0);
+    const entryNotionalUsdt = entryPrice * quantity;
+    const exitNotionalUsdt = exitPrice * quantity;
+    const grossPnl = (exitPrice - entryPrice) * quantity;
+    const fees = (entryNotionalUsdt + exitNotionalUsdt) * feeRate;
+    return {
+      entryNotionalUsdt,
+      entryPrice,
+      exitNotionalUsdt,
+      exitPrice,
+      fees,
+      grossPnl,
+      netPnl: grossPnl - fees,
+      quantity
+    };
+  }
+
+  getManagedRecoveryPolicy() {
+    return getManagedRecoveryPolicy(this.getExitPolicy());
+  }
+
+  getExitPolicy(): ExitPolicy | null {
+    const fallbackPolicyId = this.strategy?.id === "rsiReversion"
+      ? "RSI_REVERSION_PRO"
+      : null;
+    return resolveExitPolicy(this.strategy?.config, fallbackPolicyId);
+  }
+
+  getRsiExitFloorNetPnlUsdt() {
+    const exitPolicy = this.getExitPolicy();
+    const estimatedCostMultiplier = Number(exitPolicy?.qualification?.estimatedCostMultiplier);
+    const costMultiplier = Number.isFinite(estimatedCostMultiplier)
+      ? estimatedCostMultiplier
+      : 1;
+    const minTickProfit = Number(exitPolicy?.qualification?.minTickProfit);
+    const baseFloor = Number.isFinite(minTickProfit)
+      ? minTickProfit
+      : 0;
+    const qualificationMode = String(exitPolicy?.qualification?.pnlExitFloorMode || "strict_net_positive");
+
+    if (qualificationMode === "allow_small_loss_on_regime_risk") {
+      return baseFloor * -1;
+    }
+
+    if (qualificationMode === "cost_buffered_positive") {
+      return Math.max(baseFloor * costMultiplier, 0);
+    }
+
+    return Math.max(baseFloor, 0);
+  }
+
+  matchesInvalidationMode(architectState: any, mode: InvalidationMode) {
+    const blockReason = architectState?.blockReason || null;
+    if (mode === "family_mismatch") {
+      return architectState?.familyMatch === false;
+    }
+    if (mode === "low_maturity") {
+      return blockReason === "architect_low_maturity" || blockReason === "architect_post_switch_low_maturity";
+    }
+    if (mode === "unclear") {
+      return blockReason === "architect_unclear";
+    }
+    if (mode === "no_trade") {
+      return blockReason === "architect_no_trade";
+    }
+    if (mode === "not_ready") {
+      return blockReason === "architect_not_ready" || blockReason === "missing_published_architect";
+    }
+    if (mode === "stale") {
+      return blockReason === "architect_stale";
+    }
+    if (mode === "symbol_mismatch") {
+      return blockReason === "architect_symbol_mismatch";
+    }
+    if (mode === "regime_change") {
+      return architectState?.usable && architectState?.familyMatch === false;
+    }
+    if (mode === "extreme_volatility") {
+      return false;
+    }
+    return false;
+  }
+
+  resolveManagedRecoveryInvalidation(architectState: any, decisionReasons: string[]) {
+    const exitPolicy = this.getExitPolicy();
+    const modes = Array.isArray(exitPolicy?.invalidation?.modes)
+      ? exitPolicy.invalidation.modes
+      : [];
+    const invalidationMode = modes.find((mode) => this.matchesInvalidationMode(architectState, mode)) || null;
+    if (!invalidationMode) {
+      return null;
+    }
+    return {
+      exitMechanism: "invalidation" as const,
+      invalidationLevel: this.resolveInvalidationLevel(architectState, invalidationMode),
+      invalidationMode,
+      lifecycleEvent: POSITION_LIFECYCLE_EVENTS.REGIME_INVALIDATION,
+      reason: this.buildExitReason(decisionReasons, "regime_invalidation_exit")
+    };
+  }
+
+  isProtectiveExitTriggered(position: PositionRecord, price: number) {
+    if (this.getProtectionStopMode() !== "fixed_pct") {
+      return false;
+    }
+    return this.isEmergencyExit(position, price);
+  }
+
+  resolveProtectiveExit(position: PositionRecord, price: number, decisionReasons: string[]) {
+    if (!this.isProtectiveExitTriggered(position, price)) {
+      return null;
+    }
+    return {
+      exitMechanism: "protection" as const,
+      lifecycleEvent: POSITION_LIFECYCLE_EVENTS.PROTECTIVE_STOP_HIT,
+      protectionMode: this.getProtectionStopMode(),
+      reason: this.buildExitReason(decisionReasons, "protective_stop_exit")
+    };
+  }
+
+  resolveManagedRecoveryTarget(params: { context: any; position: PositionRecord }) {
+    const policy = this.getExitPolicy();
+    const recoveryTargetPolicy = resolveRecoveryTargetPolicy(policy);
+    const resolvedTarget = resolveRecoveryTarget({
+      context: params.context,
+      position: params.position,
+      targetOffsetPct: recoveryTargetPolicy.targetOffsetPct,
+      targetSource: recoveryTargetPolicy.targetSource
+    });
+    const latestPrice = Number(params.context?.latestPrice);
+    return {
+      ...resolvedTarget,
+      hit: Boolean(
+        Number.isFinite(Number(latestPrice))
+        && Number.isFinite(Number(resolvedTarget.targetPrice))
+        && Number(latestPrice) >= Number(resolvedTarget.targetPrice)
+      )
+    };
+  }
+
+  resolveManagedRecoveryPosition(position: PositionRecord, tick: MarketTick, exitFloorNetPnlUsdt: number) {
+    const transition = enterManagedRecovery(position, {
+      exitFloorNetPnlUsdt,
+      reason: "rsi_exit_deferred",
+      startedAt: tick.timestamp
+    });
+    return transition.allowed ? transition.position : null;
+  }
+
+  persistManagedRecoveryPosition(position: PositionRecord, metadata: Record<string, unknown>) {
+    this.deps.store.setPosition(this.config.id, position);
+    this.deps.store.updateBotState(this.config.id, {
+      exitSignalStreak: 0
+    });
+    this.deps.logger.bot(this.config, "rsi_exit_deferred", metadata);
+    this.logCompactRiskChange({
+      ...metadata,
+      status: "rsi_exit_deferred"
+    });
+  }
+
   isEmergencyExit(position: PositionRecord, price: number) {
     const profile = this.deps.riskManager.getProfile(this.config.riskProfile);
     const drawdownPct = position.entryPrice > 0 ? ((position.entryPrice - price) / position.entryPrice) : 0;
@@ -453,39 +948,126 @@ class TradingBot extends BaseBot {
   }
 
   shouldExitPosition(params: {
+    architectState?: any;
     decision: any;
+    managedRecoveryTarget?: any;
     position: PositionRecord;
     signalState: any;
     tick: MarketTick;
   }) {
     const profile = this.deps.riskManager.getProfile(this.config.riskProfile);
     const holdMs = params.tick.timestamp - params.position.openedAt;
-    const emergency = this.isEmergencyExit(params.position, params.tick.price);
+    const decisionReasons = this.getDecisionReasons(params.decision);
+    const protectiveExit = this.resolveProtectiveExit(params.position, params.tick.price, decisionReasons);
+    const exitPolicy = this.getExitPolicy();
+    const inManagedRecovery = isManagedRecoveryPosition(params.position);
+    const managedRecoveryPolicy = getManagedRecoveryPolicy(exitPolicy);
+    const meanReversionPosition = params.position.strategyId === "rsiReversion";
+    const priceTargetHit = inManagedRecovery
+      ? Boolean(params.managedRecoveryTarget?.hit)
+      : decisionReasons.includes("reversion_price_target_hit");
+    const rsiExitThresholdHit = decisionReasons.includes("rsi_exit_threshold_hit");
 
-    if (emergency) {
+    if (inManagedRecovery) {
+      if (protectiveExit) {
+        return {
+          exitNow: true,
+          ...protectiveExit
+        };
+      }
+
+      const managedRecoveryStartedAt = Number(params.position.managedRecoveryStartedAt || params.position.openedAt || 0);
+      if ((params.tick.timestamp - managedRecoveryStartedAt) >= managedRecoveryPolicy.timeoutMs) {
+        return {
+          exitMechanism: "recovery" as const,
+          exitNow: true,
+          lifecycleEvent: POSITION_LIFECYCLE_EVENTS.RECOVERY_TIMEOUT,
+          reason: this.buildExitReason(decisionReasons, "time_exhaustion_exit")
+        };
+      }
+
+      const invalidationExit = params.architectState
+        ? this.resolveManagedRecoveryInvalidation(params.architectState, decisionReasons)
+        : null;
+      if (invalidationExit) {
+        return {
+          exitNow: true,
+          ...invalidationExit
+        };
+      }
+
+      if (priceTargetHit && params.signalState.exitSignalStreak >= profile.exitConfirmationTicks) {
+        return {
+          exitMechanism: "recovery" as const,
+          exitNow: true,
+          lifecycleEvent: POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT,
+          reason: this.buildExitReason(decisionReasons, "reversion_price_target_hit", profile.exitConfirmationTicks)
+        };
+      }
+
+      return {
+        exitNow: false,
+        reason: rsiExitThresholdHit
+          ? ["managed_recovery_rsi_ignored"]
+          : decisionReasons
+      };
+    }
+
+    if (protectiveExit) {
       return {
         exitNow: true,
-        reason: [...params.decision.reason, "emergency_stop"]
+        ...protectiveExit
       };
     }
 
     if (holdMs < profile.minHoldMs) {
       return {
         exitNow: false,
-        reason: [...params.decision.reason, `minimum_hold_${profile.minHoldMs}ms`]
+        reason: [...decisionReasons, `minimum_hold_${profile.minHoldMs}ms`]
       };
     }
 
     if (params.decision.action === "sell" && params.signalState.exitSignalStreak >= profile.exitConfirmationTicks) {
+      if (meanReversionPosition && rsiExitThresholdHit) {
+        const estimatedExitEconomics = this.estimateExitEconomics(params.position, params.tick.price);
+        const exitFloorNetPnlUsdt = this.getRsiExitFloorNetPnlUsdt();
+        if (estimatedExitEconomics.netPnl < exitFloorNetPnlUsdt) {
+          return {
+            estimatedExitEconomics,
+            exitMechanism: "qualification" as const,
+            exitNow: false,
+            lifecycleEvent: POSITION_LIFECYCLE_EVENTS.RSI_EXIT_HIT,
+            nextPosition: this.resolveManagedRecoveryPosition(params.position, params.tick, exitFloorNetPnlUsdt),
+            reason: this.buildExitReason(decisionReasons, "rsi_exit_deferred"),
+            transition: "managed_recovery"
+          };
+        }
+
+        return {
+          exitMechanism: "qualification" as const,
+          exitNow: true,
+          lifecycleEvent: POSITION_LIFECYCLE_EVENTS.RSI_EXIT_HIT,
+          reason: this.buildExitReason(decisionReasons, "rsi_exit_confirmed", profile.exitConfirmationTicks)
+        };
+      }
+
       return {
+        exitMechanism: meanReversionPosition && priceTargetHit
+          ? "recovery"
+          : null,
         exitNow: true,
-        reason: [...params.decision.reason, `exit_confirmed_${profile.exitConfirmationTicks}ticks`]
+        lifecycleEvent: meanReversionPosition && priceTargetHit
+          ? POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
+          : null,
+        reason: meanReversionPosition && priceTargetHit
+          ? this.buildExitReason(decisionReasons, "reversion_price_target_hit", profile.exitConfirmationTicks)
+          : [...decisionReasons, `exit_confirmed_${profile.exitConfirmationTicks}ticks`]
       };
     }
 
     return {
       exitNow: false,
-      reason: params.decision.reason
+      reason: decisionReasons
     };
   }
 
@@ -504,7 +1086,15 @@ class TradingBot extends BaseBot {
 
     if (this.lastNonCooldownBlockReason !== reason) {
       this.lastNonCooldownBlockReason = reason;
-      this.deps.logger.bot(this.config, "entry_blocked", { reason });
+      const postLossArchitectLatch = reason === "post_loss_architect_latch"
+        ? this.getPostLossArchitectLatchState(state)
+        : null;
+      this.deps.logger.bot(this.config, "entry_blocked", {
+        postLossArchitectLatchActive: postLossArchitectLatch?.active ?? null,
+        postLossArchitectLatchFreshPublishCount: postLossArchitectLatch?.freshPublishCount ?? null,
+        postLossArchitectLatchRequiredPublishes: postLossArchitectLatch?.requiredPublishes ?? null,
+        reason
+      });
     }
   }
 
@@ -826,6 +1416,7 @@ class TradingBot extends BaseBot {
     const tickSymbolMatch = tickSymbol ? tickSymbol === this.config.symbol : null;
     const debounceRequired = params.profile?.entryDebounceTicks ?? null;
     const entrySignalStreak = signalState?.entrySignalStreak ?? state.entrySignalStreak ?? 0;
+    const postLossArchitectLatch = this.getPostLossArchitectLatchState(state);
 
     return {
       architectAuthoritative: Boolean(architect),
@@ -839,6 +1430,7 @@ class TradingBot extends BaseBot {
       architectContextRsiSource: architectContextRsi === null ? null : "effective_context_window",
       architectRsiIntensity,
       architectStale: params.architectState.architectStale,
+      architectStaleThresholdMs: params.architectState.staleThresholdMs,
       architectSymbol,
       architectSymbolMatch,
       architectSyntheticUsed: false,
@@ -875,6 +1467,12 @@ class TradingBot extends BaseBot {
       minNotionalUsdt: Number(tradeConstraints.minNotionalUsdt.toFixed(4)),
       minQuantity: Number(tradeConstraints.minQuantity.toFixed(8)),
       notionalUsdt: Number(params.economics.notionalUsdt.toFixed(4)),
+      postLossArchitectLatchActive: postLossArchitectLatch.active,
+      postLossArchitectLatchActivatedAt: postLossArchitectLatch.activatedAt,
+      postLossArchitectLatchBlocking: postLossArchitectLatch.blocking,
+      postLossArchitectLatchFreshPublishCount: postLossArchitectLatch.freshPublishCount,
+      postLossArchitectLatchRequiredPublishes: postLossArchitectLatch.requiredPublishes,
+      postLossArchitectLatchStrategyId: postLossArchitectLatch.strategyId,
       postSwitchCoveragePct,
       postSwitchWarmupActive,
       postSwitchWarmupReason: postSwitchWarmupActive ? "post_switch_context_immature" : null,
@@ -929,15 +1527,20 @@ class TradingBot extends BaseBot {
       profile: this.deps.riskManager.getProfile(this.config.riskProfile),
       quantity: params.quantity,
       signalEvaluated: true,
+      state: this.deps.store.getBotState(this.config.id),
       strategyId: this.strategy.id,
       tick: params.tick
     });
+    const postLossArchitectLatch = this.getPostLossArchitectLatchState();
 
     if (!architectState.usable) {
       return { allowed: false, diagnostics: { ...diagnostics, blockReason: architectState.blockReason } };
     }
     if (architectState.familyMatch === false) {
       return { allowed: false, diagnostics: { ...diagnostics, blockReason: "strategy_family_mismatch" } };
+    }
+    if (postLossArchitectLatch.blocking) {
+      return { allowed: false, diagnostics: { ...diagnostics, blockReason: "post_loss_architect_latch" } };
     }
     if (economics.notionalUsdt < tradeConstraints.minNotionalUsdt) {
       return { allowed: false, diagnostics: { ...diagnostics, blockReason: "notional_below_minimum" } };
@@ -963,6 +1566,7 @@ class TradingBot extends BaseBot {
     this.deps.store.updateBotState(this.config.id, {
       lastTickAt: tick.timestamp
     });
+    state = this.refreshPostLossArchitectLatch() || this.deps.store.getBotState(this.config.id);
 
     state = this.deps.store.getBotState(this.config.id);
     if (!state || (state.status === "paused" && state.pausedReason === "max_drawdown_reached")) {
@@ -1029,10 +1633,16 @@ class TradingBot extends BaseBot {
     });
 
     const position = this.deps.store.getPosition(this.config.id);
+    const managedRecoveryTarget = position && isManagedRecoveryPosition(position)
+      ? this.resolveManagedRecoveryTarget({ context, position })
+      : null;
     const performance = this.deps.store.getPerformance(this.config.id);
     const signalState = this.updateSignalState({
       decisionAction: decision.action,
+      decisionReasons: decision.reason,
       hasPosition: Boolean(position),
+      managedRecoveryPriceTargetHit: managedRecoveryTarget?.hit,
+      position,
       state: this.deps.store.getBotState(this.config.id),
       timestamp: tick.timestamp
     });
@@ -1125,6 +1735,9 @@ class TradingBot extends BaseBot {
             tick
           });
           this.deps.logger.bot(this.config, "entry_gate_blocked", finalEntryGate.diagnostics);
+          if (finalEntryGate.diagnostics.blockReason === "post_loss_architect_latch") {
+            this.logEntryBlocked(evaluationState, "post_loss_architect_latch");
+          }
           this.lastNonCooldownBlockReason = finalEntryGate.diagnostics.blockReason;
           return;
         }
@@ -1314,24 +1927,121 @@ class TradingBot extends BaseBot {
       return;
     }
 
+    const managedRecoveryArchitectState = isManagedRecoveryPosition(position)
+      ? this.evaluateArchitectUsability({
+          currentFamily: this.deps.strategySwitcher.getStrategyFamily(this.strategy.id),
+          timestamp: tick.timestamp
+        })
+      : null;
+
     const exitPlan = this.shouldExitPosition({
+      architectState: managedRecoveryArchitectState,
       decision,
+      managedRecoveryTarget,
       position,
       signalState,
       tick
     });
 
-    if (!exitPlan.exitNow) {
+    if (exitPlan.transition === "managed_recovery" && exitPlan.nextPosition) {
+      const estimatedExitEconomics = exitPlan.estimatedExitEconomics || this.estimateExitEconomics(position, tick.price);
+      const managedRecoveryPosition = exitPlan.nextPosition;
+      const deferredRecoveryTarget = this.resolveManagedRecoveryTarget({
+        context,
+        position: managedRecoveryPosition
+      });
+      const managedRecoveryTelemetry = this.buildExitTelemetry({
+        architectState: managedRecoveryArchitectState,
+        exitMechanism: exitPlan.exitMechanism || "qualification",
+        exitReasons: Array.isArray(exitPlan.reason) ? exitPlan.reason : [],
+        lifecycleEvent: exitPlan.lifecycleEvent,
+        managedRecoveryTarget: deferredRecoveryTarget,
+        position: managedRecoveryPosition,
+        signalTimestamp: tick.timestamp,
+        tick
+      });
+      this.persistManagedRecoveryPosition(managedRecoveryPosition, {
+        ...managedRecoveryTelemetry,
+        estimatedNetPnl: Number(Number(estimatedExitEconomics.netPnl || 0).toFixed(4)),
+        exitFloorNetPnlUsdt: Number(Number(managedRecoveryPosition.managedRecoveryExitFloorNetPnlUsdt || 0).toFixed(4)),
+        latestPrice: Number(Number(tick.price || 0).toFixed(4)),
+        managedRecoveryStartedAt: managedRecoveryPosition.managedRecoveryStartedAt || tick.timestamp,
+        strategy: this.strategy.id
+      });
       return;
     }
 
+    if (!exitPlan.exitNow) {
+      if (isManagedRecoveryPosition(position) && (managedRecoveryTarget?.hit || Array.isArray(exitPlan.reason) && exitPlan.reason.includes("managed_recovery_rsi_ignored"))) {
+        this.logManagedRecoveryUpdate({
+          ...this.buildExitTelemetry({
+            architectState: managedRecoveryArchitectState,
+            exitMechanism: managedRecoveryTarget?.hit ? "recovery" : null,
+            exitReasons: Array.isArray(exitPlan.reason) ? exitPlan.reason : [],
+            lifecycleEvent: managedRecoveryTarget?.hit
+              ? POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
+              : null,
+            managedRecoveryTarget,
+            position,
+            signalTimestamp: tick.timestamp,
+            tick
+          }),
+          exitSignalStreak: signalState.exitSignalStreak,
+          latestPrice: Number(Number(tick.price || 0).toFixed(4)),
+          status: managedRecoveryTarget?.hit ? "managed_recovery_target_ready" : "managed_recovery_rsi_ignored",
+          strategy: this.strategy.id
+        });
+      }
+      return;
+    }
+
+    const exitingTransition = exitPlan.lifecycleEvent
+      ? beginPositionExit(position, {
+          event: exitPlan.lifecycleEvent,
+          timestamp: tick.timestamp
+        })
+      : null;
+    const exitingPosition = exitingTransition?.allowed
+      ? exitingTransition.position
+      : position;
+
     const closedTrade = this.deps.executionEngine.closePosition({
       botId: this.config.id,
+      lifecycleEvent: exitPlan.lifecycleEvent || null,
+      lifecycleState: "EXITING",
       price: tick.price,
       reason: exitPlan.reason
     });
 
     if (!closedTrade) return;
+    const closeClassification = this.classifyClosedTrade(closedTrade);
+    const closedLifecycleEvent = resolveLifecycleEventFromReasons(
+      Array.isArray(closedTrade.exitReason) ? closedTrade.exitReason : [],
+      closeClassification.closeClassification
+    );
+    const closedTransition = closePositionLifecycle(exitingPosition, {
+      event: closedLifecycleEvent || exitPlan.lifecycleEvent || POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT,
+      timestamp: closedTrade.closedAt
+    });
+    closedTrade.lifecycleEvent = closedLifecycleEvent || exitPlan.lifecycleEvent || null;
+    closedTrade.lifecycleState = closedTransition?.allowed
+      ? closedTransition.nextState
+      : "CLOSED";
+    const exitTelemetry = this.buildExitTelemetry({
+      architectState: managedRecoveryArchitectState,
+      closedTrade,
+      exitMechanism: exitPlan.exitMechanism || null,
+      executionTimestamp: closedTrade.closedAt,
+      exitReasons: Array.isArray(exitPlan.reason) ? exitPlan.reason : [],
+      invalidationLevel: exitPlan.invalidationLevel || null,
+      invalidationMode: exitPlan.invalidationMode || null,
+      lifecycleEvent: closedTrade.lifecycleEvent,
+      managedRecoveryTarget,
+      position: exitingPosition,
+      protectionMode: exitPlan.protectionMode || null,
+      signalTimestamp: tick.timestamp,
+      tick
+    });
 
     const nextPerformance = this.deps.performanceMonitor.update(performance, closedTrade);
     this.deps.store.setPerformance(this.config.id, nextPerformance);
@@ -1355,14 +2065,50 @@ class TradingBot extends BaseBot {
       status: nextPerformance.drawdown >= this.deps.riskManager.profiles[this.config.riskProfile].maxDrawdownPct ? "paused" : signalState.status,
       pausedReason: nextPerformance.drawdown >= this.deps.riskManager.profiles[this.config.riskProfile].maxDrawdownPct ? "max_drawdown_reached" : null
     });
+    this.activatePostLossArchitectLatch({
+      closedAt: closedTrade.closedAt,
+      netPnl: closedTrade.netPnl,
+      strategyId: this.strategy.id
+    });
     this.logCompactRiskChange({
+      ...exitTelemetry,
       cooldownReason: balancePatch.cooldownReason,
       cooldownUntil: balancePatch.cooldownUntil,
+      closeClassification: closeClassification.closeClassification,
       lossStreak: balancePatch.lossStreak,
       status: "trade_closed"
     });
+    if (closeClassification.failedRsiExit) {
+      this.deps.logger.bot(this.config, "failed_rsi_exit", {
+        ...exitTelemetry,
+        closeClassification: closeClassification.closeClassification,
+        closeReason: Array.isArray(closedTrade.exitReason) ? closedTrade.exitReason.join(",") : null,
+        cooldownReason: balancePatch.cooldownReason,
+        entryPrice: Number(Number(closedTrade.entryPrice || 0).toFixed(4)),
+        exitPrice: Number(Number(closedTrade.exitPrice || 0).toFixed(4)),
+        fees: Number(Number(closedTrade.fees || 0).toFixed(4)),
+        grossPnl: Number(Number(closedTrade.pnl || 0).toFixed(4)),
+        netPnl: Number(Number(closedTrade.netPnl || 0).toFixed(4)),
+        strategy: this.strategy.id
+      });
+    }
+    if (isManagedRecoveryPosition(position)) {
+      this.deps.logger.bot(this.config, "managed_recovery_exited", {
+        ...exitTelemetry,
+        closeClassification: closeClassification.closeClassification,
+        closeReason: Array.isArray(closedTrade.exitReason) ? closedTrade.exitReason.join(",") : null,
+        strategy: this.strategy.id
+      });
+    }
     this.logCompactSell({
+      ...exitTelemetry,
+      closeClassification: closeClassification.closeClassification,
       closeReason: Array.isArray(exitPlan.reason) ? exitPlan.reason.join(",") : null,
+      entryPrice: Number(Number(closedTrade.entryPrice || 0).toFixed(4)),
+      exitPrice: Number(Number(closedTrade.exitPrice || 0).toFixed(4)),
+      feeRate: Number(Number(this.deps.executionEngine?.feeRate || 0).toFixed(6)),
+      fees: Number(Number(closedTrade.fees || 0).toFixed(4)),
+      grossPnl: Number(Number(closedTrade.pnl || 0).toFixed(4)),
       latestPrice: Number(Number(tick.price || 0).toFixed(4)),
       netPnl: Number(Number(closedTrade.netPnl || 0).toFixed(4)),
       outcome: closedTrade.netPnl > 0 ? "profit" : closedTrade.netPnl < 0 ? "loss" : "flat",

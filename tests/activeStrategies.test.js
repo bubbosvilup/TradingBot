@@ -236,24 +236,41 @@ function runActiveStrategiesTests() {
     throw new Error(`rsiReversion should still hold when local technical trigger is absent, received ${holdDecision.action}`);
   }
 
-  const mildSellDecision = strategy.evaluate(buildContext({
+  const rsiOnlySellDecision = strategy.evaluate(buildContext({
     botId: "bot_eth_reversion",
     hasOpenPosition: true,
     indicators: {
       emaBaseline: 101,
-      emaFast: 100.6,
+      emaFast: 100.3,
       emaSlow: 100,
       momentum: 0.5,
       rsi: 59,
       volatility: 1
     },
-    latestPrice: 101.6,
+    latestPrice: 101.2,
     localRegimeHint: "range",
-    prices: [99.8, 100.2, 100.8, 101.2, 101.6],
+    prices: [99.8, 100.2, 100.8, 101.0, 101.2],
     strategyId: "rsiReversion",
     symbol: "ETH/USDT"
   }));
-  const strongSellDecision = strategy.evaluate(buildContext({
+  const priceTargetSellDecision = strategy.evaluate(buildContext({
+    botId: "bot_eth_reversion",
+    hasOpenPosition: true,
+    indicators: {
+      emaBaseline: 101,
+      emaFast: 101.8,
+      emaSlow: 100,
+      momentum: 1.1,
+      rsi: 54,
+      volatility: 1.2
+    },
+    latestPrice: 101.7,
+    localRegimeHint: "range",
+    prices: [100.4, 100.8, 101.1, 101.4, 101.7],
+    strategyId: "rsiReversion",
+    symbol: "ETH/USDT"
+  }));
+  const bothExitSignalsDecision = strategy.evaluate(buildContext({
     botId: "bot_eth_reversion",
     hasOpenPosition: true,
     indicators: {
@@ -270,11 +287,29 @@ function runActiveStrategiesTests() {
     strategyId: "rsiReversion",
     symbol: "ETH/USDT"
   }));
-  if (mildSellDecision.action !== "sell" || strongSellDecision.action !== "sell") {
+  if (rsiOnlySellDecision.action !== "sell" || priceTargetSellDecision.action !== "sell" || bothExitSignalsDecision.action !== "sell") {
     throw new Error("rsiReversion sell trigger regressed while validating dynamic exit confidence");
   }
-  if (!(strongSellDecision.confidence > mildSellDecision.confidence)) {
-    throw new Error(`rsiReversion stronger exit should have higher sell confidence (${mildSellDecision.confidence} vs ${strongSellDecision.confidence})`);
+  if (!rsiOnlySellDecision.reason.includes("rsi_exit_threshold_hit")) {
+    throw new Error(`rsiReversion RSI-only exit should use rsi_exit_threshold_hit: ${rsiOnlySellDecision.reason.join(",")}`);
+  }
+  if (rsiOnlySellDecision.reason.includes("reversion_price_target_hit")) {
+    throw new Error("rsiReversion RSI-only exit should not be labeled as a price-target hit");
+  }
+  if (!priceTargetSellDecision.reason.includes("reversion_price_target_hit")) {
+    throw new Error(`rsiReversion price-target exit should use reversion_price_target_hit: ${priceTargetSellDecision.reason.join(",")}`);
+  }
+  if (priceTargetSellDecision.reason.includes("rsi_exit_threshold_hit")) {
+    throw new Error("rsiReversion price-target-only exit should not be labeled as an RSI exit");
+  }
+  if (!bothExitSignalsDecision.reason.includes("reversion_price_target_hit")) {
+    throw new Error(`rsiReversion should prefer the price-target reason when both exit conditions are true: ${bothExitSignalsDecision.reason.join(",")}`);
+  }
+  if (bothExitSignalsDecision.reason.includes("rsi_exit_threshold_hit")) {
+    throw new Error("rsiReversion should not downgrade a price-target exit to RSI reason when both conditions are true");
+  }
+  if (!(bothExitSignalsDecision.confidence > rsiOnlySellDecision.confidence)) {
+    throw new Error(`rsiReversion stronger exit should have higher sell confidence (${rsiOnlySellDecision.confidence} vs ${bothExitSignalsDecision.confidence})`);
   }
 }
 

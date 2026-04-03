@@ -89,7 +89,8 @@ class StateStore {
   }
 
   registerBot(config: BotConfig) {
-    const initialBalance = config.initialBalanceUsdt ?? 1000;
+    const existingState = this.botStates.get(config.id) || null;
+    const initialBalance = existingState?.availableBalanceUsdt ?? config.initialBalanceUsdt ?? 1000;
     this.botConfigs.set(config.id, config);
     this.botStates.set(config.id, {
       activeStrategyId: config.strategy,
@@ -119,50 +120,70 @@ class StateStore {
       lastTradeAt: null,
       lossStreak: 0,
       pausedReason: null,
+      postLossArchitectLatchActive: false,
+      postLossArchitectLatchActivatedAt: null,
+      postLossArchitectLatchFreshPublishCount: 0,
+      postLossArchitectLatchLastCountedPublishedAt: null,
+      postLossArchitectLatchStrategyId: null,
       realizedPnl: 0,
       status: config.enabled ? "idle" : "stopped",
+      symbol: config.symbol,
+      ...(existingState || {}),
+      botId: config.id,
       symbol: config.symbol
     });
-    this.orders.set(config.id, []);
-    this.closedTrades.set(config.id, []);
-    this.positions.set(config.id, null);
-    this.performance.set(config.id, {
-      avgTradePnlUsdt: 0,
-      botId: config.id,
-      currentEquity: initialBalance,
-      drawdown: 0,
-      grossLoss: 0,
-      grossProfit: 0,
-      peakEquity: initialBalance,
-      pnl: 0,
-      profitFactor: 0,
-      recentNetPnl: [],
-      tradesCount: 0,
-      winRate: 0,
-      wins: 0,
-      losses: 0
-    });
-    this.performanceHistory.set(config.id, [{
-      drawdown: 0,
-      pnl: 0,
-      profitFactor: 0,
-      time: Date.now(),
-      tradesCount: 0,
-      winRate: 0
-    }]);
-    this.pipelineBySymbol.set(config.symbol, {
-      botToExecutionMs: null,
-      exchangeToReceiveMs: null,
-      lastBotEvaluatedAt: null,
-      lastExchangeTimestamp: null,
-      lastExecutionAt: null,
-      lastStateUpdatedAt: null,
-      lastWsReceivedAt: null,
-      receiveToStateMs: null,
-      stateToBotMs: null,
-      symbol: config.symbol,
-      totalPipelineMs: null
-    });
+    if (!this.orders.has(config.id)) {
+      this.orders.set(config.id, []);
+    }
+    if (!this.closedTrades.has(config.id)) {
+      this.closedTrades.set(config.id, []);
+    }
+    if (!this.positions.has(config.id)) {
+      this.positions.set(config.id, null);
+    }
+    if (!this.performance.has(config.id)) {
+      this.performance.set(config.id, {
+        avgTradePnlUsdt: 0,
+        botId: config.id,
+        currentEquity: initialBalance,
+        drawdown: 0,
+        grossLoss: 0,
+        grossProfit: 0,
+        peakEquity: initialBalance,
+        pnl: 0,
+        profitFactor: 0,
+        recentNetPnl: [],
+        tradesCount: 0,
+        winRate: 0,
+        wins: 0,
+        losses: 0
+      });
+    }
+    if (!this.performanceHistory.has(config.id)) {
+      this.performanceHistory.set(config.id, [{
+        drawdown: 0,
+        pnl: 0,
+        profitFactor: 0,
+        time: Date.now(),
+        tradesCount: 0,
+        winRate: 0
+      }]);
+    }
+    if (!this.pipelineBySymbol.has(config.symbol)) {
+      this.pipelineBySymbol.set(config.symbol, {
+        botToExecutionMs: null,
+        exchangeToReceiveMs: null,
+        lastBotEvaluatedAt: null,
+        lastExchangeTimestamp: null,
+        lastExecutionAt: null,
+        lastStateUpdatedAt: null,
+        lastWsReceivedAt: null,
+        receiveToStateMs: null,
+        stateToBotMs: null,
+        symbol: config.symbol,
+        totalPipelineMs: null
+      });
+    }
   }
 
   updatePrice(tick: MarketTick) {
@@ -372,16 +393,8 @@ class StateStore {
     this.architectPublishedBySymbol.set(symbol, assessment);
   }
 
-  setArchitectAssessment(symbol: string, assessment: ArchitectAssessment) {
-    this.setArchitectPublishedAssessment(symbol, assessment);
-  }
-
   getArchitectPublishedAssessment(symbol: string): ArchitectAssessment | null {
     return this.architectPublishedBySymbol.get(symbol) || null;
-  }
-
-  getArchitectAssessment(symbol: string): ArchitectAssessment | null {
-    return this.getArchitectPublishedAssessment(symbol);
   }
 
   getAllArchitectAssessments() {

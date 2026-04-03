@@ -1,5 +1,7 @@
 "use strict";
 
+const { ConfigLoader } = require("../src/core/configLoader.ts");
+const { StrategyRegistry } = require("../src/core/strategyRegistry.ts");
 const { StrategySwitcher } = require("../src/roles/strategySwitcher.ts");
 
 function createArchitect(overrides = {}) {
@@ -38,13 +40,32 @@ function createArchitect(overrides = {}) {
 }
 
 function runStrategySwitcherTests() {
-  const switcher = new StrategySwitcher();
+  const strategyRegistry = new StrategyRegistry({
+    configLoader: new ConfigLoader(),
+    indicatorEngine: {}
+  });
+  strategyRegistry.load();
+  const switcher = new StrategySwitcher({
+    resolveStrategyFamily(strategyId) {
+      return strategyRegistry.getStrategyFamily(strategyId);
+    }
+  });
   const baseState = {
     activeStrategyId: "rsiReversion"
   };
 
-  const nonRoutable = switcher.getNonRoutableStrategies(["breakout", "emaCross"]);
-  if (nonRoutable.length !== 1 || nonRoutable[0] !== "breakout") {
+  if (switcher.getStrategyFamily("emaCross") !== "trend_following") {
+    throw new Error("emaCross family should resolve from configured registry metadata");
+  }
+  if (switcher.getStrategyFamily("rsiReversion") !== "mean_reversion") {
+    throw new Error("rsiReversion family should resolve from configured registry metadata");
+  }
+  if (switcher.getStrategyFamily("breakout") !== "trend_following") {
+    throw new Error("breakout family should resolve from configured registry metadata");
+  }
+
+  const nonRoutable = switcher.getNonRoutableStrategies(["breakout", "emaCross", "unknownStrategy"]);
+  if (nonRoutable.length !== 1 || nonRoutable[0] !== "unknownStrategy") {
     throw new Error(`non-routable strategy detection returned an unexpected result: ${nonRoutable.join(",")}`);
   }
 
@@ -116,6 +137,21 @@ function runStrategySwitcherTests() {
     throw new Error("same-family architect decision should not trigger switching");
   }
 
+  const breakoutRoute = switcher.evaluate({
+    architect: createArchitect(),
+    availableStrategies: ["breakout", "rsiReversion"],
+    botConfig: {
+      id: "bot_a",
+      symbol: "BTC/USDT"
+    },
+    now: Date.now(),
+    positionOpen: false,
+    state: baseState
+  });
+  if (!breakoutRoute || breakoutRoute.nextStrategyId !== "breakout") {
+    throw new Error("configured breakout strategy should be routable for trend_following family");
+  }
+
   const blockedUnsupportedFamilyTarget = switcher.evaluate({
     architect: createArchitect({
       marketRegime: "range",
@@ -133,7 +169,34 @@ function runStrategySwitcherTests() {
     }
   });
   if (blockedUnsupportedFamilyTarget !== null) {
-    throw new Error("non-routable breakout strategy should not be treated as a family target");
+    throw new Error("trend-only strategy set should not satisfy a mean_reversion target");
+  }
+
+  let invalidFamilyError = null;
+  try {
+    const invalidRegistry = new StrategyRegistry({
+      configLoader: {
+        loadStrategiesConfig() {
+          return {
+            strategies: [
+              {
+                config: "./strategies/emaCross/config.json",
+                family: "invalid_family",
+                id: "brokenStrategy",
+                module: "./strategies/emaCross/strategy.ts"
+              }
+            ]
+          };
+        }
+      },
+      indicatorEngine: {}
+    });
+    invalidRegistry.load();
+  } catch (error) {
+    invalidFamilyError = error;
+  }
+  if (!invalidFamilyError || !String(invalidFamilyError.message || invalidFamilyError).includes("invalid or missing family metadata")) {
+    throw new Error("invalid strategy family metadata should fail clearly during registry load");
   }
 }
 

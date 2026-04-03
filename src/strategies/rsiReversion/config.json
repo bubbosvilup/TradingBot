@@ -2,6 +2,7 @@
   "buyRsi": 33,
   "sellRsi": 58,
   "emaBaseline": 34,
+  "exitPolicyId": "RSI_REVERSION_PRO",
   "minExpectedNetEdgePct": 0.0003,
   "minConfidence": 0.55
 }

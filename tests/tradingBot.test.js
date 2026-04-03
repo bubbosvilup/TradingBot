@@ -8,6 +8,14 @@ const { StrategySwitcher } = require("../src/roles/strategySwitcher.ts");
 const { StateStore } = require("../src/core/stateStore.ts");
 const { UserStream } = require("../src/streams/userStream.ts");
 
+function resolveTestStrategyFamily(strategyId) {
+  if (strategyId === "testStrategy") return "trend_following";
+  if (strategyId === "emaCross") return "trend_following";
+  if (strategyId === "rsiReversion") return "mean_reversion";
+  if (strategyId === "breakout") return "trend_following";
+  return "other";
+}
+
 function createPublishedArchitect(overrides = {}) {
   return {
     absoluteConviction: 0.74,
@@ -67,12 +75,14 @@ function createTrendArchitect(overrides = {}) {
 }
 
 function createHarness(strategyEvaluate, options = {}) {
-  const store = new StateStore();
+  const store = options.store || new StateStore();
   const config = {
     allowedStrategies: options.allowedStrategies || ["testStrategy"],
     enabled: true,
     id: "bot_test",
     initialBalanceUsdt: options.initialBalanceUsdt ?? 1000,
+    maxArchitectStateAgeMs: options.maxArchitectStateAgeMs,
+    postLossArchitectLatchPublishesRequired: options.postLossArchitectLatchPublishesRequired,
     riskProfile: options.riskProfile || "medium",
     strategy: options.strategy || "testStrategy",
     symbol: options.symbol || "BTC/USDT"
@@ -162,10 +172,7 @@ function createHarness(strategyEvaluate, options = {}) {
         return null;
       },
       getStrategyFamily(strategyId) {
-        if (strategyId === "testStrategy") return "trend_following";
-        if (strategyId === "emaCross") return "trend_following";
-        if (strategyId === "rsiReversion") return "mean_reversion";
-        return "other";
+        return resolveTestStrategyFamily(strategyId);
       }
     }
   });
@@ -254,6 +261,9 @@ function runTradingBotTests() {
       confidence: 0.9,
       reason: [context.hasOpenPosition ? "exit_signal" : "entry_signal"]
     }));
+    if (holdHarness.bot.maxArchitectStateAgeMs !== 90_000) {
+      throw new Error(`default maxArchitectStateAgeMs should remain 90000: ${holdHarness.bot.maxArchitectStateAgeMs}`);
+    }
 
     holdHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     if (holdHarness.store.getPosition("bot_test")) {
@@ -354,6 +364,353 @@ function runTradingBotTests() {
       process.env.LOG_TYPE = originalLogType;
     }
 
+    process.env.LOG_TYPE = "strategy_debug";
+    clock += 10_000;
+    const strategyDebugSellHarness = createHarness(() => ({
+      action: "sell",
+      confidence: 0.88,
+      reason: ["rsi_exit_threshold_hit"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          exitPolicyId: "RSI_REVERSION_PRO"
+        }
+      }
+    });
+    strategyDebugSellHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.8,
+      entryPrice: 100,
+      id: "pos-debug-sell",
+      lifecycleMode: "normal",
+      managedRecoveryDeferredReason: null,
+      managedRecoveryExitFloorNetPnlUsdt: null,
+      managedRecoveryStartedAt: null,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 20_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    strategyDebugSellHarness.bot.onMarketTick({ price: 100.4, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    strategyDebugSellHarness.bot.onMarketTick({ price: 100.4, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const strategyDebugSellLog = strategyDebugSellHarness.botLogs.find((entry) => entry.message === "SELL");
+    if (!strategyDebugSellLog || !String(strategyDebugSellLog.metadata.closeReason || "").includes("rsi_exit_confirmed")) {
+      throw new Error(`strategy_debug SELL log should preserve the explicit exit reason: ${JSON.stringify(strategyDebugSellLog)}`);
+    }
+    if (!strategyDebugSellLog || strategyDebugSellLog.metadata.entryPrice !== 100 || strategyDebugSellLog.metadata.exitPrice !== 100.4 || strategyDebugSellLog.metadata.grossPnl !== 0.2 || strategyDebugSellLog.metadata.fees !== 0.1002 || strategyDebugSellLog.metadata.netPnl !== 0.0998) {
+      throw new Error(`strategy_debug SELL log should expose structured PnL fields: ${JSON.stringify(strategyDebugSellLog)}`);
+    }
+    if (strategyDebugSellLog.metadata.policyId !== "RSI_REVERSION_PRO" || strategyDebugSellLog.metadata.positionStatus !== "EXITING" || strategyDebugSellLog.metadata.exitEvent !== "rsi_exit_confirmed" || strategyDebugSellLog.metadata.exitMechanism !== "qualification" || strategyDebugSellLog.metadata.lifecycleEvent !== "RSI_EXIT_HIT" || strategyDebugSellLog.metadata.signalTimestamp !== clock || strategyDebugSellLog.metadata.executionTimestamp !== clock || strategyDebugSellLog.metadata.signalToExecutionMs !== 0) {
+      throw new Error(`strategy_debug SELL log should expose exit policy and timing diagnostics: ${JSON.stringify(strategyDebugSellLog)}`);
+    }
+    if (!strategyDebugSellHarness.store.getClosedTrades("bot_test")[0] || strategyDebugSellHarness.store.getClosedTrades("bot_test")[0].lifecycleState !== "CLOSED") {
+      throw new Error("closed trade should carry explicit CLOSED lifecycle state");
+    }
+    if (strategyDebugSellLog.metadata.closeClassification !== "confirmed_exit") {
+      throw new Error(`profitable RSI exit should remain a normal confirmed exit: ${JSON.stringify(strategyDebugSellLog)}`);
+    }
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
+
+    process.env.LOG_TYPE = "strategy_debug";
+    clock += 10_000;
+    const failedRsiExitHarness = createHarness(() => ({
+      action: "sell",
+      confidence: 0.88,
+      reason: ["rsi_exit_confirmed"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion"
+    });
+    failedRsiExitHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.8,
+      entryPrice: 100,
+      id: "pos-failed-rsi-sell",
+      lifecycleMode: "normal",
+      managedRecoveryDeferredReason: null,
+      managedRecoveryExitFloorNetPnlUsdt: null,
+      managedRecoveryStartedAt: null,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 20_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    failedRsiExitHarness.store.updateBotState("bot_test", {
+      activeStrategyId: "rsiReversion",
+      exitSignalStreak: 1
+    });
+    failedRsiExitHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const failedRsiTrade = failedRsiExitHarness.store.getClosedTrades("bot_test")[0];
+    const failedRsiState = failedRsiExitHarness.store.getBotState("bot_test");
+    if (!failedRsiTrade || !(failedRsiTrade.netPnl < 0) || !failedRsiTrade.exitReason.includes("rsi_exit_confirmed")) {
+      throw new Error(`negative RSI-based exit should close with rsi_exit_confirmed and negative netPnl: ${JSON.stringify(failedRsiTrade)}`);
+    }
+    if (failedRsiTrade.lifecycleEvent !== "FAILED_RSI_EXIT" || failedRsiTrade.lifecycleState !== "CLOSED") {
+      throw new Error(`negative RSI exit should mark explicit failed lifecycle outcome: ${JSON.stringify(failedRsiTrade)}`);
+    }
+    const failedRsiExitLog = failedRsiExitHarness.botLogs.find((entry) => entry.message === "failed_rsi_exit");
+    if (!failedRsiExitLog || failedRsiExitLog.metadata.closeClassification !== "failed_rsi_exit") {
+      throw new Error(`negative RSI exit should emit failed_rsi_exit log: ${JSON.stringify(failedRsiExitLog)}`);
+    }
+    const failedRsiSellLog = failedRsiExitHarness.botLogs.find((entry) => entry.message === "SELL" && entry.metadata.closeClassification === "failed_rsi_exit");
+    if (!failedRsiSellLog || !String(failedRsiSellLog.metadata.closeReason || "").includes("rsi_exit_confirmed")) {
+      throw new Error(`negative RSI exit SELL log should carry failed_rsi_exit classification and rsi_exit_confirmed reason: ${JSON.stringify(failedRsiSellLog)}`);
+    }
+    if (!failedRsiState.postLossArchitectLatchActive || failedRsiState.postLossArchitectLatchStrategyId !== "rsiReversion") {
+      throw new Error(`negative RSI exit should activate the post-loss architect latch: ${JSON.stringify(failedRsiState)}`);
+    }
+    if (!failedRsiExitHarness.botLogs.find((entry) => entry.message === "post_loss_architect_latch_activated")) {
+      throw new Error("negative RSI exit should activate the same post-loss defensive latch flow");
+    }
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
+
+    process.env.LOG_TYPE = "strategy_debug";
+    clock += 10_000;
+    const managedRecoveryHarness = createHarness(() => ({
+      action: "sell",
+      confidence: 0.88,
+      reason: ["rsi_exit_threshold_hit"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          exitPolicyId: "RSI_REVERSION_PRO"
+        }
+      }
+    });
+    managedRecoveryHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.84,
+      entryPrice: 100,
+      id: "pos-managed-recovery",
+      lifecycleMode: "normal",
+      managedRecoveryDeferredReason: null,
+      managedRecoveryExitFloorNetPnlUsdt: null,
+      managedRecoveryStartedAt: null,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 20_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    managedRecoveryHarness.store.updateBotState("bot_test", {
+      activeStrategyId: "rsiReversion",
+      exitSignalStreak: 1
+    });
+    managedRecoveryHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const managedRecoveryPosition = managedRecoveryHarness.store.getPosition("bot_test");
+    if (!managedRecoveryPosition || managedRecoveryPosition.lifecycleMode !== "managed_recovery" || managedRecoveryPosition.lifecycleState !== "MANAGED_RECOVERY" || managedRecoveryPosition.lastLifecycleEvent !== "RSI_EXIT_HIT") {
+      throw new Error(`weak RSI exit should defer into managed recovery: ${JSON.stringify(managedRecoveryPosition)}`);
+    }
+    if (managedRecoveryHarness.store.getClosedTrades("bot_test").length !== 0) {
+      throw new Error("deferred RSI exit should not close the trade immediately");
+    }
+    if (managedRecoveryHarness.store.getBotState("bot_test").exitSignalStreak !== 0) {
+      throw new Error("entering managed recovery should reset exit confirmation streak");
+    }
+    if (!managedRecoveryHarness.botLogs.find((entry) => entry.message === "rsi_exit_deferred")) {
+      throw new Error("missing rsi_exit_deferred log when RSI exit is below the recovery floor");
+    }
+    const deferredRiskLog = managedRecoveryHarness.botLogs.find((entry) => entry.message === "RISK_CHANGE" && entry.metadata.status === "rsi_exit_deferred");
+    if (!deferredRiskLog) {
+      throw new Error("strategy_debug/minimal path should expose managed recovery entry via RISK_CHANGE");
+    }
+    const deferredLog = managedRecoveryHarness.botLogs.find((entry) => entry.message === "rsi_exit_deferred");
+    if (!deferredLog || deferredLog.metadata.policyId !== "RSI_REVERSION_PRO" || deferredLog.metadata.positionStatus !== "MANAGED_RECOVERY" || deferredLog.metadata.exitEvent !== "rsi_exit_deferred" || deferredLog.metadata.exitMechanism !== "qualification" || deferredLog.metadata.lifecycleEvent !== "RSI_EXIT_HIT" || deferredLog.metadata.targetPrice === null || deferredLog.metadata.timeoutRemainingMs === null) {
+      throw new Error(`managed recovery defer log should expose policy, target, and timeout context: ${JSON.stringify(deferredLog)}`);
+    }
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
+
+    clock += 1_000;
+    managedRecoveryHarness.bot.onMarketTick({ price: 100.21, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const ignoredRecoveryPosition = managedRecoveryHarness.store.getPosition("bot_test");
+    if (!ignoredRecoveryPosition || ignoredRecoveryPosition.lifecycleMode !== "managed_recovery" || managedRecoveryHarness.store.getClosedTrades("bot_test").length !== 0) {
+      throw new Error("managed recovery should ignore repeated RSI-only sell signals");
+    }
+    if (managedRecoveryHarness.store.getBotState("bot_test").exitSignalStreak !== 0) {
+      throw new Error("ignored RSI signals during managed recovery must not accumulate fake exit confirmation");
+    }
+
+    const managedRecoveryTargetHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["mean_reversion_not_ready"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      indicatorSnapshot: {
+        emaBaseline: 99,
+        emaFast: 101,
+        emaSlow: 100,
+        momentum: 1.4,
+        rsi: 55,
+        volatility: 1.2
+      },
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          exitPolicyId: "RSI_REVERSION_PRO"
+        }
+      }
+    });
+    managedRecoveryTargetHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.84,
+      entryPrice: 100,
+      id: "pos-managed-target",
+      lifecycleMode: "managed_recovery",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryExitFloorNetPnlUsdt: 0.05,
+      managedRecoveryStartedAt: clock - 10_000,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 30_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    managedRecoveryTargetHarness.store.updateBotState("bot_test", {
+      activeStrategyId: "rsiReversion",
+      exitSignalStreak: 0
+    });
+    managedRecoveryTargetHarness.bot.onMarketTick({ price: 101.6, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!managedRecoveryTargetHarness.store.getPosition("bot_test")) {
+      throw new Error("managed recovery price target should still require normal confirmation ticks");
+    }
+    if (managedRecoveryTargetHarness.store.getBotState("bot_test").exitSignalStreak !== 1) {
+      throw new Error("managed recovery target resolver should start exit confirmation when the target is reached");
+    }
+    clock += 1_000;
+    managedRecoveryTargetHarness.bot.onMarketTick({ price: 101.6, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const managedRecoveryTargetTrade = managedRecoveryTargetHarness.store.getClosedTrades("bot_test")[0];
+    if (!managedRecoveryTargetTrade || !managedRecoveryTargetTrade.exitReason.includes("reversion_price_target_hit")) {
+      throw new Error(`managed recovery should exit on confirmed price target hit: ${JSON.stringify(managedRecoveryTargetTrade)}`);
+    }
+    const managedRecoveryExitedLog = managedRecoveryTargetHarness.botLogs.find((entry) => entry.message === "managed_recovery_exited");
+    if (!managedRecoveryExitedLog || managedRecoveryExitedLog.metadata.positionStatus !== "EXITING" || managedRecoveryExitedLog.metadata.exitEvent !== "reversion_price_target_hit" || managedRecoveryExitedLog.metadata.exitMechanism !== "recovery" || managedRecoveryExitedLog.metadata.lifecycleEvent !== "PRICE_TARGET_HIT") {
+      throw new Error(`managed recovery exit log should expose recovery exit telemetry: ${JSON.stringify(managedRecoveryExitedLog)}`);
+    }
+
+    clock += 10_000;
+    const managedRecoveryInvalidationHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["mean_reversion_not_ready"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          exitPolicyId: "RSI_REVERSION_PRO"
+        }
+      }
+    });
+    managedRecoveryInvalidationHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.84,
+      entryPrice: 100,
+      id: "pos-managed-invalidation",
+      lifecycleMode: "managed_recovery",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryExitFloorNetPnlUsdt: 0.05,
+      managedRecoveryStartedAt: clock - 10_000,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 30_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    managedRecoveryInvalidationHarness.store.setArchitectPublishedAssessment("BTC/USDT", createTrendArchitect({
+      updatedAt: clock
+    }));
+    managedRecoveryInvalidationHarness.store.setArchitectPublisherState("BTC/USDT", {
+      ...managedRecoveryInvalidationHarness.store.getArchitectPublisherState("BTC/USDT"),
+      lastPublishedAt: clock,
+      ready: true
+    });
+    managedRecoveryInvalidationHarness.bot.onMarketTick({ price: 100.3, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const invalidationTrade = managedRecoveryInvalidationHarness.store.getClosedTrades("bot_test")[0];
+    if (!invalidationTrade || !invalidationTrade.exitReason.includes("regime_invalidation_exit")) {
+      throw new Error(`managed recovery should exit on architect invalidation: ${JSON.stringify(invalidationTrade)}`);
+    }
+    const invalidationLog = managedRecoveryInvalidationHarness.botLogs.find((entry) => entry.message === "managed_recovery_exited");
+    if (!invalidationLog || invalidationLog.metadata.exitMechanism !== "invalidation" || invalidationLog.metadata.invalidationMode !== "family_mismatch" || invalidationLog.metadata.invalidationLevel !== "family_mismatch" || invalidationLog.metadata.lifecycleEvent !== "REGIME_INVALIDATION") {
+      throw new Error(`managed recovery invalidation should log explicit invalidation telemetry: ${JSON.stringify(invalidationLog)}`);
+    }
+
+    clock += 10_000;
+    const managedRecoveryTimeoutHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["mean_reversion_not_ready"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          exitPolicyId: "RSI_REVERSION_FAST_TIMEOUT"
+        }
+      }
+    });
+    managedRecoveryTimeoutHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.84,
+      entryPrice: 100,
+      id: "pos-managed-timeout",
+      lifecycleMode: "managed_recovery",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryExitFloorNetPnlUsdt: 0.05,
+      managedRecoveryStartedAt: clock - 31_000,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 45_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    managedRecoveryTimeoutHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const timeoutTrade = managedRecoveryTimeoutHarness.store.getClosedTrades("bot_test")[0];
+    if (!timeoutTrade || !timeoutTrade.exitReason.includes("time_exhaustion_exit")) {
+      throw new Error(`managed recovery should exit on timeout exhaustion: ${JSON.stringify(timeoutTrade)}`);
+    }
+    const timeoutLog = managedRecoveryTimeoutHarness.botLogs.find((entry) => entry.message === "managed_recovery_exited");
+    if (!timeoutLog || timeoutLog.metadata.exitMechanism !== "recovery" || timeoutLog.metadata.exitEvent !== "time_exhaustion_exit" || timeoutLog.metadata.lifecycleEvent !== "RECOVERY_TIMEOUT") {
+      throw new Error(`managed recovery timeout should remain a recovery-driven exit: ${JSON.stringify(timeoutLog)}`);
+    }
+
     clock += 10_000;
     const mediumLossStreakLimit = new RiskManager().getProfile("medium").maxLossStreak;
     const lossLatchHarness = createHarness(() => ({
@@ -408,6 +765,187 @@ function runTradingBotTests() {
     }
     if (nonLossCooldownHarness.store.getPosition("bot_test")) {
       throw new Error("non-loss cooldown expiry should keep loss_streak_limit behavior unchanged");
+    }
+
+    clock += 10_000;
+    process.env.LOG_TYPE = "strategy_debug";
+    const postLossStrategyEvaluate = (context) => ({
+      action: context.hasOpenPosition ? "hold" : "buy",
+      confidence: 0.95,
+      reason: [context.hasOpenPosition ? "mean_reversion_not_ready" : "buy_signal"]
+    });
+    const postLossLatchHarness = createHarness(postLossStrategyEvaluate, {
+      allowedStrategies: ["rsiReversion"],
+      postLossArchitectLatchPublishesRequired: 2,
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion"
+    });
+    postLossLatchHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.9,
+      entryPrice: 100,
+      id: "pos-loss-latch",
+      lifecycleMode: "normal",
+      managedRecoveryDeferredReason: null,
+      managedRecoveryExitFloorNetPnlUsdt: null,
+      managedRecoveryStartedAt: null,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 20_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    postLossLatchHarness.store.updateBotState("bot_test", {
+      activeStrategyId: "rsiReversion",
+      exitSignalStreak: 1
+    });
+    postLossLatchHarness.bot.onMarketTick({ price: 99, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const postLossClosedTrade = postLossLatchHarness.store.getClosedTrades("bot_test")[0];
+    const postLossState = postLossLatchHarness.store.getBotState("bot_test");
+    if (!postLossClosedTrade || !(postLossClosedTrade.netPnl < 0)) {
+      throw new Error("post-loss architect latch test should close a real losing trade");
+    }
+    if (!postLossClosedTrade.exitReason.includes("protective_stop_exit")) {
+      throw new Error(`post-loss architect latch test should be triggered by the defensive stop path: ${JSON.stringify(postLossClosedTrade)}`);
+    }
+    const protectiveStopSellLog = postLossLatchHarness.botLogs.find((entry) => entry.message === "SELL" && String(entry.metadata.closeReason || "").includes("protective_stop_exit"));
+    if (!protectiveStopSellLog || protectiveStopSellLog.metadata.exitMechanism !== "protection" || protectiveStopSellLog.metadata.protectionMode !== "fixed_pct" || protectiveStopSellLog.metadata.lifecycleEvent !== "PROTECTIVE_STOP_HIT") {
+      throw new Error(`protective stop exits should log explicit protection telemetry: ${JSON.stringify(protectiveStopSellLog)}`);
+    }
+    if (!postLossState.postLossArchitectLatchActive || postLossState.postLossArchitectLatchFreshPublishCount !== 0 || postLossState.postLossArchitectLatchStrategyId !== "rsiReversion") {
+      throw new Error(`loss close should activate the architect latch: ${JSON.stringify(postLossState)}`);
+    }
+    if (!postLossLatchHarness.botLogs.find((entry) => entry.message === "post_loss_architect_latch_activated")) {
+      throw new Error("missing post_loss_architect_latch_activated log on losing close");
+    }
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
+
+    clock += 80_000;
+    postLossLatchHarness.store.updateBotState("bot_test", {
+      cooldownReason: null,
+      cooldownUntil: null,
+      entrySignalStreak: 1
+    });
+    postLossLatchHarness.bot.onMarketTick({ price: 99.6, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    let postLossBlockedState = postLossLatchHarness.store.getBotState("bot_test");
+    if (postLossLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("post-loss architect latch should block re-entry before fresh publishes arrive");
+    }
+    if (!postLossLatchHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "post_loss_architect_latch")) {
+      throw new Error("missing entry_gate_blocked log for post_loss_architect_latch");
+    }
+    const postLossBlockedLog = postLossLatchHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "post_loss_architect_latch");
+    if (!postLossBlockedLog || postLossBlockedLog.metadata.postLossArchitectLatchFreshPublishCount !== 0 || postLossBlockedLog.metadata.postLossArchitectLatchRequiredPublishes !== 2) {
+      throw new Error(`post-loss architect latch blocked log should expose latch progress: ${JSON.stringify(postLossBlockedLog)}`);
+    }
+    if (postLossBlockedState.postLossArchitectLatchFreshPublishCount !== 0) {
+      throw new Error("stale architect state should not increment the post-loss architect latch");
+    }
+
+    postLossLatchHarness.store.setArchitectPublishedAssessment("BTC/USDT", createPublishedArchitect({
+      updatedAt: postLossClosedTrade.closedAt + 5_000
+    }));
+    clock += 1_000;
+    postLossLatchHarness.bot.onMarketTick({ price: 99.7, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    postLossBlockedState = postLossLatchHarness.store.getBotState("bot_test");
+    if (postLossBlockedState.postLossArchitectLatchFreshPublishCount !== 0 || !postLossBlockedState.postLossArchitectLatchActive) {
+      throw new Error("updating only the published payload without a fresh publisher timestamp should not release the latch");
+    }
+
+    const firstFreshPublishAt = postLossClosedTrade.closedAt + 10_000;
+    postLossLatchHarness.store.setArchitectPublisherState("BTC/USDT", {
+      ...postLossLatchHarness.store.getArchitectPublisherState("BTC/USDT"),
+      lastPublishedAt: firstFreshPublishAt,
+      ready: true
+    });
+    clock += 1_000;
+    postLossLatchHarness.bot.onMarketTick({ price: 99.8, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    let firstFreshPublishState = postLossLatchHarness.store.getBotState("bot_test");
+    if (firstFreshPublishState.postLossArchitectLatchFreshPublishCount !== 1 || !firstFreshPublishState.postLossArchitectLatchActive) {
+      throw new Error(`first fresh architect publish should count but not release the latch: ${JSON.stringify(firstFreshPublishState)}`);
+    }
+    if (!postLossLatchHarness.botLogs.find((entry) => entry.message === "post_loss_architect_latch_publish_counted" && entry.metadata.freshPublishCount === 1)) {
+      throw new Error("missing publish_counted log for the first fresh architect publish");
+    }
+
+    clock += 1_000;
+    postLossLatchHarness.bot.onMarketTick({ price: 99.9, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    firstFreshPublishState = postLossLatchHarness.store.getBotState("bot_test");
+    if (firstFreshPublishState.postLossArchitectLatchFreshPublishCount !== 1 || !firstFreshPublishState.postLossArchitectLatchActive) {
+      throw new Error("reused architect publisher state should not increment or release the latch");
+    }
+
+    const secondFreshPublishAt = postLossClosedTrade.closedAt + 20_000;
+    postLossLatchHarness.store.setArchitectPublisherState("BTC/USDT", {
+      ...postLossLatchHarness.store.getArchitectPublisherState("BTC/USDT"),
+      lastPublishedAt: secondFreshPublishAt,
+      ready: true
+    });
+    postLossLatchHarness.store.updateBotState("bot_test", {
+      entrySignalStreak: 1
+    });
+    clock += 1_000;
+    postLossLatchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const releasedLatchState = postLossLatchHarness.store.getBotState("bot_test");
+    if (releasedLatchState.postLossArchitectLatchActive || releasedLatchState.postLossArchitectLatchFreshPublishCount !== 2) {
+      throw new Error(`second fresh architect publish should release the latch: ${JSON.stringify(releasedLatchState)}`);
+    }
+    if (!postLossLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("re-entry should become eligible once the second fresh architect publish releases the latch");
+    }
+    if (!postLossLatchHarness.botLogs.find((entry) => entry.message === "post_loss_architect_latch_released")) {
+      throw new Error("missing post_loss_architect_latch_released log");
+    }
+
+    const reloadedStore = new StateStore();
+    reloadedStore.botStates.set("bot_test", {
+      ...releasedLatchState,
+      cooldownReason: null,
+      cooldownUntil: null,
+      entrySignalStreak: 1,
+      postLossArchitectLatchActive: true,
+      postLossArchitectLatchActivatedAt: postLossClosedTrade.closedAt,
+      postLossArchitectLatchFreshPublishCount: 1,
+      postLossArchitectLatchLastCountedPublishedAt: firstFreshPublishAt,
+      postLossArchitectLatchStrategyId: "rsiReversion"
+    });
+    const restartedLatchHarness = createHarness(postLossStrategyEvaluate, {
+      allowedStrategies: ["rsiReversion"],
+      postLossArchitectLatchPublishesRequired: 2,
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: firstFreshPublishAt
+      }),
+      publisherState: {
+        challengerCount: 0,
+        challengerRegime: null,
+        challengerRequired: 2,
+        hysteresisActive: false,
+        lastObservedAt: firstFreshPublishAt,
+        lastPublishedAt: firstFreshPublishAt,
+        lastPublishedRegime: "range",
+        nextPublishAt: firstFreshPublishAt + 30_000,
+        publishIntervalMs: 30_000,
+        ready: true,
+        symbol: "BTC/USDT",
+        warmupStartedAt: firstFreshPublishAt - 60_000
+      },
+      store: reloadedStore,
+      strategy: "rsiReversion"
+    });
+    const restartedState = restartedLatchHarness.store.getBotState("bot_test");
+    if (!restartedState.postLossArchitectLatchActive || restartedState.postLossArchitectLatchFreshPublishCount !== 1) {
+      throw new Error(`post-loss architect latch state should survive bot re-registration on restored state: ${JSON.stringify(restartedState)}`);
+    }
+    clock += 1_000;
+    restartedLatchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (restartedLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("restored post-loss architect latch state should still block re-entry until another fresh publish arrives");
     }
 
     clock += 10_000;
@@ -482,9 +1020,7 @@ function runTradingBotTests() {
       publishedArchitect: createPublishedArchitect(),
       strategy: "emaCross",
       strategySwitcher: new StrategySwitcher({
-        minAgreement: 0.52,
-        minConviction: 0.42,
-        minDecisionStrength: 0.08
+        resolveStrategyFamily: resolveTestStrategyFamily
       })
     });
 
@@ -506,21 +1042,25 @@ function runTradingBotTests() {
       confidence: 0.55,
       reason: ["no_trade"]
     }), {
-      allowedStrategies: ["breakout", "emaCross"],
+      allowedStrategies: ["unknownStrategy", "emaCross"],
       strategy: "emaCross",
-      strategySwitcher: new StrategySwitcher()
+      strategySwitcher: new StrategySwitcher({
+        resolveStrategyFamily: resolveTestStrategyFamily
+      })
     });
     const nonRoutableLog = nonRoutableHarness.botLogs.find((entry) => entry.message === "non_routable_allowed_strategies");
     if (!nonRoutableLog) {
-      throw new Error("missing non_routable_allowed_strategies warning when breakout is configured for architect switching");
+      throw new Error("missing non_routable_allowed_strategies warning when an unknown strategy is configured for architect switching");
     }
-    if (nonRoutableLog.metadata.nonRoutableStrategies !== "breakout") {
+    if (nonRoutableLog.metadata.nonRoutableStrategies !== "unknownStrategy") {
       throw new Error(`unexpected non-routable strategy warning payload: ${JSON.stringify(nonRoutableLog.metadata)}`);
     }
 
     clock += 10_000;
     let raceStore = null;
-    const raceSwitcher = new StrategySwitcher();
+    const raceSwitcher = new StrategySwitcher({
+      resolveStrategyFamily: resolveTestStrategyFamily
+    });
     raceSwitcher.evaluate = function evaluateWithInjectedPosition() {
       raceStore.setPosition("bot_test", {
         botId: "bot_test",
@@ -568,7 +1108,9 @@ function runTradingBotTests() {
       allowedStrategies: ["emaCross", "rsiReversion"],
       publishedArchitect: createPublishedArchitect(),
       strategy: "emaCross",
-      strategySwitcher: new StrategySwitcher()
+      strategySwitcher: new StrategySwitcher({
+        resolveStrategyFamily: resolveTestStrategyFamily
+      })
     });
     waitingHarness.store.setPosition("bot_test", {
       botId: "bot_test",
@@ -950,8 +1492,41 @@ function runTradingBotTests() {
     if (!staleHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "architect_not_usable_for_entry" && entry.metadata.architectBlockReason === "architect_stale")) {
       throw new Error("missing architect_not_usable_for_entry log for architect_stale");
     }
+    const staleBlockLog = staleHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.architectBlockReason === "architect_stale");
+    if (!staleBlockLog || staleBlockLog.metadata.architectStaleThresholdMs !== 90_000) {
+      throw new Error("stale architect block log should expose the configured stale threshold");
+    }
     if (staleHarness.store.getBotState("bot_test").lastDecision === "buy") {
       throw new Error("flat bot should not keep a buy decision when architect state is stale");
+    }
+
+    clock += 10_000;
+    const customFreshnessHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      maxArchitectStateAgeMs: 180_000,
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock - 120_000
+      }),
+      strategy: "rsiReversion"
+    });
+    if (customFreshnessHarness.bot.maxArchitectStateAgeMs !== 180_000) {
+      throw new Error(`custom maxArchitectStateAgeMs should be honored from bot config: ${customFreshnessHarness.bot.maxArchitectStateAgeMs}`);
+    }
+    const customArchitectState = customFreshnessHarness.bot.evaluateArchitectUsability({
+      currentFamily: "mean_reversion",
+      timestamp: clock
+    });
+    if (!customArchitectState.usable || customArchitectState.architectStale || customArchitectState.staleThresholdMs !== 180_000) {
+      throw new Error(`custom architect freshness threshold should be honored: ${JSON.stringify(customArchitectState)}`);
+    }
+    customFreshnessHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    customFreshnessHarness.bot.onMarketTick({ price: 100.5, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!customFreshnessHarness.store.getPosition("bot_test")) {
+      throw new Error("non-stale architect state under a custom threshold should remain eligible for entry");
     }
 
     clock += 10_000;

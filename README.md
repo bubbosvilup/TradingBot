@@ -1,24 +1,38 @@
-WIP:
-
-La fotografia generale è questa: l’architettura regge. 
-Il cuore gerarchico è coerente con il disegno desiderato: 
-i bot consumano lo stato architect pubblicato, il routing resta fuori dalle strategy e il post-switch context è stato reso più pulito e osservabile
-Identificati un po di problemi da fixare cioè precisione economica, hardening dei bordi, e chiarezza operativa.
-working on it ora.
-
-
 # TradingBot
 
 TradingBot e un runtime multi-bot modulare per paper trading e osservabilita realtime.
 
 Lo stato attuale del progetto e questo:
-- architettura nuova multi-bot attiva
+- architettura multi-bot attiva
 - feed market `mock` o `live` via Binance WebSocket
 - execution mode separato e mantenuto su `paper`
 - `stateStore` come fonte unica di verita
 - layer `Context -> Architect -> TradingBot`
 - UI/API minima per osservare bot, prezzi, posizioni, eventi e storico trade
 - esecuzione ancora simulata / paper, non ordini reali su exchange
+
+## Novita recenti
+
+L'ultima fase di lavoro ha consolidato soprattutto il lato exit, risk e observability:
+
+- PnL dei trade chiusi normalizzato e loggato in modo esplicito
+- `rsiReversion` separata tra exit qualification e managed recovery
+- `failed_rsi_exit` classificato in modo esplicito quando un exit RSI chiude in negativo
+- post-loss Architect latch basato su publish fresh dell'Architect, non solo su tempo
+- `ExitPolicy` nominati con blocchi `qualification / recovery / protection / invalidation`
+- recovery target resolver condiviso per target simbolici come `emaSlow`, `emaBaseline`, `sma20`, `entryPrice`
+- lifecycle runtime tipizzato per le posizioni:
+  - `ACTIVE`
+  - `MANAGED_RECOVERY`
+  - `EXITING`
+  - `CLOSED`
+- separazione esplicita tra meccanismi di uscita:
+  - `qualification`
+  - `recovery`
+  - `protection`
+  - `invalidation`
+- logging runtime piu compatto e orientato a decisioni reali
+- utility di analisi/report per misurare gli outcome del nuovo exit system
 
 ## Stato del sistema
 
@@ -40,6 +54,7 @@ Principi chiave:
 - la UI non legge direttamente gli stream
 - il market regime non e deciso dentro il bot esecutivo
 - le decisioni pubblicate dall'Architect sono separate dalle osservazioni rumorose per-tick
+- il routing strategico dipende dal family state pubblicato, non da switch hardcoded in strategy
 
 ## Cosa fa oggi
 
@@ -61,15 +76,18 @@ Principi chiave:
 - Pubblica una decisione Architect stabile ogni 30 secondi
 - Riallinea i bot alla famiglia pubblicata solo quando sono flat
 - Mantiene aperte le posizioni esistenti anche se il regime cambia
+- Gestisce exit policy strutturate per la strategia attiva
+- Supporta managed recovery per mean reversion dopo RSI exit deboli
+- Applica latch post-loss su publish fresh dell'Architect prima del re-entry
+- Registra lifecycle, close classification, close reason e timing di uscita
 - Espone dashboard e API di osservabilita
 
 ## Cosa NON fa ancora
 
 - Non esegue ordini reali su Binance
 - Non garantisce profittabilita
-- Non usa ancora grid bot
-- Non usa ancora una famiglia `breakout` come strategia esecutiva attiva
 - Non e ancora una piattaforma di trading completa tipo terminale professionale
+- Non usa ancora una famiglia Architect dedicata `breakout` nel flow standard di default
 
 Nota importante:
 - il feed puo essere `live`
@@ -100,6 +118,9 @@ src/
     regimeDetector.ts
     riskManager.ts
     strategySwitcher.ts
+    positionLifecycleManager.ts
+    recoveryTargetResolver.ts
+    exitPolicyRegistry.ts
   engines/
     indicatorEngine.ts
     executionEngine.ts
@@ -140,6 +161,9 @@ tests/
 - `src/roles/riskManager.ts`: sizing, cooldown, drawdown, guardrail
 - `src/roles/performanceMonitor.ts`: PnL, drawdown, win rate, profit factor
 - `src/roles/strategySwitcher.ts`: resolver leggero famiglia -> strategia eseguibile
+- `src/roles/positionLifecycleManager.ts`: stato runtime e transizioni delle posizioni
+- `src/roles/recoveryTargetResolver.ts`: resolver condiviso del target di recovery
+- `src/roles/exitPolicyRegistry.ts`: policy nominate per l'exit system
 - `src/engines/executionEngine.ts`: paper execution
 
 ### Context / Architect
@@ -166,7 +190,7 @@ Feature principali oggi:
 
 ## Strategie eseguibili oggi
 
-Famiglie attive:
+Famiglie attive di default:
 - `trend_following -> emaCross`
 - `mean_reversion -> rsiReversion`
 
@@ -177,7 +201,11 @@ Strategie presenti nel repo:
 
 Importante:
 - `breakout` esiste nel codice
-- al momento non e usata come famiglia esecutiva attiva dal flow Architect -> Switcher
+- il routing famiglia -> strategia e config-driven, non piu hardcoded
+- `breakout` puo essere instradata se configurata con una famiglia valida
+- il flow Architect attivo standard continua a usare soprattutto:
+  - `trend_following -> emaCross`
+  - `mean_reversion -> rsiReversion`
 
 ## Configurazione bot
 
@@ -238,6 +266,143 @@ Il bot esecutivo:
 - non cambia famiglia mentre ha una posizione aperta
 - si riallinea quando torna flat
 - non chiude una posizione solo perche il regime cambia
+
+## Exit architecture
+
+Per le strategie che usano il nuovo flow, l'uscita non e piu un singolo if sparso ma un lifecycle esplicito.
+
+Stati runtime della posizione:
+- `ACTIVE`
+- `MANAGED_RECOVERY`
+- `EXITING`
+- `CLOSED`
+
+Eventi lifecycle principali:
+- `RSI_EXIT_HIT`
+- `PRICE_TARGET_HIT`
+- `REGIME_INVALIDATION`
+- `PROTECTIVE_STOP_HIT`
+- `RECOVERY_TIMEOUT`
+- `FAILED_RSI_EXIT`
+
+Reason code runtime principali:
+- `rsi_exit_confirmed`
+- `rsi_exit_deferred`
+- `reversion_price_target_hit`
+- `regime_invalidation_exit`
+- `protective_stop_exit`
+- `time_exhaustion_exit`
+
+Meccanismi di uscita distinti:
+- `qualification`: l'uscita e guidata dal segnale di qualification, ad esempio RSI exit confermato
+- `recovery`: la posizione e gia in managed recovery e chiude su target o timeout
+- `protection`: uscita difensiva su cordone di rischio/price legato alla posizione
+- `invalidation`: uscita per morte della tesi, guidata dal contesto Architect
+
+Distinzione concettuale:
+- `protection` = soglie di prezzo/rischio della posizione
+- `invalidation` = eventi di contesto che invalidano la tesi
+
+## ExitPolicy e recovery
+
+Le policy di uscita sono strutturate in blocchi:
+- `qualification`
+- `recovery`
+- `protection`
+- `invalidation`
+
+Per `rsiReversion`, il comportamento attuale e:
+- l'RSI exit viene prima qualificato economicamente
+- se il net PnL stimato non basta, la posizione entra in `managed recovery`
+- in managed recovery l'RSI viene ignorato come trigger di esecuzione
+- la chiusura puo avvenire solo tramite:
+  - target di recovery
+  - invalidation
+  - protective stop
+  - timeout
+
+Target di recovery attualmente supportati:
+- `emaSlow`
+- `emaBaseline`
+- `sma20`
+- `entryPrice`
+
+## PnL dei trade chiusi
+
+Il PnL dei trade chiusi viene calcolato nel layer di execution ed e la fonte di verita per gli outcome.
+
+Formula attuale:
+
+```text
+entryNotionalUsdt = entryPrice * quantity
+exitNotionalUsdt = exitPrice * quantity
+grossPnl = (exitPrice - entryPrice) * quantity
+fees = (entryNotionalUsdt + exitNotionalUsdt) * feeRate
+netPnl = grossPnl - fees
+```
+
+Il `feeRate` ha una sola fonte di verita: viene risolto a monte e iniettato nell'`ExecutionEngine`.
+
+## Logging runtime
+
+Variabile supportata:
+
+```env
+LOG_TYPE=verbose|minimal|only_trades|strategy_debug
+```
+
+Modalita:
+- `verbose`: mantiene il comportamento piu completo
+- `minimal`: solo eventi runtime essenziali
+- `only_trades`: solo open/close/PnL e warning/error
+- `strategy_debug`: solo eventi ad alto valore per tuning di entry/exit
+
+`strategy_debug` e la modalita piu utile per osservare:
+- `SETUP`
+- `BUY`
+- `SELL`
+- `BLOCK_CHANGE`
+- `RISK_CHANGE`
+- `ARCHITECT_CHANGE`
+
+Con telemetry strutturato su:
+- `policyId`
+- `positionStatus`
+- `exitEvent`
+- `exitMechanism`
+- `closeReason`
+- `closeClassification`
+- `grossPnl`
+- `fees`
+- `netPnl`
+- `targetPrice`
+- `invalidationLevel`
+- `stopLevel`
+- `signalTimestamp`
+- `executionTimestamp`
+- `signalToExecutionMs`
+
+## Analisi degli exit
+
+E presente una utility standalone per analizzare l'effetto del nuovo exit system:
+
+- file: `src/utils/exitLifecycleReport.ts`
+- test: `tests/exitLifecycleReport.test.js`
+
+La utility aggrega trade chiusi ed eventi strutturati per:
+- `closeReason`
+- `closeClassification`
+- `exitMechanism`
+- `lifecycleEvent`
+- `lifecycleState`
+- `policyId`
+
+Produce anche metriche dedicate su:
+- managed recovery
+- failed RSI exits
+- deferred RSI exits
+- post-loss Architect latch
+- timing `signal -> execution`
 
 ## UI / API
 
@@ -307,6 +472,10 @@ La suite copre anche:
 - strategy switcher
 - trading bot
 - system server
+- exit policy registry
+- recovery target resolver
+- position lifecycle manager
+- exit lifecycle report
 
 ## Legacy
 

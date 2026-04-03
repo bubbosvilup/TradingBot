@@ -2,16 +2,19 @@
   "strategies": [
     {
       "id": "emaCross",
+      "family": "trend_following",
       "module": "./strategies/emaCross/strategy.ts",
       "config": "./strategies/emaCross/config.json"
     },
     {
       "id": "rsiReversion",
+      "family": "mean_reversion",
       "module": "./strategies/rsiReversion/strategy.ts",
       "config": "./strategies/rsiReversion/config.json"
     },
     {
       "id": "breakout",
+      "family": "trend_following",
       "module": "./strategies/breakout/strategy.ts",
       "config": "./strategies/breakout/config.json"
     }
