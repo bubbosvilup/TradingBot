@@ -1,14 +1,15 @@
 // Module responsibility: shared bot lifecycle and dependency plumbing for independent bots.
 
 import type { BotConfig } from "../types/bot.ts";
+import type { BotDeps } from "../types/runtime.ts";
 
-class BaseBot {
+abstract class BaseBot<TDeps extends BotDeps = BotDeps> {
   config: BotConfig;
-  deps: any;
+  deps: TDeps;
   started: boolean;
   unsubscribe: (() => void) | null;
 
-  constructor(config: BotConfig, deps: any) {
+  constructor(config: BotConfig, deps: TDeps) {
     this.config = config;
     this.deps = deps;
     this.started = false;
@@ -42,7 +43,9 @@ class BaseBot {
   }
 }
 
+export type BaseBotInstance<TDeps extends BotDeps = BotDeps> = BaseBot<TDeps>;
+export type BaseBotClass<TDeps extends BotDeps = BotDeps> = abstract new (config: BotConfig, deps: TDeps) => BaseBot<TDeps>;
+
 module.exports = {
   BaseBot
 };
-

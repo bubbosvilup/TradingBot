@@ -1,6 +1,27 @@
 // Module responsibility: user/order/account event bus isolated from trading logic and prepared for live Binance updates.
 
-function normalizePositionLifecycle(payload) {
+import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
+
+interface OrderUpdatePayload {
+  order?: OrderRecord | null;
+  position?: PositionRecord | null;
+  trade?: ClosedTradeRecord | null;
+  type?: string;
+}
+
+interface StreamEventPayload {
+  symbol?: string | null;
+  timestamp?: number | null;
+}
+
+interface NormalizedUserEvent {
+  data: unknown;
+  symbol: string | null;
+  timestamp: number;
+  type: string;
+}
+
+function normalizePositionLifecycle(payload: OrderUpdatePayload): NormalizedUserEvent | null {
   const timestamp = payload.order?.timestamp || payload.trade?.closedAt || Date.now();
   if (payload.type === "opened" && payload.position) {
     return {
@@ -131,7 +152,7 @@ class UserStream {
     }
   }
 
-  publishOrderUpdate(payload: any) {
+  publishOrderUpdate(payload: OrderUpdatePayload) {
     const order = payload?.order || null;
     const timestamp = order?.timestamp || Date.now();
 
@@ -159,24 +180,26 @@ class UserStream {
   }
 
   publishFillUpdate(payload: unknown) {
+    const data = payload && typeof payload === "object" ? payload as StreamEventPayload : null;
     this.emitNormalized({
       data: payload,
-      symbol: payload && typeof payload === "object" ? payload.symbol || null : null,
-      timestamp: payload && typeof payload === "object" ? payload.timestamp || Date.now() : Date.now(),
+      symbol: data?.symbol || null,
+      timestamp: data?.timestamp || Date.now(),
       type: "fill_update"
     });
   }
 
   publishBalanceUpdate(payload: unknown) {
+    const data = payload && typeof payload === "object" ? payload as StreamEventPayload : null;
     this.emitNormalized({
       data: payload,
       symbol: null,
-      timestamp: payload && typeof payload === "object" ? payload.timestamp || Date.now() : Date.now(),
+      timestamp: data?.timestamp || Date.now(),
       type: "balance_update"
     });
   }
 
-  emitNormalized(event: any) {
+  emitNormalized(event: NormalizedUserEvent) {
     this.wsManager.publish("user:events", event);
     if (event.type === "order_update") {
       this.wsManager.publish("user:orders", event);

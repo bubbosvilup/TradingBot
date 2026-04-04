@@ -251,12 +251,6 @@
       if (payload?.position?.entryPrice) {
         levels.push({ color: "#38bdf8", price: payload.position.entryPrice, title: "ENTRY" });
       }
-      if (payload?.position?.stopLoss) {
-        levels.push({ color: "#ef4444", price: payload.position.stopLoss, title: "STOP" });
-      }
-      if (payload?.position?.takeProfit) {
-        levels.push({ color: "#22c55e", price: payload.position.takeProfit, title: "TARGET" });
-      }
       const activeSeries = currentMode === "candlestick" ? candleSeries : lineSeries;
       for (const level of levels) {
         if (!level.price || !activeSeries?.createPriceLine) continue;
@@ -344,8 +338,6 @@
       legendNode.innerHTML = [
         payload?.lastPrice ? `<span>Last ${Number(payload.lastPrice).toFixed(4)}</span>` : "",
         payload?.position?.entryPrice ? `<span>Entry ${Number(payload.position.entryPrice).toFixed(4)}</span>` : "",
-        payload?.position?.stopLoss ? `<span>Stop ${Number(payload.position.stopLoss).toFixed(4)}</span>` : "",
-        payload?.position?.takeProfit ? `<span>Target ${Number(payload.position.takeProfit).toFixed(4)}</span>` : "",
         activeTimeframe ? `<span>O/H/L/C ${Number(activeTimeframe.open).toFixed(4)} / ${Number(activeTimeframe.high).toFixed(4)} / ${Number(activeTimeframe.low).toFixed(4)} / ${Number(activeTimeframe.close).toFixed(4)}</span>` : ""
       ].filter(Boolean).join("");
     }

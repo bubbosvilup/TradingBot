@@ -34,9 +34,6 @@ export interface BotRuntimeState {
   lastExecutionAt: number | null;
   lastTradeAt: number | null;
   lastStrategySwitchAt: number | null;
-  lastArchitectAssessmentAt: number | null;
-  architectRecommendedFamily: RecommendedFamily | null;
-  architectRecommendationStreak: number;
   architectSyncStatus: ArchitectSyncStatus;
   cooldownUntil: number | null;
   entrySignalStreak: number;
@@ -46,7 +43,6 @@ export interface BotRuntimeState {
   entryBlockedCount: number;
   entrySkippedCount: number;
   entryOpenedCount: number;
-  entryAllowedCount: number;
   lossStreak: number;
   postLossArchitectLatchActive: boolean;
   postLossArchitectLatchActivatedAt: number | null;

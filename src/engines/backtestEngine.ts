@@ -1,4 +1,6 @@
 // Module responsibility: optional replay engine placeholder for future historical simulations.
+// TODO: keep this explicitly marked as a scaffold until a real replay engine exists.
+// Orchestrator currently surfaces its `ok` flag in readiness metadata for visibility only.
 
 class BacktestEngine {
   run() {
@@ -12,4 +14,3 @@ class BacktestEngine {
 module.exports = {
   BacktestEngine
 };
-

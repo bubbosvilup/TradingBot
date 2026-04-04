@@ -7,6 +7,9 @@ const { RiskManager } = require("../src/roles/riskManager.ts");
 const { StrategySwitcher } = require("../src/roles/strategySwitcher.ts");
 const { StateStore } = require("../src/core/stateStore.ts");
 const { UserStream } = require("../src/streams/userStream.ts");
+const { createStrategy: createBreakoutStrategy } = require("../src/strategies/breakout/strategy.ts");
+const { createStrategy: createEmaCrossStrategy } = require("../src/strategies/emaCross/strategy.ts");
+const { createStrategy: createRsiReversionStrategy } = require("../src/strategies/rsiReversion/strategy.ts");
 
 function resolveTestStrategyFamily(strategyId) {
   if (strategyId === "testStrategy") return "trend_following";
@@ -72,6 +75,24 @@ function createTrendArchitect(overrides = {}) {
     trendBias: "bullish",
     ...overrides
   });
+}
+
+function createStrategyWithEconomics(strategyId, strategyEvaluate, options = {}) {
+  const strategyConfig = options.strategyConfigById?.[strategyId];
+  const strategyFactory = strategyId === "emaCross"
+    ? createEmaCrossStrategy
+    : strategyId === "rsiReversion"
+      ? createRsiReversionStrategy
+      : strategyId === "breakout"
+        ? createBreakoutStrategy
+        : null;
+  const baseStrategy = strategyFactory ? strategyFactory(strategyConfig) : null;
+  return {
+    ...(baseStrategy || {}),
+    config: strategyConfig,
+    evaluate: strategyEvaluate,
+    id: strategyId
+  };
 }
 
 function createHarness(strategyEvaluate, options = {}) {
@@ -160,11 +181,7 @@ function createHarness(strategyEvaluate, options = {}) {
     store,
     strategyRegistry: {
       createStrategy(strategyId) {
-        return {
-          config: options.strategyConfigById?.[strategyId],
-          evaluate: strategyEvaluate,
-          id: strategyId
-        };
+        return createStrategyWithEconomics(strategyId, strategyEvaluate, options);
       }
     },
     strategySwitcher: options.strategySwitcher || {
@@ -1718,6 +1735,34 @@ function runTradingBotTests() {
     });
     if (boundedReversionEconomics.expectedGrossEdgePct > 0.02) {
       throw new Error(`reversion edge estimate should remain bounded during deep dislocations: ${boundedReversionEconomics.expectedGrossEdgePct}`);
+    }
+
+    const breakoutEconomics = createHarness(() => ({
+      action: "buy",
+      confidence: 0.88,
+      reason: ["buy_signal"]
+    }), {
+      strategy: "breakout"
+    }).bot.estimateEntryEconomics({
+      context: {
+        indicators: {
+          emaBaseline: 100,
+          emaFast: 100.2,
+          emaSlow: 100,
+          momentum: 0.6,
+          rsi: 61,
+          volatility: 0.02
+        },
+        strategyId: "breakout"
+      },
+      price: 100,
+      quantity: 1
+    });
+    if (Math.abs(breakoutEconomics.expectedGrossEdgePct - 0.0022) > 1e-12) {
+      throw new Error(`breakout edge estimate regressed from the generic/default formula: ${breakoutEconomics.expectedGrossEdgePct}`);
+    }
+    if (breakoutEconomics.minExpectedNetEdgePct !== 0.0005) {
+      throw new Error(`breakout should keep the default minExpectedNetEdgePct: ${breakoutEconomics.minExpectedNetEdgePct}`);
     }
 
     clock += 10_000;

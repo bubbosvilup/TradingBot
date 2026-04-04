@@ -1,6 +1,6 @@
 // Module responsibility: named exit policies and lightweight resolution helpers.
 
-import type { ExitPolicy } from "../types/exitPolicy.ts";
+import type { ExitPolicy, InvalidationMode } from "../types/exitPolicy.ts";
 
 const RSI_REVERSION_PRO: ExitPolicy = {
   id: "RSI_REVERSION_PRO",
@@ -55,11 +55,26 @@ function cloneExitPolicy(policy: ExitPolicy): ExitPolicy {
   };
 }
 
-function normalizeInvalidationModes(value: unknown, fallbackModes: string[]) {
+function isInvalidationMode(value: unknown): value is InvalidationMode {
+  return value === "regime_change"
+    || value === "low_maturity"
+    || value === "unclear"
+    || value === "family_mismatch"
+    || value === "extreme_volatility"
+    || value === "no_trade"
+    || value === "not_ready"
+    || value === "stale"
+    || value === "symbol_mismatch";
+}
+
+function normalizeInvalidationModes(value: unknown, fallbackModes: InvalidationMode[]): InvalidationMode[] {
   if (!Array.isArray(value) || value.length <= 0) {
     return [...fallbackModes];
   }
-  return value.map((mode) => String(mode));
+  const normalized = value
+    .map((mode) => String(mode))
+    .filter(isInvalidationMode);
+  return normalized.length > 0 ? normalized : [...fallbackModes];
 }
 
 function resolveExitPolicy(strategyConfig: Record<string, unknown> | null | undefined, fallbackPolicyId?: string | null): ExitPolicy | null {

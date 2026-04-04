@@ -3,6 +3,7 @@
 import type { MarketContext } from "../types/strategy.ts";
 import type { PositionRecord } from "../types/trade.ts";
 import type { ExitPolicy } from "../types/exitPolicy.ts";
+import type { IndicatorSnapshot } from "../types/strategy.ts";
 
 const { mean } = require("../utils/math.ts");
 
@@ -33,7 +34,7 @@ function resolveBaseTargetPrice(params: {
   targetSource?: unknown;
 }) {
   const source = normalizeRecoveryTargetSource(params.targetSource);
-  const indicators = params.context?.indicators || {};
+  const indicators: Partial<IndicatorSnapshot> = params.context?.indicators || {};
   const prices = Array.isArray(params.context?.prices) ? params.context.prices : [];
 
   if (source === "emaSlow") {

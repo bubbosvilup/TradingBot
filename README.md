@@ -1,4 +1,50 @@
 # TradingBot
+## Aggiornamento di oggi
+
+Refactor principale della sessione:
+
+`refactor(trading): slim TradingBot by extracting coordination roles and stabilizing TS foundation`
+
+Cosa e stato completato:
+- pulizia e consolidamento di `tsconfig` e del foundation typing per runtime ibrido TypeScript/CommonJS
+- tipizzazione di `BaseBot` e `BotDeps`, con rimozione del fallout TypeScript su `TradingBot`
+- rimozione di dead code sicuro e di alcuni campi/chart path runtime obsoleti
+- refactor del tick flow di `TradingBot` attorno a snapshot immutabile e fasi esplicite
+- estrazione della logica strategy-specific di entry economics fuori da `TradingBot`
+- estrazione del post-loss Architect latch in un role dedicato
+- estrazione della coordinazione Architect in un role dedicato
+- estrazione della costruzione metadata per telemetry/logging in un role dedicato
+- estrazione della coordinazione entry, open attempt e final entry outcome
+- estrazione della coordinazione exit outcome / close-flow
+
+Vincoli preservati durante il refactor:
+- comportamento runtime preservato
+- semantiche di lifecycle preservate
+- managed recovery non ridisegnato
+- semantiche di risk ed execution preservate
+- log e campi operator-facing preservati
+- `tsc` pulito
+- test suite pulita
+
+Nuovi ruoli introdotti per alleggerire `TradingBot`:
+- `src/roles/entryEconomicsEstimator.ts`
+- `src/roles/postLossArchitectLatch.ts`
+- `src/roles/architectCoordinator.ts`
+- `src/roles/tradingBotTelemetry.ts`
+- `src/roles/entryCoordinator.ts`
+- `src/roles/openAttemptCoordinator.ts`
+- `src/roles/entryOutcomeCoordinator.ts`
+- `src/roles/exitOutcomeCoordinator.ts`
+
+Stato attuale dopo la sessione:
+- `TradingBot` e piu sottile e piu orientato a orchestrazione top-level
+- le regole locali sono state spostate in coordinator/role dedicati
+- il runtime resta intenzionalmente `paper` anche con feed `live`
+- l'architettura visibile resta:
+  - Context informa
+  - Architect decide il perimetro
+  - TradingBot orchestra
+  - ruoli dedicati gestiscono i flow locali
 
 TradingBot e un runtime multi-bot modulare per paper trading e osservabilita realtime.
 
@@ -13,8 +59,15 @@ Lo stato attuale del progetto e questo:
 
 ## Novita recenti
 
-L'ultima fase di lavoro ha consolidato soprattutto il lato exit, risk e observability:
+L'ultima fase di lavoro ha consolidato soprattutto architettura, typing foundation, coordinazione entry/exit e observability:
 
+- foundation TypeScript stabilizzato per runtime ibrido TS/CommonJS
+- `TradingBot` alleggerito tramite estrazione di coordinator/role dedicati
+- tick flow rifattorizzato attorno a snapshot per-tick e fasi esplicite
+- `entry economics` strategy-specific spostato fuori dal bot
+- coordinazione Architect e post-loss latch spostate fuori dal bot
+- metadata di telemetry/logging spostati in un owner dedicato
+- coordinazione entry/open/outcome ed exit outcome separate dal bot
 - PnL dei trade chiusi normalizzato e loggato in modo esplicito
 - `rsiReversion` separata tra exit qualification e managed recovery
 - `failed_rsi_exit` classificato in modo esplicito quando un exit RSI chiude in negativo
@@ -118,9 +171,17 @@ src/
     regimeDetector.ts
     riskManager.ts
     strategySwitcher.ts
+    architectCoordinator.ts
+    entryEconomicsEstimator.ts
+    entryCoordinator.ts
+    openAttemptCoordinator.ts
+    entryOutcomeCoordinator.ts
+    exitOutcomeCoordinator.ts
+    postLossArchitectLatch.ts
     positionLifecycleManager.ts
     recoveryTargetResolver.ts
     exitPolicyRegistry.ts
+    tradingBotTelemetry.ts
   engines/
     indicatorEngine.ts
     executionEngine.ts

@@ -1,0 +1,175 @@
+// Module responsibility: coordinate risk-sized open attempts and execution outcomes without owning surrounding orchestration.
+
+import type { BotRuntimeState, RiskProfile } from "../types/bot.ts";
+import type { PerformanceSnapshot } from "../types/performance.ts";
+import type { ExecutionEngineLike, RiskManagerLike, TradeConstraints } from "../types/runtime.ts";
+import type { PositionRecord } from "../types/trade.ts";
+
+export interface OpenAttemptCoordinatorParams {
+  executionEngine: ExecutionEngineLike;
+  riskManager: RiskManagerLike;
+}
+
+export interface OpenSizingResult {
+  notionalUsdt: number;
+  quantity: number;
+}
+
+export type PreparedOpenAttempt =
+  | {
+      kind: "ready";
+      sizing: OpenSizingResult;
+    }
+  | {
+      kind: "skipped";
+      quantity: number;
+      sizing: OpenSizingResult;
+      skipReason: "quantity_non_positive";
+    };
+
+export type ExecutedOpenAttempt =
+  | {
+      blockReason: "execution_quantity_below_minimum" | "execution_notional_below_minimum" | "execution_open_rejected";
+      executionDiagnostics: {
+        minNotionalUsdt: number;
+        minQuantity: number;
+        notionalUsdt: number;
+        quantity: number;
+      };
+      kind: "execution_rejected";
+    }
+  | {
+      kind: "opened";
+      opened: PositionRecord;
+      statePatch: Partial<BotRuntimeState>;
+    };
+
+export interface OpenAttemptCoordinatorInstance {
+  execute(params: {
+    availableBalanceUsdt: number;
+    botId: string;
+    confidence: number;
+    entryDebounceTicks: number;
+    price: number;
+    quantity: number;
+    reason: string[];
+    recordedAt: number;
+    strategyId: string;
+    symbol: string;
+  }): ExecutedOpenAttempt;
+  prepare(params: {
+    balanceUsdt: number;
+    confidence: number;
+    latestPrice: number;
+    performance: PerformanceSnapshot | null;
+    riskProfile: RiskProfile;
+    state: BotRuntimeState;
+  }): PreparedOpenAttempt;
+}
+
+class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
+  executionEngine: ExecutionEngineLike;
+  riskManager: RiskManagerLike;
+
+  constructor(params: OpenAttemptCoordinatorParams) {
+    this.executionEngine = params.executionEngine;
+    this.riskManager = params.riskManager;
+  }
+
+  prepare(params: {
+    balanceUsdt: number;
+    confidence: number;
+    latestPrice: number;
+    performance: PerformanceSnapshot | null;
+    riskProfile: RiskProfile;
+    state: BotRuntimeState;
+  }): PreparedOpenAttempt {
+    const sizing = this.riskManager.calculatePositionSize({
+      balanceUsdt: params.balanceUsdt,
+      confidence: params.confidence,
+      latestPrice: params.latestPrice,
+      performance: params.performance,
+      riskProfile: params.riskProfile,
+      state: params.state
+    });
+
+    if (sizing.quantity <= 0) {
+      return {
+        kind: "skipped",
+        quantity: sizing.quantity,
+        sizing,
+        skipReason: "quantity_non_positive"
+      };
+    }
+
+    return {
+      kind: "ready",
+      sizing
+    };
+  }
+
+  getExecutionConstraints() {
+    return typeof this.executionEngine.getTradeConstraints === "function"
+      ? this.executionEngine.getTradeConstraints()
+      : this.riskManager.getTradeConstraints();
+  }
+
+  execute(params: {
+    availableBalanceUsdt: number;
+    botId: string;
+    confidence: number;
+    entryDebounceTicks: number;
+    price: number;
+    quantity: number;
+    reason: string[];
+    recordedAt: number;
+    strategyId: string;
+    symbol: string;
+  }): ExecutedOpenAttempt {
+    const opened = this.executionEngine.openLong({
+      botId: params.botId,
+      confidence: params.confidence,
+      price: params.price,
+      quantity: params.quantity,
+      reason: [...params.reason, `entry_confirmed_${params.entryDebounceTicks}ticks`],
+      strategyId: params.strategyId,
+      symbol: params.symbol
+    });
+
+    if (!opened) {
+      const executionConstraints = this.getExecutionConstraints();
+      const executionNotionalUsdt = params.price * Math.max(params.quantity, 0);
+      const blockReason = params.quantity < executionConstraints.minQuantity
+        ? "execution_quantity_below_minimum"
+        : executionNotionalUsdt < executionConstraints.minNotionalUsdt
+          ? "execution_notional_below_minimum"
+          : "execution_open_rejected";
+      return {
+        blockReason,
+        executionDiagnostics: {
+          minNotionalUsdt: Number(Number(executionConstraints.minNotionalUsdt || 0).toFixed(4)),
+          minQuantity: Number(Number(executionConstraints.minQuantity || 0).toFixed(8)),
+          notionalUsdt: Number(executionNotionalUsdt.toFixed(4)),
+          quantity: Number(Number(params.quantity).toFixed(8))
+        },
+        kind: "execution_rejected"
+      };
+    }
+
+    return {
+      kind: "opened",
+      opened,
+      statePatch: {
+        availableBalanceUsdt: Math.max(0, params.availableBalanceUsdt - (opened.quantity * opened.entryPrice)),
+        entrySignalStreak: 0,
+        exitSignalStreak: 0,
+        lastExecutionAt: opened.openedAt,
+        lastTradeAt: params.recordedAt
+      }
+    };
+  }
+}
+
+module.exports = {
+  OpenAttemptCoordinator
+};

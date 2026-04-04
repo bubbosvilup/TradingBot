@@ -1,14 +1,17 @@
 // Module responsibility: create, start and manage multiple independent bot instances.
 
 import type { BotConfig } from "../types/bot.ts";
+import type { BotController, BotDeps } from "../types/runtime.ts";
 
-const { TradingBot } = require("../bots/tradingBot.ts");
+const { TradingBot } = require("../bots/tradingBot.ts") as {
+  TradingBot: new (config: BotConfig, deps: BotDeps) => BotController;
+};
 
 class BotManager {
-  deps: any;
-  bots: Map<string, any>;
+  deps: BotDeps;
+  bots: Map<string, BotController>;
 
-  constructor(deps: any) {
+  constructor(deps: BotDeps) {
     this.deps = deps;
     this.bots = new Map();
   }
@@ -50,4 +53,3 @@ class BotManager {
 module.exports = {
   BotManager
 };
-

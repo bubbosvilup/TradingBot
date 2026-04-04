@@ -1,6 +1,6 @@
 // Module responsibility: trend-following EMA cross strategy.
 
-import type { MarketContext, Strategy, StrategyDecision } from "../../types/strategy.ts";
+import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -18,6 +18,15 @@ function resolvePriceScale(...values: Array<number | null | undefined>) {
     .filter((value) => Number.isFinite(value) && value > 0);
   if (finiteValues.length <= 0) return 0.01;
   return Math.max(...finiteValues, 0.01);
+}
+
+function estimateExpectedGrossEdgePct(inputs: StrategyEntryEdgeInputs) {
+  return Math.max(
+    0,
+    (0.5 * inputs.emaGapPct) +
+    (0.35 * inputs.momentumEdgePct) +
+    (0.15 * inputs.meanReversionGapPct)
+  );
 }
 
 function createStrategy(config: { emaFast?: number; emaSlow?: number; emaBaseline?: number; minConfidence?: number; rsiFloor?: number } = {}): Strategy {
@@ -66,6 +75,7 @@ function createStrategy(config: { emaFast?: number; emaSlow?: number; emaBaselin
 
       return { action: "hold", confidence: config.minConfidence ?? 0.58, reason: [...reasons, "trend_not_ready"] };
     },
+    estimateExpectedGrossEdgePct,
     id: "emaCross"
   };
 }

@@ -96,7 +96,11 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
         ? "config"
         : "paper_trading_fallback";
   const requestedExecutionMode = ((cliArgs.executionMode || process.env.EXECUTION_MODE || botConfig.executionMode || (String(process.env.PAPER_TRADING || "true").toLowerCase() === "false" ? "live" : "paper")) as string).toLowerCase();
-  const executionMode = requestedExecutionMode === "live" ? "paper" : "paper";
+  // TODO: until real order routing exists, reject or remove the live-execution surface instead of
+  // silently coercing it here. The current force-to-paper behavior is intentional safety, but the
+  // configuration interface remains misleading because it accepts values that cannot take effect.
+  const executionMode: "paper" | "live" = requestedExecutionMode === "live" ? "paper" : "paper";
+  const liveExecutionEnabled = false;
   const simulatedExecutionOnly = executionMode === "paper";
   if (requestedExecutionMode !== executionMode) {
     logger.warn("execution_mode_forced_paper", {
@@ -202,8 +206,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   architectService.start(enabledBots.map((bot: any) => bot.symbol));
   botManager.startAll();
   await userStream.start({
-    enabled: executionMode === "live",
-    mode: executionMode === "live" ? "live" : "mock",
+    enabled: liveExecutionEnabled,
+    mode: liveExecutionEnabled ? "live" : "mock",
     reason: executionMode === "paper" ? "paper_execution" : "execution_enabled"
   });
   if (runtimeOptions.serverEnabled !== false) {
@@ -220,6 +224,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   logger.info("system_ready", {
+    // TODO: this only confirms the scaffold object exists and returns ok. It does not mean
+    // historical replay/backtesting is implemented in the active orchestrator runtime.
     backtestEngine: backtestEngine.run().ok,
     bots: enabledBots.length,
     executionMode,

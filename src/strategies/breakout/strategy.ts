@@ -1,6 +1,15 @@
 // Module responsibility: breakout strategy for expansion and momentum phases.
 
-import type { MarketContext, Strategy, StrategyDecision } from "../../types/strategy.ts";
+import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
+
+function estimateExpectedGrossEdgePct(inputs: StrategyEntryEdgeInputs) {
+  return Math.max(
+    0,
+    (0.4 * inputs.meanReversionGapPct) +
+    (0.35 * inputs.emaGapPct) +
+    (0.25 * inputs.momentumEdgePct)
+  );
+}
 
 function createStrategy(config: { lookback?: number; breakoutPct?: number; minConfidence?: number } = {}): Strategy {
   return {
@@ -35,6 +44,7 @@ function createStrategy(config: { lookback?: number; breakoutPct?: number; minCo
 
       return { action: "hold", confidence: config.minConfidence || 0.6, reason: [...reasons, "breakout_not_triggered"] };
     },
+    estimateExpectedGrossEdgePct,
     id: "breakout"
   };
 }

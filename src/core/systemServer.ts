@@ -1,8 +1,68 @@
 // Module responsibility: lightweight HTTP layer exposing stateStore data and serving the observability UI.
 
+import type { ArchitectAssessment, ArchitectPublisherState, RecommendedFamily } from "../types/architect.ts";
+import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
+import type { ContextSnapshot } from "../types/context.ts";
+import type { SystemEvent } from "../types/event.ts";
+import type { MarketKline, PriceSnapshot } from "../types/market.ts";
+import type { PerformanceSnapshot } from "../types/performance.ts";
+import type { ClosedTradeRecord, PositionRecord } from "../types/trade.ts";
+import type { LoggerLike } from "../types/runtime.ts";
+
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+
+interface PipelineSnapshotLike {
+  symbol: string;
+  lastStateUpdatedAt: number | null;
+  [key: string]: unknown;
+}
+
+interface WsConnectionSnapshotLike {
+  connectionId: string;
+  [key: string]: unknown;
+}
+
+interface SystemSnapshotLike {
+  botStates: BotRuntimeState[];
+  events: SystemEvent[];
+  latestPrices: Array<{
+    price: number;
+    symbol: string;
+    updatedAt: number;
+  }>;
+  openPositions: PositionRecord[];
+}
+
+interface SystemServerStore {
+  botConfigs: Map<string, BotConfig>;
+  positions: Map<string, PositionRecord | null>;
+  getAllClosedTrades(): ClosedTradeRecord[];
+  getAllPipelineSnapshots(): PipelineSnapshotLike[];
+  getArchitectObservedAssessment(symbol: string): ArchitectAssessment | null;
+  getArchitectPublishedAssessment(symbol: string): ArchitectAssessment | null;
+  getArchitectPublisherState(symbol: string): ArchitectPublisherState | null;
+  getBotState(botId: string): BotRuntimeState | null;
+  getClosedTradesForSymbol(symbol: string): ClosedTradeRecord[];
+  getContextSnapshot(symbol: string): ContextSnapshot | null;
+  getKlines(symbol: string, interval: string, limit?: number): MarketKline[];
+  getLatestPrice(symbol: string): number | null;
+  getPerformance(botId: string): PerformanceSnapshot | null;
+  getPerformanceHistory(botId: string, limit?: number): Array<{
+    drawdown: number;
+    pnl: number;
+    profitFactor: number;
+    time: number;
+    winRate: number;
+  }>;
+  getPipelineSnapshot(symbol: string): PipelineSnapshotLike | null;
+  getPriceSnapshot(symbol: string): PriceSnapshot | null;
+  getRecentEvents(limit?: number): SystemEvent[];
+  getSystemSnapshot(): SystemSnapshotLike;
+  getWsConnections(): WsConnectionSnapshotLike[];
+  getPosition(botId: string): PositionRecord | null;
+}
 
 function getMimeType(filePath: string) {
   if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
@@ -13,8 +73,8 @@ function getMimeType(filePath: string) {
 }
 
 class SystemServer {
-  store: any;
-  logger: any;
+  store: SystemServerStore;
+  logger: LoggerLike;
   host: string;
   port: number;
   publicDir: string;
@@ -23,9 +83,20 @@ class SystemServer {
   server: any;
   feedMode: string;
   executionMode: string;
-  resolveStrategyFamily: (strategyId: string | null | undefined) => string;
+  resolveStrategyFamily: (strategyId: string | null | undefined) => RecommendedFamily | "other";
 
-  constructor(deps: { store: any; logger: any; host?: string; port?: number; publicDir?: string; uiDir?: string; startedAt?: number; feedMode?: string; executionMode?: string; resolveStrategyFamily?: (strategyId: string | null | undefined) => string }) {
+  constructor(deps: {
+    store: SystemServerStore;
+    logger: LoggerLike;
+    host?: string;
+    port?: number;
+    publicDir?: string;
+    uiDir?: string;
+    startedAt?: number;
+    feedMode?: string;
+    executionMode?: string;
+    resolveStrategyFamily?: (strategyId: string | null | undefined) => RecommendedFamily | "other";
+  }) {
     this.store = deps.store;
     this.logger = deps.logger;
     this.host = deps.host || "127.0.0.1";
@@ -363,13 +434,19 @@ class SystemServer {
 
     const priceSnapshot = this.store.getPriceSnapshot(resolvedSymbol);
     const closedTrades = this.store.getClosedTradesForSymbol(resolvedSymbol).slice(-100);
-    const openPosition = Array.from(this.store.positions.values()).find((position: any) => position?.symbol === resolvedSymbol) || null;
+    const openPosition = Array.from(this.store.positions.values()).find((position) => position?.symbol === resolvedSymbol) || null;
     const latestPrice = priceSnapshot?.latestPrice || null;
     const lineData = (priceSnapshot?.history || []).map((tick: any) => ({
       time: Math.floor(Number(tick.timestamp) / 1000),
       value: Number(tick.price)
     }));
-    const markerMap = new Map();
+    const markerMap = new Map<string, {
+      color: string;
+      position: "aboveBar" | "belowBar";
+      shape: "arrowUp" | "arrowDown";
+      text: string;
+      time: number;
+    }>();
     for (const trade of closedTrades) {
       const entryTimeSeconds = Math.floor(Number(trade.openedAt) / 1000);
       const exitTimeSeconds = Math.floor(Number(trade.closedAt) / 1000);

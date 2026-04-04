@@ -1,6 +1,6 @@
 // Module responsibility: mean reversion strategy for range-like conditions.
 
-import type { MarketContext, Strategy, StrategyDecision } from "../../types/strategy.ts";
+import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
 const { resolveExitPolicy } = require("../../roles/exitPolicyRegistry.ts");
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../../roles/recoveryTargetResolver.ts");
 
@@ -20,6 +20,15 @@ function resolvePriceScale(...values: Array<number | null | undefined>) {
     .filter((value) => Number.isFinite(value) && value > 0);
   if (finiteValues.length <= 0) return 0.01;
   return Math.max(...finiteValues, 0.01);
+}
+
+function estimateExpectedGrossEdgePct(inputs: StrategyEntryEdgeInputs) {
+  return Math.min(0.02, Math.max(0,
+    (0.7 * inputs.captureGapPct) +
+    (0.2 * inputs.downsideMeanReversionGapPct) +
+    (0.07 * inputs.emaGapPct) +
+    (0.03 * inputs.momentumEdgePct)
+  ));
 }
 
 function createStrategy(config: {
@@ -88,6 +97,7 @@ function createStrategy(config: {
 
       return { action: "hold", confidence: config.minConfidence ?? 0.55, reason: [...reasons, "mean_reversion_not_ready"] };
     },
+    estimateExpectedGrossEdgePct,
     id: "rsiReversion"
   };
 }

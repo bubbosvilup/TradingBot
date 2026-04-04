@@ -37,8 +37,36 @@ export interface MarketContext {
   metadata?: Record<string, unknown>;
 }
 
+export interface StrategyEntryEdgeInputs {
+  captureGapPct: number;
+  downsideMeanReversionGapPct: number;
+  emaFast: number;
+  emaGapPct: number;
+  emaSlow: number;
+  exitTarget: number;
+  latestPrice: number;
+  meanReversionGapPct: number;
+  momentum: number;
+  momentumEdgePct: number;
+}
+
+export interface EntryEconomicsEstimate {
+  estimatedEntryFeePct: number;
+  estimatedExitFeePct: number;
+  estimatedRoundTripFeesUsdt: number;
+  estimatedSlippagePct: number;
+  expectedGrossEdgePct: number;
+  expectedGrossEdgeUsdt: number;
+  expectedNetEdgePct: number;
+  minExpectedNetEdgePct: number;
+  notionalUsdt: number;
+  profitSafetyBufferPct: number;
+  requiredEdgePct: number;
+}
+
 export interface Strategy {
   config?: Record<string, unknown>;
   id: string;
   evaluate(context: MarketContext): StrategyDecision;
+  estimateExpectedGrossEdgePct?(inputs: StrategyEntryEdgeInputs): number;
 }

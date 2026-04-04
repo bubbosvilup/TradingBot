@@ -144,18 +144,6 @@ function getStrategyFamily(strategyId) {
   return "other";
 }
 
-function formatArchitectBadge(architect) {
-  if (!architect) return "Architect pending";
-  return `${humanizeToken(architect.marketRegime)} · ${humanizeToken(architect.recommendedFamily)}`;
-}
-
-function formatArchitectTitle(architect) {
-  if (!architect) return "Architect assessment pending.";
-  const reasons = Array.isArray(architect.reasonCodes) && architect.reasonCodes.length > 0
-    ? ` Reasons: ${architect.reasonCodes.join(", ")}.`
-    : "";
-  return `${architect.summary}${reasons}`;
-}
 
 function numberClass(value) {
   if (!Number.isFinite(Number(value))) return "";
@@ -295,100 +283,6 @@ function renderHealth() {
   `;
 }
 
-function renderFocusMeta() {
-  const focusBot = state.bots.find((bot) => bot.symbol === state.focusSymbol) || null;
-  const focusPosition = state.positions.find((position) => position.symbol === state.focusSymbol) || null;
-  const latency = focusBot?.latency || state.system?.latency || null;
-  const architect = focusBot?.architect || null;
-
-  setText(refs.focusTitle, state.focusSymbol || "No symbol selected");
-  setText(
-    refs.focusArchitectNote,
-    architect
-      ? `${architect.summary} Confidence ${Math.round(Number(architect.confidence || 0) * 100)}%. Data ${humanizeToken(architect.dataMode)}.`
-      : "Architect context not ready yet for this symbol."
-  );
-  refs.focusMeta.innerHTML = [
-    { label: "Strategy", value: focusBot?.activeStrategyId || "n/a" },
-    { label: "Architect", value: architect ? humanizeToken(architect.marketRegime) : "pending" },
-    { label: "Recommended", value: architect ? humanizeToken(architect.recommendedFamily) : "n/a" },
-    { label: "Price", value: formatPrice(focusBot?.price ?? state.chartPayload?.lastPrice) },
-    { label: "Position", value: focusPosition ? `${formatNumber(focusPosition.quantity, 6)} @ ${formatPrice(focusPosition.entryPrice)}` : "Flat" },
-    { label: "Cooldown", value: focusBot?.cooldownRemainingMs > 0 ? formatDuration(focusBot.cooldownRemainingMs) : "Ready" },
-    { label: "PnL / Win", value: `${formatSigned(focusBot?.performance?.pnl)} / ${formatNumber(focusBot?.performance?.winRate, 1)}%` },
-    { label: "Drawdown", value: `${formatNumber(focusBot?.performance?.drawdown, 2)}%` },
-    { label: "Confidence", value: architect ? `${Math.round(Number(architect.confidence || 0) * 100)}%` : "n/a" },
-    { label: "Pipeline", value: latency?.totalPipelineMs ? `${Math.round(latency.totalPipelineMs)}ms` : "n/a" }
-  ].map((item) => `
-    <article class="focus-stat">
-      <span class="focus-label">${escapeHtml(item.label)}</span>
-      <strong>${escapeHtml(item.value)}</strong>
-    </article>
-  `).join("");
-}
-
-function renderBots() {
-  if (!state.bots.length) {
-    refs.botsBody.innerHTML = '<tr><td colspan="11">No active bots.</td></tr>';
-    return;
-  }
-
-  refs.botsBody.innerHTML = state.bots.map((bot) => {
-    const architect = bot.architect || null;
-    const activeFamily = getStrategyFamily(bot.activeStrategyId);
-    const architectFamily = architect?.recommendedFamily || null;
-    const strategyNote = architect
-      ? architectFamily && architectFamily !== "no_trade" && architectFamily !== activeFamily
-        ? `Architect prefers ${humanizeToken(architectFamily)}`
-        : humanizeToken(activeFamily)
-      : "Architect pending";
-    const positionSummary = bot.openPosition
-      ? `${formatPrice(bot.openPosition.entryPrice)} / ${formatSigned(bot.openPosition.unrealizedPnl)}`
-      : "Flat";
-    const cooldown = bot.cooldownRemainingMs > 0
-      ? `${formatDuration(bot.cooldownRemainingMs)}${bot.cooldownReason ? ` (${bot.cooldownReason})` : ""}`
-      : "Ready";
-    const decisionSummary = Array.isArray(bot.lastDecisionReasons) && bot.lastDecisionReasons.length > 0
-      ? bot.lastDecisionReasons.slice(0, 2).join(" | ")
-      : "No blockers";
-    return `
-      <tr class="bot-row ${bot.symbol === state.focusSymbol ? "is-selected" : ""}" data-symbol="${escapeHtml(bot.symbol)}">
-        <td>
-          <div class="cell-stack">
-            <strong>${escapeHtml(bot.botId)}</strong>
-            <span class="muted">${escapeHtml(bot.symbol)}</span>
-            <span class="badge architect-badge" data-family="${escapeHtml(architect?.recommendedFamily || "pending")}" title="${escapeHtml(formatArchitectTitle(architect))}">
-              ${escapeHtml(formatArchitectBadge(architect))}
-            </span>
-            <span class="compact-note">${escapeHtml(architect ? `${humanizeToken(architect.trendBias)} · ${Math.round(Number(architect.confidence || 0) * 100)}% · ${humanizeToken(architect.dataMode)}` : "Waiting for enough market context")}</span>
-          </div>
-        </td>
-        <td><span class="${badgeClass(bot.status)}">${escapeHtml(bot.status)}</span></td>
-        <td>
-          <div class="cell-stack">
-            <strong>${escapeHtml(bot.activeStrategyId)}</strong>
-            <span class="muted">${escapeHtml(strategyNote)}</span>
-          </div>
-        </td>
-        <td>${formatPrice(bot.price)}</td>
-        <td>${escapeHtml(cooldown)}</td>
-        <td>${escapeHtml(positionSummary)}</td>
-        <td class="${numberClass(bot.performance?.pnl)}">${formatSigned(bot.performance?.pnl)}</td>
-        <td>${formatNumber(bot.performance?.drawdown, 2)}%</td>
-        <td>${formatNumber(bot.performance?.winRate, 1)}%</td>
-        <td>
-          <div class="cell-stack">
-            <strong>${escapeHtml(bot.lastDecision)} (${formatNumber(bot.lastDecisionConfidence, 2)})</strong>
-            <span class="muted">${escapeHtml(decisionSummary)}</span>
-          </div>
-        </td>
-        <td>
-          <button type="button" class="button-secondary table-action" data-history-bot="${escapeHtml(bot.botId)}">History</button>
-        </td>
-      </tr>
-    `;
-  }).join("");
-}
 
 // Override architect render helpers with the published-state vocabulary.
 function formatArchitectBadge(architect) {

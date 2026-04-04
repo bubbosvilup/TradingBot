@@ -137,9 +137,7 @@ function runSystemServerTests() {
     warmupStartedAt: now - 30_000
   });
   store.updateBotState("bot_a", {
-    architectRecommendedFamily: "trend_following",
-    architectSyncStatus: "synced",
-    lastArchitectAssessmentAt: now
+    architectSyncStatus: "synced"
   });
   store.appendClosedTrade("bot_a", {
     botId: "bot_a",
