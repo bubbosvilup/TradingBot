@@ -61,6 +61,45 @@ function runRiskManagerTests() {
   if (meaningfulWinResult.cooldownReason !== "post_exit_reentry_guard") {
     throw new Error(`meaningful win should keep non-loss cooldown semantics: ${meaningfulWinResult.cooldownReason}`);
   }
+
+  const presetProfile = riskManager.getProfile("medium");
+  if (presetProfile.positionPct !== 0.16 || presetProfile.cooldownMs !== 75_000 || presetProfile.emergencyStopPct !== 0.01 || presetProfile.reentryCooldownMs !== 15_000 || presetProfile.exitConfirmationTicks !== 2 || presetProfile.minHoldMs !== 15_000) {
+    throw new Error(`preset-only behavior should remain unchanged: ${JSON.stringify(presetProfile)}`);
+  }
+
+  const overriddenProfile = riskManager.getProfile("medium", {
+    cooldownMs: 90_000,
+    emergencyStopPct: 0.013,
+    exitConfirmationTicks: 4,
+    minHoldMs: 22_000,
+    positionPct: 0.2,
+    postExitReentryGuardMs: 12_000
+  });
+  if (overriddenProfile.positionPct !== 0.2
+    || overriddenProfile.cooldownMs !== 90_000
+    || overriddenProfile.emergencyStopPct !== 0.013
+    || overriddenProfile.reentryCooldownMs !== 12_000
+    || overriddenProfile.exitConfirmationTicks !== 4
+    || overriddenProfile.minHoldMs !== 22_000) {
+    throw new Error(`partial overrides should change only targeted fields: ${JSON.stringify(overriddenProfile)}`);
+  }
+  if (overriddenProfile.entryDebounceTicks !== presetProfile.entryDebounceTicks || overriddenProfile.maxDrawdownPct !== presetProfile.maxDrawdownPct || overriddenProfile.maxLossStreak !== presetProfile.maxLossStreak) {
+    throw new Error(`partial overrides should preserve untargeted preset fields: ${JSON.stringify(overriddenProfile)}`);
+  }
+
+  const overriddenLossResult = riskManager.onTradeClosed({
+    netPnl: -0.25,
+    now: 1_000_000,
+    riskProfile: "medium",
+    riskOverrides: {
+      cooldownMs: 90_000,
+      postExitReentryGuardMs: 12_000
+    },
+    state: baseState
+  });
+  if (overriddenLossResult.cooldownUntil !== 1_090_000) {
+    throw new Error(`loss cooldown should use overridden cooldownMs when provided: ${overriddenLossResult.cooldownUntil}`);
+  }
 }
 
 module.exports = {

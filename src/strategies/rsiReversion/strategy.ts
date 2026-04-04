@@ -40,6 +40,10 @@ function createStrategy(config: {
 } = {}): Strategy {
   const exitPolicy = resolveExitPolicy(config, "RSI_REVERSION_PRO");
   return {
+    config: {
+      ...config,
+      exitPolicyId: exitPolicy?.id || config.exitPolicyId
+    },
     evaluate(context: MarketContext): StrategyDecision {
       const rsi = context.indicators.rsi;
       const emaSlow = context.indicators.emaSlow;

@@ -1,6 +1,6 @@
 // Module responsibility: coordinate risk-sized open attempts and execution outcomes without owning surrounding orchestration.
 
-import type { BotRuntimeState, RiskProfile } from "../types/bot.ts";
+import type { BotRuntimeState, RiskOverrides, RiskProfile } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ExecutionEngineLike, RiskManagerLike, TradeConstraints } from "../types/runtime.ts";
 import type { PositionRecord } from "../types/trade.ts";
@@ -63,6 +63,7 @@ export interface OpenAttemptCoordinatorInstance {
     latestPrice: number;
     performance: PerformanceSnapshot | null;
     riskProfile: RiskProfile;
+    riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
   }): PreparedOpenAttempt;
 }
@@ -82,6 +83,7 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
     latestPrice: number;
     performance: PerformanceSnapshot | null;
     riskProfile: RiskProfile;
+    riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
   }): PreparedOpenAttempt {
     const sizing = this.riskManager.calculatePositionSize({
@@ -90,6 +92,7 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
       latestPrice: params.latestPrice,
       performance: params.performance,
       riskProfile: params.riskProfile,
+      riskOverrides: params.riskOverrides,
       state: params.state
     });
 

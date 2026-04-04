@@ -9,11 +9,8 @@ class MarketStream {
   wsManager: any;
   store: any;
   logger: any;
-  intervalMs: number;
-  timer: NodeJS.Timeout | null;
   flushTimer: NodeJS.Timeout | null;
   symbols: string[];
-  seeds: Map<string, number>;
   mode: MarketMode;
   liveEmitIntervalMs: number;
   streamType: "trade" | "aggTrade";
@@ -30,7 +27,6 @@ class MarketStream {
     wsManager: any;
     store: any;
     logger: any;
-    intervalMs?: number;
     mode?: MarketMode;
     liveEmitIntervalMs?: number;
     streamType?: "trade" | "aggTrade";
@@ -41,12 +37,12 @@ class MarketStream {
     this.wsManager = deps.wsManager;
     this.store = deps.store;
     this.logger = deps.logger;
-    this.intervalMs = Math.max(deps.intervalMs || 1000, 250);
-    this.timer = null;
     this.flushTimer = null;
     this.symbols = [];
-    this.seeds = new Map();
-    this.mode = deps.mode || "mock";
+    if (deps.mode && deps.mode !== "live") {
+      throw new Error(`market stream mode ${deps.mode} is not supported; active runtime market data is live-only`);
+    }
+    this.mode = "live";
     this.liveEmitIntervalMs = Math.max(deps.liveEmitIntervalMs || 1000, 250);
     this.streamType = deps.streamType || "trade";
     this.wsBaseUrl = deps.wsBaseUrl || "wss://stream.binance.com:9443";
@@ -69,30 +65,16 @@ class MarketStream {
       });
       return;
     }
-    for (const symbol of this.symbols) {
-      if (!this.seeds.has(symbol)) {
-        this.seeds.set(symbol, this.getInitialPrice(symbol));
-      }
-    }
-
-    if (this.mode === "live") {
-      this.startLive();
-    } else {
-      this.startMock();
-    }
+    this.startLive();
 
     this.logger.info("market_stream_started", {
-      intervalMs: this.mode === "live" ? this.liveEmitIntervalMs : this.intervalMs,
+      intervalMs: this.liveEmitIntervalMs,
       mode: this.mode,
       symbols: this.symbols.join(",")
     });
   }
 
   stop() {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
@@ -122,19 +104,6 @@ class MarketStream {
 
   subscribeKline(symbol: string, interval: string, handler: (kline: MarketKline) => void) {
     return this.wsManager.subscribe(`market:kline:${symbol}:${interval}`, handler);
-  }
-
-  startMock() {
-    this.store.updateWsConnection("market-stream", {
-      connectionId: "market-stream",
-      fallbackActive: false,
-      mode: "mock",
-      status: "mocking"
-    });
-    this.timer = setInterval(() => this.tickAll(), this.intervalMs);
-    if (typeof this.timer.unref === "function") {
-      this.timer.unref();
-    }
   }
 
   startLive() {
@@ -178,13 +147,6 @@ class MarketStream {
       this.stopRestFallback();
     } else if (status.status === "disconnected" || status.status === "reconnecting" || status.status === "error") {
       this.startRestFallback();
-    }
-  }
-
-  tickAll() {
-    for (const symbol of this.symbols) {
-      const tick = this.nextTick(symbol);
-      this.handleTick(tick);
     }
   }
 
@@ -284,33 +246,6 @@ class MarketStream {
       fallbackActive: false
     });
     this.logger.info("market_rest_fallback_stopped");
-  }
-
-  getInitialPrice(symbol: string): number {
-    const defaults: Record<string, number> = {
-      "ADA/USDT": 0.58,
-      "BTC/USDT": 68000,
-      "DOGE/USDT": 0.14,
-      "ETH/USDT": 3400,
-      "SOL/USDT": 165,
-      "XRP/USDT": 0.67
-    };
-    return defaults[symbol] || 100 + (symbol.length * 3);
-  }
-
-  nextTick(symbol: string): MarketTick {
-    const previousPrice = this.seeds.get(symbol) || this.getInitialPrice(symbol);
-    const drift = (Math.sin(Date.now() / 20000) + Math.cos(symbol.length)) * 0.0006;
-    const randomShock = ((Math.random() - 0.5) * 0.01);
-    const nextPrice = Math.max(previousPrice * (1 + drift + randomShock), 0.0001);
-    this.seeds.set(symbol, nextPrice);
-
-    return {
-      price: nextPrice,
-      source: "mock",
-      symbol,
-      timestamp: now()
-    };
   }
 }
 

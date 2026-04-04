@@ -9,7 +9,6 @@ const { StrategyRegistry } = require("./strategyRegistry.ts");
 const { WSManager } = require("./wsManager.ts");
 const { IndicatorEngine } = require("../engines/indicatorEngine.ts");
 const { ExecutionEngine } = require("../engines/executionEngine.ts");
-const { BacktestEngine } = require("../engines/backtestEngine.ts");
 const { ContextService } = require("./contextService.ts");
 const { ArchitectService } = require("./architectService.ts");
 const { MarketStream } = require("../streams/marketStream.ts");
@@ -86,8 +85,12 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       ? "env"
       : botConfig.marketMode || botConfig.market?.mode
         ? "config"
-        : "default";
-  const marketMode = ((cliArgs.marketMode || process.env.MARKET_MODE || botConfig.marketMode || botConfig.market?.mode || "mock") as string).toLowerCase();
+        : "runtime_live_only";
+  const requestedMarketMode = ((cliArgs.marketMode || process.env.MARKET_MODE || botConfig.marketMode || botConfig.market?.mode || "live") as string).toLowerCase();
+  if (requestedMarketMode !== "live") {
+    throw new Error(`market-mode=${requestedMarketMode} is not supported; startup aborted because the active runtime requires live market data`);
+  }
+  const marketMode: "live" = "live";
   const executionModeSource = cliArgs.executionMode
     ? "cli"
     : process.env.EXECUTION_MODE
@@ -96,19 +99,12 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
         ? "config"
         : "paper_trading_fallback";
   const requestedExecutionMode = ((cliArgs.executionMode || process.env.EXECUTION_MODE || botConfig.executionMode || (String(process.env.PAPER_TRADING || "true").toLowerCase() === "false" ? "live" : "paper")) as string).toLowerCase();
-  // TODO: until real order routing exists, reject or remove the live-execution surface instead of
-  // silently coercing it here. The current force-to-paper behavior is intentional safety, but the
-  // configuration interface remains misleading because it accepts values that cannot take effect.
-  const executionMode: "paper" | "live" = requestedExecutionMode === "live" ? "paper" : "paper";
+  if (requestedExecutionMode === "live") {
+    throw new Error("execution-mode=live is not supported; startup aborted because real order routing is not implemented");
+  }
+  const executionMode: "paper" | "live" = "paper";
   const liveExecutionEnabled = false;
   const simulatedExecutionOnly = executionMode === "paper";
-  if (requestedExecutionMode !== executionMode) {
-    logger.warn("execution_mode_forced_paper", {
-      requestedExecutionMode,
-      resolvedExecutionMode: executionMode,
-      safety: "real_order_routing_not_implemented"
-    });
-  }
   const wsManager = new WSManager({
     logger: logger.child("ws")
   });
@@ -136,7 +132,6 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     store,
     userStream
   });
-  const backtestEngine = new BacktestEngine();
   const strategyRegistry = new StrategyRegistry({ configLoader, indicatorEngine });
   strategyRegistry.load();
   const resolveStrategyFamily = (strategyId: string | null | undefined) => strategyRegistry.getStrategyFamily(strategyId);
@@ -144,11 +139,9 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
 
   const enabledBots = (botConfig.bots || []).filter((bot: any) => bot.enabled);
   const marketStream = new MarketStream({
-    intervalMs: botConfig.market?.mockIntervalMs || 1000,
     klineIntervals: botConfig.market?.klineIntervals || [],
     liveEmitIntervalMs: botConfig.market?.liveEmitIntervalMs || 1000,
     logger: logger.child("market"),
-    mode: marketMode === "live" ? "live" : "mock",
     restExchangeId: botConfig.market?.provider || "binance",
     streamType: botConfig.market?.streamType || "trade",
     store,
@@ -175,7 +168,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
   const systemServer = new SystemServer({
     executionMode,
-    feedMode: marketMode === "live" ? "live" : "mock",
+    feedMode: "live",
     host: process.env.HOST || "127.0.0.1",
     logger,
     port: runtimeOptions.port ?? Number(process.env.PORT || 3000),
@@ -207,7 +200,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   botManager.startAll();
   await userStream.start({
     enabled: liveExecutionEnabled,
-    mode: liveExecutionEnabled ? "live" : "mock",
+    mode: "live",
     reason: executionMode === "paper" ? "paper_execution" : "execution_enabled"
   });
   if (runtimeOptions.serverEnabled !== false) {
@@ -224,9 +217,6 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   logger.info("system_ready", {
-    // TODO: this only confirms the scaffold object exists and returns ok. It does not mean
-    // historical replay/backtesting is implemented in the active orchestrator runtime.
-    backtestEngine: backtestEngine.run().ok,
     bots: enabledBots.length,
     executionMode,
     feeRate: executionFee.feeRate,
@@ -241,6 +231,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   let stopped = false;
+  let userStreamStopPromise: Promise<void> | null = null;
+  let gracefulStopPromise: Promise<void> | null = null;
   const stop = () => {
     if (stopped) return;
     stopped = true;
@@ -248,7 +240,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     architectService.stop();
     contextService.stop();
     marketStream.stop();
-    Promise.resolve(userStream.stop()).catch(() => {});
+    userStreamStopPromise = Promise.resolve(userStream.stop()).catch(() => {});
     if (runtimeOptions.serverEnabled !== false) {
       systemServer.stop();
     }
@@ -256,13 +248,34 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     logger.info("system_stopped");
   };
 
-  process.on("SIGINT", () => {
+  const stopGracefully = async () => {
+    if (gracefulStopPromise) return gracefulStopPromise;
     stop();
-    process.exit(0);
+    gracefulStopPromise = (async () => {
+      await (userStreamStopPromise || Promise.resolve());
+    })();
+    return gracefulStopPromise;
+  };
+
+  process.on("SIGINT", () => {
+    stopGracefully()
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((error: Error) => {
+        console.error(error);
+        process.exit(1);
+      });
   });
   process.on("SIGTERM", () => {
-    stop();
-    process.exit(0);
+    stopGracefully()
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((error: Error) => {
+        console.error(error);
+        process.exit(1);
+      });
   });
 
   while (!stopped) {
@@ -297,7 +310,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     await sleep(cli.summaryEveryMs);
   }
 
-  stop();
+  await stopGracefully();
 }
 
 if (require.main === module) {

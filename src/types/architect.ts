@@ -5,7 +5,7 @@ export type TrendBias = "bullish" | "bearish" | "neutral";
 export type VolatilityState = "compressed" | "normal" | "expanding";
 export type StructureState = "trending" | "choppy" | "reversal-risk" | "breakout-watch";
 export type RecommendedFamily = "trend_following" | "mean_reversion" | "no_trade";
-export type ArchitectDataMode = "mock" | "live" | "mixed" | "unknown";
+export type ArchitectDataMode = "live" | "unknown";
 
 export interface RegimeScores {
   trend: number;

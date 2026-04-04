@@ -1,7 +1,7 @@
 // Module responsibility: minimal shared runtime dependency contracts for CommonJS-driven TS files.
 
 import type { ArchitectAssessment, ArchitectPublisherState, RecommendedFamily } from "./architect.ts";
-import type { BotConfig, BotRuntimeState, RiskProfile } from "./bot.ts";
+import type { BotConfig, BotRuntimeState, RiskOverrides, RiskProfile } from "./bot.ts";
 import type { ContextSnapshot } from "./context.ts";
 import type { MarketTick } from "./market.ts";
 import type { PerformanceSnapshot } from "./performance.ts";
@@ -100,13 +100,14 @@ export interface ExecutionEngineLike {
 
 export interface RiskManagerLike {
   profiles: Record<RiskProfile, RiskProfileSettings>;
-  getProfile(riskProfile: RiskProfile): RiskProfileSettings;
+  getProfile(riskProfile: RiskProfile, riskOverrides?: RiskOverrides | null): RiskProfileSettings;
   getTradeConstraints(): TradeConstraints;
   canOpenTrade(params: {
     now: number;
     performance: PerformanceSnapshot;
     positionOpen: boolean;
     riskProfile: RiskProfile;
+    riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
   }): {
     allowed: boolean;
@@ -118,6 +119,7 @@ export interface RiskManagerLike {
     latestPrice: number;
     performance: PerformanceSnapshot;
     riskProfile: RiskProfile;
+    riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
   }): {
     notionalUsdt: number;
@@ -127,6 +129,7 @@ export interface RiskManagerLike {
     now: number;
     netPnl: number;
     riskProfile: RiskProfile;
+    riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
   }): {
     cooldownReason: string | null;

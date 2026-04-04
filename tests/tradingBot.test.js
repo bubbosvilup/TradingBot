@@ -89,7 +89,12 @@ function createStrategyWithEconomics(strategyId, strategyEvaluate, options = {})
   const baseStrategy = strategyFactory ? strategyFactory(strategyConfig) : null;
   return {
     ...(baseStrategy || {}),
-    config: strategyConfig,
+    config: strategyConfig === undefined
+      ? baseStrategy?.config
+      : {
+        ...(baseStrategy?.config || {}),
+        ...strategyConfig
+      },
     evaluate: strategyEvaluate,
     id: strategyId
   };
@@ -266,6 +271,31 @@ function createHarness(strategyEvaluate, options = {}) {
   };
 }
 
+function assertClose(actual, expected, message, tolerance = 1e-9) {
+  if (Math.abs(Number(actual) - Number(expected)) > tolerance) {
+    throw new Error(`${message}: expected ${expected}, received ${actual}`);
+  }
+}
+
+function createPosition(overrides = {}) {
+  return {
+    botId: "bot_test",
+    confidence: 0.8,
+    entryPrice: 100,
+    id: "pos-test",
+    lifecycleMode: "normal",
+    managedRecoveryDeferredReason: null,
+    managedRecoveryExitFloorNetPnlUsdt: null,
+    managedRecoveryStartedAt: null,
+    notes: ["test_position"],
+    openedAt: 0,
+    quantity: 0.5,
+    strategyId: "emaCross",
+    symbol: "BTC/USDT",
+    ...overrides
+  };
+}
+
 function runTradingBotTests() {
   const originalNow = Date.now;
   const originalLogType = process.env.LOG_TYPE;
@@ -273,6 +303,181 @@ function runTradingBotTests() {
   Date.now = () => clock;
 
   try {
+    const normalExitHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.5,
+      reason: ["neutral_signal"]
+    }), {
+      strategy: "emaCross"
+    });
+    const normalProfile = normalExitHarness.bot.deps.riskManager.getProfile(normalExitHarness.config.riskProfile);
+    const protectivePlan = normalExitHarness.bot.shouldExitPosition({
+      decision: {
+        action: "sell",
+        confidence: 0.92,
+        reason: ["exit_signal"]
+      },
+      position: createPosition({
+        openedAt: clock - 1_000,
+        quantity: 1,
+        strategyId: "emaCross"
+      }),
+      signalState: {
+        exitSignalStreak: 0
+      },
+      tick: {
+        price: 100 * (1 - normalProfile.emergencyStopPct - 0.01),
+        source: "mock",
+        symbol: "BTC/USDT",
+        timestamp: clock
+      }
+    });
+    if (!protectivePlan.exitNow || protectivePlan.lifecycleEvent !== "PROTECTIVE_STOP_HIT" || !protectivePlan.reason.includes("protective_stop_exit") || protectivePlan.reason.some((reason) => String(reason).startsWith("minimum_hold_"))) {
+      throw new Error(`protective exit should preempt minimum hold gating: ${JSON.stringify(protectivePlan)}`);
+    }
+
+    const minimumHoldPlan = normalExitHarness.bot.shouldExitPosition({
+      decision: {
+        action: "sell",
+        confidence: 0.9,
+        reason: ["exit_signal"]
+      },
+      position: createPosition({
+        openedAt: clock - 1_000,
+        quantity: 1,
+        strategyId: "emaCross"
+      }),
+      signalState: {
+        exitSignalStreak: normalProfile.exitConfirmationTicks
+      },
+      tick: {
+        price: 100,
+        source: "mock",
+        symbol: "BTC/USDT",
+        timestamp: clock
+      }
+    });
+    if (minimumHoldPlan.exitNow || !minimumHoldPlan.reason.includes(`minimum_hold_${normalProfile.minHoldMs}ms`) || minimumHoldPlan.reason.includes(`exit_confirmed_${normalProfile.exitConfirmationTicks}ticks`)) {
+      throw new Error(`minimum hold should block non-protective exits even when confirmation is satisfied: ${JSON.stringify(minimumHoldPlan)}`);
+    }
+
+    const unconfirmedSellPlan = normalExitHarness.bot.shouldExitPosition({
+      decision: {
+        action: "sell",
+        confidence: 0.9,
+        reason: ["exit_signal"]
+      },
+      position: createPosition({
+        openedAt: clock - normalProfile.minHoldMs - 1_000,
+        quantity: 1,
+        strategyId: "emaCross"
+      }),
+      signalState: {
+        exitSignalStreak: Math.max(normalProfile.exitConfirmationTicks - 1, 0)
+      },
+      tick: {
+        price: 100.2,
+        source: "mock",
+        symbol: "BTC/USDT",
+        timestamp: clock
+      }
+    });
+    if (unconfirmedSellPlan.exitNow || unconfirmedSellPlan.reason.includes(`exit_confirmed_${normalProfile.exitConfirmationTicks}ticks`)) {
+      throw new Error(`standard exits should stay blocked until required confirmation ticks are reached: ${JSON.stringify(unconfirmedSellPlan)}`);
+    }
+
+    const confirmedSellPlan = normalExitHarness.bot.shouldExitPosition({
+      decision: {
+        action: "sell",
+        confidence: 0.9,
+        reason: ["exit_signal"]
+      },
+      position: createPosition({
+        openedAt: clock - normalProfile.minHoldMs - 1_000,
+        quantity: 1,
+        strategyId: "emaCross"
+      }),
+      signalState: {
+        exitSignalStreak: normalProfile.exitConfirmationTicks
+      },
+      tick: {
+        price: 100.2,
+        source: "mock",
+        symbol: "BTC/USDT",
+        timestamp: clock
+      }
+    });
+    if (!confirmedSellPlan.exitNow || confirmedSellPlan.lifecycleEvent !== null || confirmedSellPlan.transition !== undefined || !confirmedSellPlan.reason.includes(`exit_confirmed_${normalProfile.exitConfirmationTicks}ticks`)) {
+      throw new Error(`standard confirmed sell exits should close only after required confirmation ticks: ${JSON.stringify(confirmedSellPlan)}`);
+    }
+
+    const directRsiHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.5,
+      reason: ["neutral_signal"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          exitPolicyId: "RSI_REVERSION_PRO"
+        }
+      }
+    });
+    const rsiProfile = directRsiHarness.bot.deps.riskManager.getProfile(directRsiHarness.config.riskProfile);
+    const deferredRsiPlan = directRsiHarness.bot.shouldExitPosition({
+      decision: {
+        action: "sell",
+        confidence: 0.88,
+        reason: ["rsi_exit_threshold_hit"]
+      },
+      position: createPosition({
+        openedAt: clock - rsiProfile.minHoldMs - 1_000,
+        quantity: 0.5,
+        strategyId: "rsiReversion"
+      }),
+      signalState: {
+        exitSignalStreak: rsiProfile.exitConfirmationTicks
+      },
+      tick: {
+        price: 100.2,
+        source: "mock",
+        symbol: "BTC/USDT",
+        timestamp: clock
+      }
+    });
+    if (deferredRsiPlan.exitNow || deferredRsiPlan.transition !== "managed_recovery" || deferredRsiPlan.lifecycleEvent !== "RSI_EXIT_HIT" || deferredRsiPlan.exitMechanism !== "qualification" || !deferredRsiPlan.reason.includes("rsi_exit_deferred") || !deferredRsiPlan.nextPosition || deferredRsiPlan.nextPosition.lifecycleState !== "MANAGED_RECOVERY") {
+      throw new Error(`rsiReversion should defer into managed recovery when net pnl is below the RSI exit floor: ${JSON.stringify(deferredRsiPlan)}`);
+    }
+
+    const confirmedRsiPlan = directRsiHarness.bot.shouldExitPosition({
+      decision: {
+        action: "sell",
+        confidence: 0.88,
+        reason: ["rsi_exit_threshold_hit"]
+      },
+      position: createPosition({
+        openedAt: clock - rsiProfile.minHoldMs - 1_000,
+        quantity: 0.5,
+        strategyId: "rsiReversion"
+      }),
+      signalState: {
+        exitSignalStreak: rsiProfile.exitConfirmationTicks
+      },
+      tick: {
+        price: 100.4,
+        source: "mock",
+        symbol: "BTC/USDT",
+        timestamp: clock
+      }
+    });
+    if (!confirmedRsiPlan.exitNow || confirmedRsiPlan.transition !== undefined || confirmedRsiPlan.nextPosition !== undefined || confirmedRsiPlan.lifecycleEvent !== "RSI_EXIT_HIT" || confirmedRsiPlan.exitMechanism !== "qualification" || !confirmedRsiPlan.reason.includes("rsi_exit_confirmed") || !confirmedRsiPlan.reason.includes(`exit_confirmed_${rsiProfile.exitConfirmationTicks}ticks`)) {
+      throw new Error(`rsiReversion should close normally when the RSI exit floor is met: ${JSON.stringify(confirmedRsiPlan)}`);
+    }
+
     const holdHarness = createHarness((context) => ({
       action: context.hasOpenPosition ? "sell" : "buy",
       confidence: 0.9,
@@ -316,6 +521,127 @@ function runTradingBotTests() {
     }
     if (holdHarness.store.getClosedTrades("bot_test").length !== 1) {
       throw new Error("closed trade was not recorded after guarded exit");
+    }
+
+    clock += 10_000;
+    const profitAccountingHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "sell" : "buy",
+      confidence: 0.9,
+      reason: [context.hasOpenPosition ? "take_profit_signal" : "entry_signal"]
+    }), {
+      strategy: "emaCross"
+    });
+    const profitInitialState = profitAccountingHarness.store.getBotState("bot_test");
+    const profitInitialBalance = profitInitialState.availableBalanceUsdt;
+    profitAccountingHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    profitAccountingHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const profitPosition = profitAccountingHarness.store.getPosition("bot_test");
+    if (!profitPosition) {
+      throw new Error("profit characterization scenario did not open a position");
+    }
+    const profitEntryNotional = profitPosition.entryPrice * profitPosition.quantity;
+    const profitOpenState = profitAccountingHarness.store.getBotState("bot_test");
+    assertClose(
+      profitOpenState.availableBalanceUsdt,
+      profitInitialBalance - profitEntryNotional,
+      "open trade should reserve entry notional from available balance"
+    );
+    clock += 1_000;
+    profitAccountingHarness.bot.onMarketTick({ price: 100.4, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!profitAccountingHarness.store.getPosition("bot_test")) {
+      throw new Error("profit characterization scenario should still hold before minimum hold time");
+    }
+    clock += 16_000;
+    profitAccountingHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const profitTrade = profitAccountingHarness.store.getClosedTrades("bot_test")[0];
+    const profitClosedState = profitAccountingHarness.store.getBotState("bot_test");
+    if (!profitTrade || !(profitTrade.netPnl > 0)) {
+      throw new Error(`profit characterization scenario should close with positive netPnl: ${JSON.stringify(profitTrade)}`);
+    }
+    const expectedProfitFees = ((profitTrade.entryPrice * profitTrade.quantity) + (profitTrade.exitPrice * profitTrade.quantity)) * 0.001;
+    const expectedProfitGrossPnl = (profitTrade.exitPrice - profitTrade.entryPrice) * profitTrade.quantity;
+    const expectedProfitNetPnl = expectedProfitGrossPnl - expectedProfitFees;
+    assertClose(profitTrade.fees, expectedProfitFees, "profit close should charge round-trip fees");
+    assertClose(profitTrade.pnl, expectedProfitGrossPnl, "profit close should store gross pnl");
+    assertClose(profitTrade.netPnl, expectedProfitNetPnl, "profit close should store net pnl after fees");
+    assertClose(
+      profitClosedState.availableBalanceUsdt,
+      profitInitialBalance + profitTrade.netPnl,
+      "profit close should restore capital plus net pnl to available balance"
+    );
+    assertClose(
+      profitClosedState.realizedPnl,
+      profitTrade.netPnl,
+      "profit close should realize the same net pnl recorded on the trade"
+    );
+    if (profitClosedState.lossStreak !== 0) {
+      throw new Error(`profit close should not increment loss streak: ${profitClosedState.lossStreak}`);
+    }
+    if (profitClosedState.cooldownReason !== "post_exit_reentry_guard" || profitClosedState.cooldownUntil !== clock + 15_000) {
+      throw new Error(`profit close should apply reentry cooldown guard only: ${JSON.stringify(profitClosedState)}`);
+    }
+
+    clock += 10_000;
+    const lossAccountingHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "sell" : "buy",
+      confidence: 0.9,
+      reason: [context.hasOpenPosition ? "stop_signal" : "entry_signal"]
+    }), {
+      strategy: "emaCross"
+    });
+    const lossInitialState = lossAccountingHarness.store.getBotState("bot_test");
+    const lossInitialBalance = lossInitialState.availableBalanceUsdt;
+    lossAccountingHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    lossAccountingHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const lossPosition = lossAccountingHarness.store.getPosition("bot_test");
+    if (!lossPosition) {
+      throw new Error("loss characterization scenario did not open a position");
+    }
+    const lossEntryNotional = lossPosition.entryPrice * lossPosition.quantity;
+    const lossOpenState = lossAccountingHarness.store.getBotState("bot_test");
+    assertClose(
+      lossOpenState.availableBalanceUsdt,
+      lossInitialBalance - lossEntryNotional,
+      "loss scenario open should reserve entry notional from available balance"
+    );
+    clock += 1_000;
+    lossAccountingHarness.bot.onMarketTick({ price: 99.95, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!lossAccountingHarness.store.getPosition("bot_test")) {
+      throw new Error("loss characterization scenario should still hold before minimum hold time");
+    }
+    clock += 16_000;
+    lossAccountingHarness.bot.onMarketTick({ price: 99.8, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const lossTrade = lossAccountingHarness.store.getClosedTrades("bot_test")[0];
+    const lossClosedState = lossAccountingHarness.store.getBotState("bot_test");
+    if (!lossTrade || !(lossTrade.netPnl < 0)) {
+      throw new Error(`loss characterization scenario should close with negative netPnl: ${JSON.stringify(lossTrade)}`);
+    }
+    const expectedLossFees = ((lossTrade.entryPrice * lossTrade.quantity) + (lossTrade.exitPrice * lossTrade.quantity)) * 0.001;
+    const expectedLossGrossPnl = (lossTrade.exitPrice - lossTrade.entryPrice) * lossTrade.quantity;
+    const expectedLossNetPnl = expectedLossGrossPnl - expectedLossFees;
+    assertClose(lossTrade.fees, expectedLossFees, "loss close should charge round-trip fees");
+    assertClose(lossTrade.pnl, expectedLossGrossPnl, "loss close should store gross pnl");
+    assertClose(lossTrade.netPnl, expectedLossNetPnl, "loss close should store net pnl after fees");
+    assertClose(
+      lossClosedState.availableBalanceUsdt,
+      lossInitialBalance + lossTrade.netPnl,
+      "loss close should restore capital plus negative net pnl to available balance"
+    );
+    assertClose(
+      lossClosedState.realizedPnl,
+      lossTrade.netPnl,
+      "loss close should realize the same negative net pnl recorded on the trade"
+    );
+    if (lossClosedState.lossStreak !== 1) {
+      throw new Error(`loss close should increment loss streak exactly once: ${lossClosedState.lossStreak}`);
+    }
+    if (lossClosedState.cooldownReason !== "loss_cooldown" || lossClosedState.cooldownUntil !== clock + 75_000) {
+      throw new Error(`loss close should apply the medium-profile loss cooldown in a single state update: ${JSON.stringify(lossClosedState)}`);
+    }
+    if (lossClosedState.lastTradeAt !== clock || lossClosedState.lastExecutionAt !== clock || lossClosedState.entrySignalStreak !== 0 || lossClosedState.exitSignalStreak !== 0) {
+      throw new Error(`loss close should update accounting and runtime state coherently on the closing tick: ${JSON.stringify(lossClosedState)}`);
     }
 
     clock += 10_000;
@@ -427,6 +753,9 @@ function runTradingBotTests() {
     if (strategyDebugSellLog.metadata.policyId !== "RSI_REVERSION_PRO" || strategyDebugSellLog.metadata.positionStatus !== "EXITING" || strategyDebugSellLog.metadata.exitEvent !== "rsi_exit_confirmed" || strategyDebugSellLog.metadata.exitMechanism !== "qualification" || strategyDebugSellLog.metadata.lifecycleEvent !== "RSI_EXIT_HIT" || strategyDebugSellLog.metadata.signalTimestamp !== clock || strategyDebugSellLog.metadata.executionTimestamp !== clock || strategyDebugSellLog.metadata.signalToExecutionMs !== 0) {
       throw new Error(`strategy_debug SELL log should expose exit policy and timing diagnostics: ${JSON.stringify(strategyDebugSellLog)}`);
     }
+    if (strategyDebugSellHarness.bot.getExitPolicy()?.id !== "RSI_REVERSION_PRO") {
+      throw new Error(`rsiReversion exit policy should resolve from strategy config metadata: ${JSON.stringify(strategyDebugSellHarness.bot.getExitPolicy())}`);
+    }
     if (!strategyDebugSellHarness.store.getClosedTrades("bot_test")[0] || strategyDebugSellHarness.store.getClosedTrades("bot_test")[0].lifecycleState !== "CLOSED") {
       throw new Error("closed trade should carry explicit CLOSED lifecycle state");
     }
@@ -472,6 +801,9 @@ function runTradingBotTests() {
       exitSignalStreak: 1
     });
     failedRsiExitHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (failedRsiExitHarness.bot.getExitPolicy()?.id !== "RSI_REVERSION_PRO") {
+      throw new Error(`rsiReversion default exit policy should still resolve without TradingBot strategy-name branching: ${JSON.stringify(failedRsiExitHarness.bot.getExitPolicy())}`);
+    }
     const failedRsiTrade = failedRsiExitHarness.store.getClosedTrades("bot_test")[0];
     const failedRsiState = failedRsiExitHarness.store.getBotState("bot_test");
     if (!failedRsiTrade || !(failedRsiTrade.netPnl < 0) || !failedRsiTrade.exitReason.includes("rsi_exit_confirmed")) {

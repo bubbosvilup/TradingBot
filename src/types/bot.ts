@@ -6,6 +6,14 @@ export type ArchitectSyncStatus = "pending" | "synced" | "waiting_flat";
 
 export type BotStatus = "idle" | "running" | "paused" | "stopped";
 export type RiskProfile = "low" | "medium" | "high";
+export interface RiskOverrides {
+  positionPct?: number;
+  cooldownMs?: number;
+  emergencyStopPct?: number;
+  postExitReentryGuardMs?: number;
+  exitConfirmationTicks?: number;
+  minHoldMs?: number;
+}
 
 export interface BotConfig {
   id: string;
@@ -13,6 +21,7 @@ export interface BotConfig {
   strategy: string;
   enabled: boolean;
   riskProfile: RiskProfile;
+  riskOverrides?: RiskOverrides;
   allowedStrategies?: string[];
   initialBalanceUsdt?: number;
   maxArchitectStateAgeMs?: number;

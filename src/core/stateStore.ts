@@ -40,7 +40,7 @@ interface WsConnectionSnapshot {
   reconnectAttempt: number;
   lastReason: string | null;
   fallbackActive: boolean;
-  mode: "mock" | "live";
+  mode: "live";
 }
 
 class StateStore {
@@ -64,8 +64,17 @@ class StateStore {
   maxPriceHistory: number;
   maxKlineHistory: number;
   maxPerformanceHistory: number;
+  maxOrdersHistory: number;
+  maxClosedTradesHistory: number;
 
-  constructor(options: { maxEvents?: number; maxPriceHistory?: number; maxKlineHistory?: number; maxPerformanceHistory?: number } = {}) {
+  constructor(options: {
+    maxEvents?: number;
+    maxPriceHistory?: number;
+    maxKlineHistory?: number;
+    maxPerformanceHistory?: number;
+    maxOrdersHistory?: number;
+    maxClosedTradesHistory?: number;
+  } = {}) {
     this.botConfigs = new Map();
     this.botStates = new Map();
     this.prices = new Map();
@@ -86,6 +95,8 @@ class StateStore {
     this.maxPriceHistory = Math.max(options.maxPriceHistory || 300, 50);
     this.maxKlineHistory = Math.max(options.maxKlineHistory || 300, 50);
     this.maxPerformanceHistory = Math.max(options.maxPerformanceHistory || 200, 20);
+    this.maxOrdersHistory = Math.max(options.maxOrdersHistory || 500, 50);
+    this.maxClosedTradesHistory = Math.max(options.maxClosedTradesHistory || 500, 50);
   }
 
   registerBot(config: BotConfig) {
@@ -180,6 +191,34 @@ class StateStore {
     }
   }
 
+  unregisterBot(botId: string) {
+    const config = this.botConfigs.get(botId);
+    if (!config) {
+      return;
+    }
+
+    const symbol = config.symbol;
+    this.botConfigs.delete(botId);
+    this.botStates.delete(botId);
+    this.orders.delete(botId);
+    this.positions.delete(botId);
+    this.performance.delete(botId);
+    this.performanceHistory.delete(botId);
+    this.closedTrades.delete(botId);
+
+    if (this.hasRegisteredBotForSymbol(symbol)) {
+      return;
+    }
+
+    this.prices.delete(symbol);
+    this.klines.delete(symbol);
+    this.pipelineBySymbol.delete(symbol);
+    this.contextBySymbol.delete(symbol);
+    this.architectObservedBySymbol.delete(symbol);
+    this.architectPublishedBySymbol.delete(symbol);
+    this.architectPublisherBySymbol.delete(symbol);
+  }
+
   updatePrice(tick: MarketTick) {
     const stateUpdatedAt = Date.now();
     const normalizedTick: MarketTick = {
@@ -261,12 +300,12 @@ class StateStore {
 
   appendOrder(botId: string, order: OrderRecord) {
     const orders = this.orders.get(botId) || [];
-    this.orders.set(botId, [...orders, order]);
+    this.orders.set(botId, [...orders, order].slice(-this.maxOrdersHistory));
   }
 
   appendClosedTrade(botId: string, trade: ClosedTradeRecord) {
     const trades = this.closedTrades.get(botId) || [];
-    this.closedTrades.set(botId, [...trades, trade]);
+    this.closedTrades.set(botId, [...trades, trade].slice(-this.maxClosedTradesHistory));
   }
 
   getClosedTrades(botId: string): ClosedTradeRecord[] {
@@ -309,7 +348,7 @@ class StateStore {
       lastDisconnectedAt: null,
       lastMessageAt: null,
       lastReason: null,
-      mode: "mock",
+      mode: "live",
       reconnectAttempt: 0,
       status: "idle"
     };
@@ -485,6 +524,10 @@ class StateStore {
     ].filter((value) => Number.isFinite(value)) as number[];
     if (segments.length <= 0) return null;
     return segments.reduce((sum, value) => sum + value, 0);
+  }
+
+  hasRegisteredBotForSymbol(symbol: string) {
+    return Array.from(this.botConfigs.values()).some((config) => config.symbol === symbol);
   }
 }
 

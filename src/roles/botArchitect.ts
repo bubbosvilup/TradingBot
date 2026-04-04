@@ -189,12 +189,11 @@ class BotArchitect {
     if (marketRegime === "range") reasonCodes.push("reversion_structure");
     if (marketRegime === "volatile") reasonCodes.push("volatile_structure");
     if (marketRegime === "unclear") reasonCodes.push("unclear_context");
-    if (context.dataMode === "mock") reasonCodes.push("mock_data_source");
     return [...new Set(reasonCodes)];
   }
 
   buildSummary(context: ContextSnapshot, marketRegime: MarketRegime, family: RecommendedFamily, decisionStrength: number) {
-    const prefix = context.dataMode === "mock" ? "Mock context" : "Market context";
+    const prefix = "Market context";
     const strength = `${Math.round(decisionStrength * 100)}%`;
     if (marketRegime === "unclear") {
       return `${prefix} is not mature or coherent enough yet; keep no-trade bias. Strength ${strength}.`;

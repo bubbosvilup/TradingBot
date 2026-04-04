@@ -1,22 +1,13 @@
 // Module responsibility: drawdown, cooldown, position sizing and overtrading constraints.
 
-import type { RiskProfile, BotRuntimeState } from "../types/bot.ts";
+import type { RiskOverrides, RiskProfile, BotRuntimeState } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
+import type { RiskProfileSettings } from "../types/runtime.ts";
 
 const { clamp } = require("../utils/math.ts");
 
 class RiskManager {
-  profiles: Record<RiskProfile, {
-    cooldownMs: number;
-    emergencyStopPct: number;
-    entryDebounceTicks: number;
-    exitConfirmationTicks: number;
-    maxDrawdownPct: number;
-    maxLossStreak: number;
-    minHoldMs: number;
-    positionPct: number;
-    reentryCooldownMs: number;
-  }>;
+  profiles: Record<RiskProfile, RiskProfileSettings>;
   minTradeNotionalUsdt: number;
   minTradeQuantity: number;
   lossStreakResetWinUsdt: number;
@@ -34,8 +25,32 @@ class RiskManager {
     this.lossStreakResetWinUsdt = 0.1;
   }
 
-  getProfile(riskProfile: RiskProfile) {
-    return this.profiles[riskProfile];
+  getProfile(riskProfile: RiskProfile, riskOverrides: RiskOverrides | null = null) {
+    const profile = this.profiles[riskProfile];
+    if (!riskOverrides) {
+      return profile;
+    }
+    return {
+      ...profile,
+      cooldownMs: Number.isFinite(Number(riskOverrides.cooldownMs))
+        ? Number(riskOverrides.cooldownMs)
+        : profile.cooldownMs,
+      emergencyStopPct: Number.isFinite(Number(riskOverrides.emergencyStopPct))
+        ? Number(riskOverrides.emergencyStopPct)
+        : profile.emergencyStopPct,
+      exitConfirmationTicks: Number.isFinite(Number(riskOverrides.exitConfirmationTicks))
+        ? Number(riskOverrides.exitConfirmationTicks)
+        : profile.exitConfirmationTicks,
+      minHoldMs: Number.isFinite(Number(riskOverrides.minHoldMs))
+        ? Number(riskOverrides.minHoldMs)
+        : profile.minHoldMs,
+      positionPct: Number.isFinite(Number(riskOverrides.positionPct))
+        ? Number(riskOverrides.positionPct)
+        : profile.positionPct,
+      reentryCooldownMs: Number.isFinite(Number(riskOverrides.postExitReentryGuardMs))
+        ? Number(riskOverrides.postExitReentryGuardMs)
+        : profile.reentryCooldownMs
+    };
   }
 
   getTradeConstraints() {
@@ -50,9 +65,10 @@ class RiskManager {
     performance: PerformanceSnapshot;
     positionOpen: boolean;
     riskProfile: RiskProfile;
+    riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
   }) {
-    const profile = this.profiles[params.riskProfile];
+    const profile = this.getProfile(params.riskProfile, params.riskOverrides || null);
     if (params.positionOpen) {
       return { allowed: false, reason: "position_already_open" };
     }
@@ -74,9 +90,10 @@ class RiskManager {
     latestPrice: number;
     performance: PerformanceSnapshot;
     riskProfile: RiskProfile;
+    riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
   }) {
-    const profile = this.profiles[params.riskProfile];
+    const profile = this.getProfile(params.riskProfile, params.riskOverrides || null);
     const confidenceBoost = clamp(params.confidence, 0.15, 1);
     const drawdownPenalty = clamp(1 - (params.performance.drawdown / Math.max(profile.maxDrawdownPct, 0.1)), 0.35, 1);
     const lossPenalty = clamp(1 - (params.state.lossStreak * 0.12), 0.4, 1);
@@ -88,8 +105,8 @@ class RiskManager {
     };
   }
 
-  onTradeClosed(params: { now: number; netPnl: number; riskProfile: RiskProfile; state: BotRuntimeState }) {
-    const profile = this.profiles[params.riskProfile];
+  onTradeClosed(params: { now: number; netPnl: number; riskProfile: RiskProfile; riskOverrides?: RiskOverrides | null; state: BotRuntimeState }) {
+    const profile = this.getProfile(params.riskProfile, params.riskOverrides || null);
     const loss = params.netPnl <= 0;
     const meaningfulWin = params.netPnl >= this.lossStreakResetWinUsdt;
     const reentryCooldownUntil = params.now + profile.reentryCooldownMs;

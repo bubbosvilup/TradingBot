@@ -1,7 +1,12 @@
 "use strict";
 
 async function runOrchestratorTests() {
+  const { FakeWebSocket } = require("./fakeWebSocket");
+  const originalWebSocket = global.WebSocket;
+  global.WebSocket = FakeWebSocket;
   const { parseArgs, startOrchestrator } = require("../src/core/orchestrator.ts");
+  const originalMarketMode = process.env.MARKET_MODE;
+  const originalExecutionMode = process.env.EXECUTION_MODE;
   const originalFeeBps = process.env.FEE_BPS;
   const originalLogType = process.env.LOG_TYPE;
 
@@ -49,8 +54,14 @@ async function runOrchestratorTests() {
   if (!transcript.includes("system_ready")) {
     throw new Error(`orchestrator did not reach ready state\n${transcript}`);
   }
+  if (transcript.includes("backtestEngine=")) {
+    throw new Error(`orchestrator should not expose scaffold backtest readiness in system_ready\n${transcript}`);
+  }
   if (!transcript.includes("executionMode=paper")) {
     throw new Error(`orchestrator did not log execution mode clearly\n${transcript}`);
+  }
+  if (!transcript.includes("marketMode=live")) {
+    throw new Error(`orchestrator did not log live-only market mode clearly\n${transcript}`);
   }
   if (!transcript.includes("executionSafety=simulated_only")) {
     throw new Error(`orchestrator did not log simulated execution safety\n${transcript}`);
@@ -66,6 +77,42 @@ async function runOrchestratorTests() {
   }
   if (!transcript.includes("system_stopped")) {
     throw new Error(`orchestrator did not stop cleanly\n${transcript}`);
+  }
+  if ((transcript.match(/system_stopped/g) || []).length !== 1) {
+    throw new Error(`orchestrator shutdown should be idempotent and log system_stopped once\n${transcript}`);
+  }
+
+  process.env.MARKET_MODE = "mock";
+  try {
+    await startOrchestrator({ durationMs: 2200, serverEnabled: false, summaryEveryMs: 1000 });
+    throw new Error("orchestrator should fail fast when market-mode=mock is requested");
+  } catch (error) {
+    if (!String(error && error.message).includes("market-mode=mock is not supported")) {
+      throw new Error(`orchestrator did not fail with a clear mock-market error\n${error && error.stack ? error.stack : error}`);
+    }
+  } finally {
+    if (originalMarketMode === undefined) {
+      delete process.env.MARKET_MODE;
+    } else {
+      process.env.MARKET_MODE = originalMarketMode;
+    }
+  }
+
+  process.env.EXECUTION_MODE = "live";
+  try {
+    await startOrchestrator({ durationMs: 2200, serverEnabled: false, summaryEveryMs: 1000 });
+    throw new Error("orchestrator should fail fast when execution-mode=live is requested");
+  } catch (error) {
+    if (!String(error && error.message).includes("execution-mode=live is not supported")) {
+      throw new Error(`orchestrator did not fail with a clear live-mode error\n${error && error.stack ? error.stack : error}`);
+    }
+  } finally {
+    if (originalExecutionMode === undefined) {
+      delete process.env.EXECUTION_MODE;
+    } else {
+      process.env.EXECUTION_MODE = originalExecutionMode;
+    }
+    global.WebSocket = originalWebSocket;
   }
 }
 

@@ -76,15 +76,15 @@ class UserStream {
     this.listenKey = null;
   }
 
-  async start(options: { enabled?: boolean; mode?: "mock" | "live"; reason?: string } = {}) {
+  async start(options: { enabled?: boolean; mode?: "live"; reason?: string } = {}) {
     if (options.enabled === false) {
       this.store.updateWsConnection("user-stream", {
         lastReason: options.reason || "disabled",
-        mode: options.mode || "mock",
+        mode: options.mode || "live",
         status: "disabled"
       });
       this.logger.info("user_stream_disabled", {
-        mode: options.mode || "mock",
+        mode: options.mode || "live",
         reason: options.reason || "disabled"
       });
       return;
@@ -300,14 +300,23 @@ class UserStream {
 
   async keepAliveListenKey(listenKey: string) {
     try {
-      await fetch(`${this.restBaseUrl}/api/v3/userDataStream?listenKey=${encodeURIComponent(listenKey)}`, {
+      const response = await fetch(`${this.restBaseUrl}/api/v3/userDataStream?listenKey=${encodeURIComponent(listenKey)}`, {
         headers: {
           "X-MBX-APIKEY": this.apiKey
         },
         method: "PUT"
       });
+      if (!response.ok) {
+        this.handleKeepAliveFailure(`keepalive_${response.status}`);
+        this.logger.warn("user_stream_keepalive_failed", {
+          action: "manual_attention_needed",
+          status: response.status
+        });
+      }
     } catch (error: any) {
+      this.handleKeepAliveFailure(error?.message || "keepalive_error");
       this.logger.warn("user_stream_keepalive_failed", {
+        action: "manual_attention_needed",
         error: error?.message || String(error)
       });
     }
@@ -325,6 +334,14 @@ class UserStream {
     } catch {
       // best effort cleanup
     }
+  }
+
+  handleKeepAliveFailure(reason: string) {
+    this.store.updateWsConnection("user-stream", {
+      lastReason: reason,
+      mode: "live",
+      status: "degraded"
+    });
   }
 }
 

@@ -161,7 +161,7 @@ class ContextBuilder {
     const sampleDensity = clamp(prices.length / expectedSamples, 0, 1);
     const maxGapMs = timeDiffs.length > 0 ? Math.max(...timeDiffs) : averageIntervalMs;
     const gapPenalty = clamp(maxGapMs / Math.max(windowSpanMs, params.warmupMs, 1), 0, 1);
-    const sourceScore = params.dataMode === "live" ? 1 : params.dataMode === "mixed" ? 0.88 : params.dataMode === "mock" ? 0.76 : 0.6;
+    const sourceScore = params.dataMode === "unknown" ? 0.6 : 1;
     const dataQuality = clamp(
       (0.55 * sampleDensity) + (0.25 * (1 - gapPenalty)) + (0.20 * sourceScore),
       0,
@@ -228,8 +228,8 @@ class ContextBuilder {
       sampleSize: prices.length,
       structureState,
       summary: usePostSwitchSegment
-        ? `${params.dataMode === "mock" ? "Mock" : "Market"} window ${Math.round(windowSpanMs / 1000)}s | post-switch ${Math.round(effectiveWindowSpanMs / 1000)}s | maturity ${Math.round(maturity * 100)}% (rolling ${Math.round(rollingMaturity * 100)}%) | quality ${Math.round(dataQuality * 100)}%.`
-        : `${params.dataMode === "mock" ? "Mock" : "Market"} window ${Math.round(windowSpanMs / 1000)}s | maturity ${Math.round(maturity * 100)}% | quality ${Math.round(dataQuality * 100)}%.`,
+        ? `Market window ${Math.round(windowSpanMs / 1000)}s | post-switch ${Math.round(effectiveWindowSpanMs / 1000)}s | maturity ${Math.round(maturity * 100)}% (rolling ${Math.round(rollingMaturity * 100)}%) | quality ${Math.round(dataQuality * 100)}%.`
+        : `Market window ${Math.round(windowSpanMs / 1000)}s | maturity ${Math.round(maturity * 100)}% | quality ${Math.round(dataQuality * 100)}%.`,
       lastPublishedRegimeSwitchAt: params.lastPublishedRegimeSwitchAt ?? null,
       lastPublishedRegimeSwitchFrom: params.lastPublishedRegimeSwitchFrom ?? null,
       lastPublishedRegimeSwitchTo: params.lastPublishedRegimeSwitchTo ?? null,

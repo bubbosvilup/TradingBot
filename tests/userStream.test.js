@@ -17,6 +17,7 @@ async function runUserStreamTests() {
 
   const published = [];
   const logs = [];
+  const originalFetch = global.fetch;
   const userStream = new UserStream({
     logger: {
       info(event, metadata) {
@@ -38,7 +39,7 @@ async function runUserStreamTests() {
 
   await userStream.start({
     enabled: false,
-    mode: "mock",
+    mode: "live",
     reason: "paper_execution"
   });
 
@@ -82,6 +83,43 @@ async function runUserStreamTests() {
   }
   if (!published.find((entry) => entry.channel === "user:orders")) {
     throw new Error("paper user stream did not emit normalized order events");
+  }
+
+  try {
+    global.fetch = async () => ({
+      ok: false,
+      status: 401
+    });
+    const liveStore = new StateStore();
+    const degradedLogs = [];
+    const liveUserStream = new UserStream({
+      apiKey: "test-key",
+      logger: {
+        info() {},
+        warn(event, metadata) {
+          degradedLogs.push({ event, metadata });
+        },
+        error() {}
+      },
+      store: liveStore,
+      wsManager: {
+        publish() {},
+        subscribe() {
+          return () => {};
+        }
+      }
+    });
+    await liveUserStream.keepAliveListenKey("listen-key-test");
+    const degradedConnection = liveStore.getWsConnections().find((item) => item.connectionId === "user-stream");
+    if (!degradedConnection || degradedConnection.status !== "degraded" || degradedConnection.lastReason !== "keepalive_401") {
+      throw new Error(`user stream should mark keepalive failures explicitly for operator attention: ${JSON.stringify(degradedConnection)}`);
+    }
+    const keepAliveFailureLog = degradedLogs.find((entry) => entry.event === "user_stream_keepalive_failed");
+    if (!keepAliveFailureLog || keepAliveFailureLog.metadata.action !== "manual_attention_needed" || keepAliveFailureLog.metadata.status !== 401) {
+      throw new Error(`user stream should log explicit keepalive degradation context: ${JSON.stringify(degradedLogs)}`);
+    }
+  } finally {
+    global.fetch = originalFetch;
   }
 }
 

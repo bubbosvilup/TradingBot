@@ -49,16 +49,22 @@ class WSManager {
   connections: Map<string, any>;
   reconnectBaseMs: number;
   reconnectMaxMs: number;
+  maxReconnectAttempts: number;
+  reconnectJitterPct: number;
   heartbeatMs: number;
   idleTimeoutMs: number;
+  randomFn: () => number;
 
   constructor(deps: {
     logger?: any;
     websocketFactory?: ((url: string) => any) | null;
     reconnectBaseMs?: number;
     reconnectMaxMs?: number;
+    maxReconnectAttempts?: number;
+    reconnectJitterPct?: number;
     heartbeatMs?: number;
     idleTimeoutMs?: number;
+    randomFn?: (() => number) | null;
   } = {}) {
     this.emitter = new EventEmitter();
     this.logger = deps.logger || { info() {}, warn() {}, error() {} };
@@ -66,8 +72,11 @@ class WSManager {
     this.connections = new Map();
     this.reconnectBaseMs = Math.max(deps.reconnectBaseMs || 1000, 250);
     this.reconnectMaxMs = Math.max(deps.reconnectMaxMs || 15_000, this.reconnectBaseMs);
+    this.maxReconnectAttempts = Math.max(Number.isFinite(Number(deps.maxReconnectAttempts)) ? Number(deps.maxReconnectAttempts) : 12, 0);
+    this.reconnectJitterPct = Math.min(Math.max(Number.isFinite(Number(deps.reconnectJitterPct)) ? Number(deps.reconnectJitterPct) : 0.2, 0), 0.5);
     this.heartbeatMs = Math.max(deps.heartbeatMs || 10_000, 2000);
     this.idleTimeoutMs = Math.max(deps.idleTimeoutMs || 20_000, this.heartbeatMs * 2);
+    this.randomFn = deps.randomFn || Math.random;
   }
 
   subscribe(channel: string, handler: (...args: any[]) => void) {
@@ -167,7 +176,7 @@ class WSManager {
   createState(definition: {
     connectionId: string;
     kind: "market" | "user";
-    mode: "mock" | "live";
+    mode: "live";
     buildUrl: () => string;
     describe: () => Record<string, unknown>;
     handleMessage: (data: any, receivedAt: number) => void;
@@ -184,6 +193,7 @@ class WSManager {
       reconnectTimer: null,
       socket: null,
       statsTimer: null,
+      degradedAt: null,
       totalLatencyMs: 0,
       totalTicks: 0
     };
@@ -237,6 +247,7 @@ class WSManager {
 
     attachSocketHandler(socket, "open", () => {
       state.reconnectAttempt = 0;
+      state.degradedAt = null;
       state.connectedAt = now();
       state.lastMessageAt = state.connectedAt;
       this.publish(`ws:status:${state.connectionId}`, {
@@ -505,8 +516,30 @@ class WSManager {
     if (state.reconnectTimer) {
       clearTimeout(state.reconnectTimer);
     }
-    state.reconnectAttempt += 1;
-    const delayMs = Math.min(this.reconnectBaseMs * (2 ** (state.reconnectAttempt - 1)), this.reconnectMaxMs);
+    const nextAttempt = state.reconnectAttempt + 1;
+    if (nextAttempt > this.maxReconnectAttempts) {
+      state.reconnectAttempt = nextAttempt;
+      state.degradedAt = now();
+      this.publish(`ws:status:${state.connectionId}`, {
+        connectionId: state.connectionId,
+        mode: state.mode,
+        reason,
+        reconnectAttempt: state.reconnectAttempt,
+        status: "degraded",
+        timestamp: state.degradedAt
+      });
+      this.logger.error("ws_manual_attention_needed", {
+        attempt: state.reconnectAttempt,
+        connectionId: state.connectionId,
+        maxReconnectAttempts: this.maxReconnectAttempts,
+        reason
+      });
+      return;
+    }
+    state.reconnectAttempt = nextAttempt;
+    const baseDelayMs = Math.min(this.reconnectBaseMs * (2 ** (state.reconnectAttempt - 1)), this.reconnectMaxMs);
+    const jitterMultiplier = 1 + (((this.randomFn() * 2) - 1) * this.reconnectJitterPct);
+    const delayMs = Math.max(Math.round(baseDelayMs * jitterMultiplier), this.reconnectBaseMs);
     this.publish(`ws:status:${state.connectionId}`, {
       connectionId: state.connectionId,
       mode: state.mode,
@@ -517,8 +550,10 @@ class WSManager {
     });
     this.logger.warn("ws_reconnecting", {
       attempt: state.reconnectAttempt,
+      baseDelayMs,
       connectionId: state.connectionId,
       delayMs,
+      jitterPct: this.reconnectJitterPct,
       reason
     });
     state.reconnectTimer = setTimeout(() => {

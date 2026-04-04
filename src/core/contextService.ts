@@ -121,8 +121,6 @@ class ContextService {
   resolveDataMode(ticks: MarketTick[]): ArchitectDataMode {
     const sources = [...new Set((ticks || []).map((tick) => tick?.source).filter(Boolean))];
     if (sources.length <= 0) return "unknown";
-    if (sources.every((source) => source === "mock")) return "mock";
-    if (sources.some((source) => source === "mock") && sources.some((source) => source !== "mock")) return "mixed";
     return "live";
   }
 }

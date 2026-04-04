@@ -7,14 +7,34 @@ function runWsManagerTests() {
   const sockets = [];
   const ticks = [];
   const klines = [];
+  const publishedStatuses = [];
+  const logs = [];
 
   const manager = new WSManager({
-    logger: { info() {}, warn() {}, error() {} },
+    logger: {
+      info(event, metadata) {
+        logs.push({ event, metadata });
+      },
+      warn(event, metadata) {
+        logs.push({ event, metadata });
+      },
+      error(event, metadata) {
+        logs.push({ event, metadata });
+      }
+    },
+    maxReconnectAttempts: 0,
+    randomFn() {
+      return 1;
+    },
     websocketFactory(url) {
       const socket = new FakeWebSocket(url);
       sockets.push(socket);
       return socket;
     }
+  });
+
+  manager.subscribe("ws:status:test-market", (status) => {
+    publishedStatuses.push(status);
   });
 
   const disconnect = manager.connectBinanceMarketStream({
@@ -75,6 +95,19 @@ function runWsManagerTests() {
   }
   if (klines.length !== 1 || klines[0].interval !== "1m" || klines[0].symbol !== "BTC/USDT") {
     throw new Error(`kline normalization failed: ${JSON.stringify(klines)}`);
+  }
+
+  sockets[0].emit("close", {
+    code: 1006,
+    reason: "network_blip"
+  });
+  const degradedStatus = publishedStatuses.find((status) => status.status === "degraded");
+  if (!degradedStatus || degradedStatus.reason !== "network_blip") {
+    throw new Error(`ws manager should publish degraded status after retry ceiling is exceeded: ${JSON.stringify(publishedStatuses)}`);
+  }
+  const manualAttentionLog = logs.find((entry) => entry.event === "ws_manual_attention_needed");
+  if (!manualAttentionLog || manualAttentionLog.metadata.maxReconnectAttempts !== 0) {
+    throw new Error(`ws manager should log explicit manual attention when retries are exhausted: ${JSON.stringify(logs)}`);
   }
 
   disconnect();

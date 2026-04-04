@@ -1,6 +1,6 @@
 // Module responsibility: shape final exit/close outcomes for TradingBot without owning execution or store/log side effects.
 
-import type { BotRuntimeState, RiskProfile } from "../types/bot.ts";
+import type { BotRuntimeState, RiskOverrides, RiskProfile } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { PositionExitMechanism } from "../types/positionLifecycle.ts";
 import type { RiskManagerLike } from "../types/runtime.ts";
@@ -37,6 +37,7 @@ export interface ClosedTradeOutcomeParams {
   nextPerformance: PerformanceSnapshot;
   positionWasManagedRecovery: boolean;
   riskProfile: RiskProfile;
+  riskOverrides?: RiskOverrides | null;
   signalState: BotRuntimeState;
   strategyId: string;
   tickPrice: number;
@@ -94,9 +95,10 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
       netPnl: params.closedTrade.netPnl,
       now: params.closedTrade.closedAt,
       riskProfile: params.riskProfile,
+      riskOverrides: params.riskOverrides || null,
       state: params.signalState
     });
-    const maxDrawdownPct = this.riskManager.profiles[params.riskProfile].maxDrawdownPct;
+    const maxDrawdownPct = this.riskManager.getProfile(params.riskProfile, params.riskOverrides || null).maxDrawdownPct;
     const updatedBalance = params.signalState.availableBalanceUsdt + (params.closedTrade.quantity * params.closedTrade.exitPrice) - params.closedTrade.fees;
     const pausedForDrawdown = params.nextPerformance.drawdown >= maxDrawdownPct;
     const closeReason = Array.isArray(params.closedTrade.exitReason)

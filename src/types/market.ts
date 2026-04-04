@@ -9,7 +9,7 @@ export interface MarketTick {
   stateUpdatedAt?: number;
 }
 
-export type MarketMode = "mock" | "live";
+export type MarketMode = "live";
 
 export interface MarketKline {
   symbol: string;
@@ -41,5 +41,4 @@ export interface MarketStreamConfig {
   wsBaseUrl?: string;
   klineIntervals?: string[];
   liveEmitIntervalMs?: number;
-  mockIntervalMs?: number;
 }

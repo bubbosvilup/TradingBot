@@ -116,7 +116,7 @@ function runBotArchitectTests() {
   }
 
   const warmupAssessment = architect.assess(createContextSnapshot({
-    dataMode: "mock",
+    dataMode: "live",
     features: {
       dataQuality: 0.72,
       maturity: 0.05
@@ -128,8 +128,8 @@ function runBotArchitectTests() {
   if (warmupAssessment.marketRegime !== "unclear" || warmupAssessment.recommendedFamily !== "no_trade") {
     throw new Error("warm-up gate did not force unclear / no_trade");
   }
-  if (!warmupAssessment.reasonCodes.includes("architect_warmup") || !warmupAssessment.reasonCodes.includes("mock_data_source")) {
-    throw new Error("warm-up or mock diagnostics missing from architect output");
+  if (!warmupAssessment.reasonCodes.includes("architect_warmup")) {
+    throw new Error("warm-up diagnostics missing from architect output");
   }
 }
 

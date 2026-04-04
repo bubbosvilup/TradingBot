@@ -160,7 +160,7 @@ function runSystemServerTests() {
 
   const server = new SystemServer({
     executionMode: "paper",
-    feedMode: "mock",
+    feedMode: "live",
     logger: { info() {} },
     port: 3101,
     startedAt: now - 1000,
@@ -175,7 +175,7 @@ function runSystemServerTests() {
   const analytics = server.buildAnalyticsPayload();
   const trades = server.buildTradesPayload();
 
-  if (system.feedMode !== "mock") {
+  if (system.feedMode !== "live") {
     throw new Error("system payload missing feed mode");
   }
   if (system.executionMode !== "paper" || system.executionSafety !== "simulated_only") {
@@ -301,7 +301,7 @@ function runSystemServerTests() {
   });
   const observedOnlyBots = new SystemServer({
     executionMode: "paper",
-    feedMode: "mock",
+    feedMode: "live",
     logger: { info() {} },
     port: 3102,
     startedAt: now - 1000,
@@ -369,7 +369,7 @@ function runSystemServerTests() {
   });
   const syntheticBots = new SystemServer({
     executionMode: "paper",
-    feedMode: "mock",
+    feedMode: "live",
     logger: { info() {} },
     port: 3103,
     startedAt: now - 1000,

@@ -105,7 +105,7 @@ class SystemServer {
     this.uiDir = deps.uiDir || path.resolve(process.cwd(), "src", "ui");
     this.startedAt = deps.startedAt || Date.now();
     this.server = null;
-    this.feedMode = deps.feedMode || "mock";
+    this.feedMode = deps.feedMode || "live";
     this.executionMode = deps.executionMode || "paper";
     this.resolveStrategyFamily = typeof deps.resolveStrategyFamily === "function"
       ? deps.resolveStrategyFamily
