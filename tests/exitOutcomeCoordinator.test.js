@@ -63,7 +63,7 @@ async function runExitOutcomeCoordinatorTests() {
     lifecycleStatus: "running",
     nextPerformance: {
       avgTradePnlUsdt: 0,
-      drawdown: 0.1,
+      drawdown: 6.1,
       pnl: -0.2,
       profitFactor: 0.8,
       tradesCount: 1,
@@ -90,6 +90,12 @@ async function runExitOutcomeCoordinatorTests() {
   }
   if (closedOutcome.compactSellMetadata.outcome !== "loss" || closedOutcome.compactRiskMetadata.status !== "trade_closed") {
     throw new Error(`closed trade outcome should preserve compact SELL/RISK_CHANGE semantics: ${JSON.stringify(closedOutcome)}`);
+  }
+  if (closedOutcome.statePatch.status !== "paused" || closedOutcome.statePatch.pausedReason !== "max_drawdown_reached") {
+    throw new Error(`max drawdown should still hard-pause the bot state: ${JSON.stringify(closedOutcome.statePatch)}`);
+  }
+  if (closedOutcome.compactRiskMetadata.botStatus !== "paused" || closedOutcome.compactRiskMetadata.pausedReason !== "max_drawdown_reached" || closedOutcome.compactRiskMetadata.manualResumeRequired !== true) {
+    throw new Error(`max drawdown pause should be explicit in compact risk metadata: ${JSON.stringify(closedOutcome.compactRiskMetadata)}`);
   }
 }
 

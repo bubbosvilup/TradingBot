@@ -2166,6 +2166,45 @@ function runTradingBotTests() {
     if (openedEvaluation.metadata.publisherLastPublishedAt !== clock - 1_000 || openedEvaluation.metadata.tickTimestamp !== clock) {
       throw new Error("opened entry evaluation log missing publisher/tick timing");
     }
+
+    clock += 10_000;
+    const maxDrawdownPauseHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "sell" : "buy",
+      confidence: 0.93,
+      reason: [context.hasOpenPosition ? "stop_signal" : "buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    maxDrawdownPauseHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    maxDrawdownPauseHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 16_000;
+    maxDrawdownPauseHarness.bot.onMarketTick({ price: 50, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const pausedState = maxDrawdownPauseHarness.store.getBotState("bot_test");
+    if (pausedState.status !== "paused" || pausedState.pausedReason !== "max_drawdown_reached") {
+      throw new Error(`max drawdown close should leave the bot explicitly paused: ${JSON.stringify(pausedState)}`);
+    }
+    const drawdownPauseRiskLog = maxDrawdownPauseHarness.botLogs.find((entry) =>
+      entry.message === "RISK_CHANGE"
+      && entry.metadata.status === "trade_closed"
+      && entry.metadata.pausedReason === "max_drawdown_reached"
+    );
+    if (!drawdownPauseRiskLog || drawdownPauseRiskLog.metadata.manualResumeRequired !== true || drawdownPauseRiskLog.metadata.botStatus !== "paused") {
+      throw new Error(`max drawdown pause should emit explicit manual-resume-required risk metadata: ${JSON.stringify(drawdownPauseRiskLog)}`);
+    }
+    const pausedLogCountBefore = maxDrawdownPauseHarness.botLogs.length;
+    clock += 1_000;
+    maxDrawdownPauseHarness.bot.onMarketTick({ price: 120, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const pausedStateAfterNextTick = maxDrawdownPauseHarness.store.getBotState("bot_test");
+    if (pausedStateAfterNextTick.status !== "paused" || pausedStateAfterNextTick.pausedReason !== "max_drawdown_reached") {
+      throw new Error(`max drawdown pause should remain in effect until manual resume: ${JSON.stringify(pausedStateAfterNextTick)}`);
+    }
+    if (maxDrawdownPauseHarness.botLogs.length !== pausedLogCountBefore) {
+      throw new Error("paused bot should ignore subsequent ticks without auto-resume side effects");
+    }
   } finally {
     Date.now = originalNow;
     if (originalLogType === undefined) {

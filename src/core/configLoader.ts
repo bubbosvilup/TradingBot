@@ -49,12 +49,14 @@ class ConfigLoader {
     const strategiesConfig = this.loadStrategiesConfig();
     const knownStrategies = new Set((strategiesConfig?.strategies || []).map((entry: any) => String(entry?.id || "").trim()).filter(Boolean));
     const bots = Array.isArray(config?.bots) ? config.bots : [];
+    const enabledBotIdsBySymbol = new Map<string, string[]>();
 
     for (let index = 0; index < bots.length; index += 1) {
       const bot = bots[index] || {} as BotConfig;
       const label = `bots.config.json bot[${index}]${bot?.id ? ` (${bot.id})` : ""}`;
       const strategy = String(bot?.strategy || "").trim();
       const riskProfile = String(bot?.riskProfile || "").trim();
+      const symbol = String(bot?.symbol || "").trim();
 
       if (!strategy || !knownStrategies.has(strategy)) {
         throw new Error(`${label} has invalid strategy "${String(bot?.strategy || "")}"`);
@@ -96,6 +98,18 @@ class ConfigLoader {
             throw new Error(`${label} has invalid allowedStrategies entry "${String(allowedStrategy || "")}"`);
           }
         }
+      }
+
+      if (bot.enabled) {
+        const enabledIds = enabledBotIdsBySymbol.get(symbol) || [];
+        enabledIds.push(String(bot?.id || `bot[${index}]`));
+        enabledBotIdsBySymbol.set(symbol, enabledIds);
+      }
+    }
+
+    for (const [symbol, enabledIds] of enabledBotIdsBySymbol.entries()) {
+      if (enabledIds.length > 1) {
+        throw new Error(`bots.config.json has duplicate enabled bot symbols for "${symbol}": ${enabledIds.join(", ")}`);
       }
     }
   }

@@ -100,6 +100,8 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
     });
     const maxDrawdownPct = this.riskManager.getProfile(params.riskProfile, params.riskOverrides || null).maxDrawdownPct;
     const updatedBalance = params.signalState.availableBalanceUsdt + (params.closedTrade.quantity * params.closedTrade.exitPrice) - params.closedTrade.fees;
+    // Max drawdown is a hard runtime pause that must be cleared by an explicit external resume.
+    // This coordinator only records the paused state; it does not auto-resume or soften the policy.
     const pausedForDrawdown = params.nextPerformance.drawdown >= maxDrawdownPct;
     const closeReason = Array.isArray(params.closedTrade.exitReason)
       ? params.closedTrade.exitReason.join(",")
@@ -122,10 +124,13 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
     return {
       compactRiskMetadata: {
         ...params.exitTelemetry,
+        botStatus: pausedForDrawdown ? "paused" : params.lifecycleStatus,
         cooldownReason: balancePatch.cooldownReason,
         cooldownUntil: balancePatch.cooldownUntil,
         closeClassification: params.classification.closeClassification,
         lossStreak: balancePatch.lossStreak,
+        manualResumeRequired: pausedForDrawdown ? true : undefined,
+        pausedReason: pausedForDrawdown ? "max_drawdown_reached" : null,
         status: "trade_closed"
       },
       compactSellMetadata: {

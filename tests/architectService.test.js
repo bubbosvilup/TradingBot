@@ -201,6 +201,92 @@ function runArchitectServiceTests() {
     throw new Error("mature publish should still emit architect_published");
   }
 
+  const gatedStore = new StateStore();
+  let assessCalls = 0;
+  const gatedLogs = [];
+  const gatedService = new ArchitectService({
+    botArchitect: {
+      assess(context) {
+        assessCalls += 1;
+        return createAssessment(context.symbol, "trend", "trend_following", {
+          range: 0.24,
+          trend: 0.67,
+          unclear: 0.11,
+          volatile: 0.15
+        }, context.observedAt);
+      }
+    },
+    logger: {
+      info(event, metadata) {
+        gatedLogs.push({ event, metadata });
+      }
+    },
+    marketStream: {
+      subscribe() {
+        return () => {};
+      }
+    },
+    publishIntervalMs: 30_000,
+    requiredConfirmations: 2,
+    store: gatedStore,
+    switchDelta: 0.12
+  });
+  gatedStore.setContextSnapshot(symbol, {
+    ...createContext(symbol, 29_000, true, "trend"),
+    effectiveWindowStartedAt: 0,
+    windowStartedAt: 0
+  });
+  gatedService.observe(symbol, 29_000);
+  if (assessCalls !== 0 || gatedStore.getArchitectPublishedAssessment(symbol)) {
+    throw new Error("architect should skip heavy assessment and publish before the configured interval");
+  }
+  const gatedPublisherBefore = gatedStore.getArchitectPublisherState(symbol);
+  if (!gatedPublisherBefore || gatedPublisherBefore.lastObservedAt !== 29_000 || gatedPublisherBefore.nextPublishAt !== 30_000) {
+    throw new Error("architect should still keep publisher timing metadata fresh before the publish interval");
+  }
+
+  gatedStore.setContextSnapshot(symbol, {
+    ...createContext(symbol, 30_000, true, "trend"),
+    effectiveWindowStartedAt: 0,
+    windowStartedAt: 0
+  });
+  gatedService.observe(symbol, 30_000);
+  if (assessCalls !== 1 || !gatedStore.getArchitectPublishedAssessment(symbol)) {
+    throw new Error("architect should assess and publish once the interval is reached");
+  }
+  if (!gatedLogs.find((entry) => entry.event === "architect_published")) {
+    throw new Error("eligible architect publish should still emit architect_published");
+  }
+
+  gatedStore.setContextSnapshot(symbol, {
+    ...createContext(symbol, 31_000, true, "trend"),
+    effectiveWindowStartedAt: 0,
+    windowStartedAt: 0
+  });
+  gatedService.observe(symbol, 31_000);
+  gatedStore.setContextSnapshot(symbol, {
+    ...createContext(symbol, 45_000, true, "trend"),
+    effectiveWindowStartedAt: 0,
+    windowStartedAt: 0
+  });
+  gatedService.observe(symbol, 45_000);
+  if (assessCalls !== 1) {
+    throw new Error(`repeated ineligible ticks should not trigger heavy assessment work: ${assessCalls}`);
+  }
+
+  gatedStore.setContextSnapshot(symbol, {
+    ...createContext(symbol, 60_000, true, "trend"),
+    effectiveWindowStartedAt: 0,
+    windowStartedAt: 0
+  });
+  gatedService.observe(symbol, 60_000);
+  if (assessCalls !== 2) {
+    throw new Error(`architect should assess again once the next publish window is eligible: ${assessCalls}`);
+  }
+  if (!gatedLogs.find((entry) => entry.event === "architect_publish_refreshed")) {
+    throw new Error("eligible refresh cycle should still emit architect_publish_refreshed");
+  }
+
   store.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "trend"));
   service.observe(symbol, 30_000);
   let published = store.getArchitectPublishedAssessment(symbol);

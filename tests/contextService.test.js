@@ -130,6 +130,118 @@ function runContextServiceTests() {
   if (!segmentedAudit || segmentedAudit.metadata.lastPublishedRegimeSwitchAt !== switchAt) {
     throw new Error("missing context_window_segmented audit log after published regime switch");
   }
+
+  let createSnapshotCalls = 0;
+  const spyStore = new StateStore({ maxPriceHistory: 1000 });
+  const spyService = new ContextService({
+    contextBuilder: {
+      createSnapshot(params) {
+        createSnapshotCalls += 1;
+        return new ContextBuilder({ indicatorEngine: new IndicatorEngine() }).createSnapshot(params);
+      }
+    },
+    logger: {
+      info() {}
+    },
+    marketStream: {
+      subscribe() {
+        return () => {};
+      }
+    },
+    maxWindowMs: 300_000,
+    store: spyStore,
+    warmupMs: 30_000
+  });
+  for (let index = 0; index < 80; index += 1) {
+    const timestamp = start + (index * 1_000);
+    spyStore.updatePrice({
+      price: 100 + (index * 0.1),
+      receivedAt: timestamp + 5,
+      source: "mock",
+      symbol,
+      timestamp
+    });
+  }
+  const firstEligible = spyService.observe(symbol, start + 79_000);
+  const repeatedEligible = spyService.observe(symbol, start + 79_500);
+  if (!firstEligible || !repeatedEligible || createSnapshotCalls !== 1) {
+    throw new Error(`repeated observes without effective window change should not rebuild context: ${createSnapshotCalls}`);
+  }
+  if (repeatedEligible.observedAt !== start + 79_500 || repeatedEligible.summary !== firstEligible.summary) {
+    throw new Error("memoized context refresh should only advance observedAt while preserving the computed snapshot");
+  }
+  if (typeof spyStore.getPriceHistoryRevision !== "function" || spyStore.getPriceHistoryRevision(symbol) !== 80) {
+    throw new Error(`state store should expose a per-symbol price history revision: ${spyStore.getPriceHistoryRevision(symbol)}`);
+  }
+  spyStore.updatePrice({
+    price: 108.5,
+    receivedAt: start + 80_000 + 5,
+    source: "mock",
+    symbol,
+    timestamp: start + 80_000
+  });
+  const afterInputChange = spyService.observe(symbol, start + 80_000);
+  if (!afterInputChange || createSnapshotCalls !== 2) {
+    throw new Error(`context should rebuild once the effective input window changes: ${createSnapshotCalls}`);
+  }
+  if (spyService.resolveDataMode([
+    { price: 100, source: "ws", symbol, timestamp: start },
+    { price: 101, source: "rest", symbol, timestamp: start + 1_000 }
+  ]) !== "live") {
+    throw new Error("resolveDataMode should classify ws/rest-only inputs as live");
+  }
+  if (spyService.resolveDataMode([
+    { price: 100, source: "mock", symbol, timestamp: start },
+    { price: 101, source: "mock", symbol, timestamp: start + 1_000 }
+  ]) !== "mock") {
+    throw new Error("resolveDataMode should classify mock-only inputs as mock");
+  }
+  if (spyService.resolveDataMode([
+    { price: 100, source: "mock", symbol, timestamp: start },
+    { price: 101, source: "ws", symbol, timestamp: start + 1_000 }
+  ]) !== "mixed") {
+    throw new Error("resolveDataMode should classify mixed mock/live inputs as mixed");
+  }
+  if (spyService.resolveDataMode([
+    { price: 100, source: "", symbol, timestamp: start },
+    { price: 101, symbol, timestamp: start + 1_000 }
+  ]) !== "unknown") {
+    throw new Error("resolveDataMode should fall back to unknown when no usable sources are present");
+  }
+
+  let trickyCreateSnapshotCalls = 0;
+  const trickyStore = new StateStore({ maxPriceHistory: 3 });
+  const trickyService = new ContextService({
+    contextBuilder: {
+      createSnapshot(params) {
+        trickyCreateSnapshotCalls += 1;
+        return new ContextBuilder({ indicatorEngine: new IndicatorEngine() }).createSnapshot(params);
+      }
+    },
+    logger: {
+      info() {}
+    },
+    marketStream: {
+      subscribe() {
+        return () => {};
+      }
+    },
+    maxWindowMs: 300_000,
+    store: trickyStore,
+    warmupMs: 30_000
+  });
+  trickyStore.updatePrice({ price: 100, receivedAt: start + 5, source: "mock", symbol, timestamp: start });
+  trickyStore.updatePrice({ price: 101, receivedAt: start + 5, source: "mock", symbol, timestamp: start });
+  trickyStore.updatePrice({ price: 102, receivedAt: start + 1_005, source: "mock", symbol, timestamp: start + 1_000 });
+  const trickyFirst = trickyService.observe(symbol, start + 1_000);
+  trickyStore.updatePrice({ price: 103, receivedAt: start + 1_005, source: "mock", symbol, timestamp: start + 1_000 });
+  const trickySecond = trickyService.observe(symbol, start + 1_000);
+  if (!trickyFirst || !trickySecond || trickyCreateSnapshotCalls !== 2) {
+    throw new Error(`a new price append should invalidate memoized context even when timestamp/count boundaries can stay the same: ${trickyCreateSnapshotCalls}`);
+  }
+  if (trickySecond.features.netMoveRatio === trickyFirst.features.netMoveRatio && trickySecond.summary === trickyFirst.summary) {
+    throw new Error("tricky capped-history append should produce a fresh snapshot rather than reusing stale derived features");
+  }
 }
 
 module.exports = {

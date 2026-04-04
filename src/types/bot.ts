@@ -33,6 +33,7 @@ export interface BotRuntimeState {
   symbol: string;
   activeStrategyId: string;
   status: BotStatus;
+  // When set to "max_drawdown_reached", the bot remains manually paused until an explicit resume.
   pausedReason: string | null;
   cooldownReason: string | null;
   lastDecision: "buy" | "sell" | "hold";

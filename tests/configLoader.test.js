@@ -179,6 +179,87 @@ function runConfigLoaderTests() {
       }
     ]
   }, "invalid allowedStrategies entry");
+
+  const uniqueSymbolsRootDir = createTempConfigRoot({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_unique_a",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      },
+      {
+        allowedStrategies: ["rsiReversion"],
+        enabled: true,
+        id: "bot_unique_b",
+        riskProfile: "medium",
+        strategy: "rsiReversion",
+        symbol: "ETH/USDT"
+      }
+    ]
+  });
+
+  try {
+    const loadedUniqueSymbols = new ConfigLoader(uniqueSymbolsRootDir).loadBotsConfig();
+    if (!Array.isArray(loadedUniqueSymbols.bots) || loadedUniqueSymbols.bots.length !== 2) {
+      throw new Error(`unique enabled bot symbols should still load normally: ${JSON.stringify(loadedUniqueSymbols)}`);
+    }
+  } finally {
+    fs.rmSync(uniqueSymbolsRootDir, { force: true, recursive: true });
+  }
+
+  expectConfigError({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_dup_a",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      },
+      {
+        allowedStrategies: ["rsiReversion"],
+        enabled: true,
+        id: "bot_dup_b",
+        riskProfile: "medium",
+        strategy: "rsiReversion",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "duplicate enabled bot symbols");
+
+  const disabledDuplicateRootDir = createTempConfigRoot({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_enabled",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      },
+      {
+        allowedStrategies: ["rsiReversion"],
+        enabled: false,
+        id: "bot_disabled_duplicate",
+        riskProfile: "medium",
+        strategy: "rsiReversion",
+        symbol: "BTC/USDT"
+      }
+    ]
+  });
+
+  try {
+    const loadedDisabledDuplicate = new ConfigLoader(disabledDuplicateRootDir).loadBotsConfig();
+    if (!Array.isArray(loadedDisabledDuplicate.bots) || loadedDisabledDuplicate.bots.length !== 2) {
+      throw new Error(`disabled bots should not count toward duplicate symbol conflicts: ${JSON.stringify(loadedDisabledDuplicate)}`);
+    }
+  } finally {
+    fs.rmSync(disabledDuplicateRootDir, { force: true, recursive: true });
+  }
 }
 
 module.exports = {

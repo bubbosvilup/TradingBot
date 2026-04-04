@@ -2,6 +2,8 @@
 
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 
+const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
+
 class ExecutionEngine {
   store: any;
   userStream: any;
@@ -75,12 +77,15 @@ class ExecutionEngine {
     confidence: number;
     reason: string[];
   }): PositionRecord | null {
-    const quantity = Math.max(Number(params.quantity) || 0, 0);
-    const price = Math.max(Number(params.price) || 0, 0);
-    const notionalUsdt = price * quantity;
-    const rejectReason = quantity < this.minTradeQuantity
+    const constraints = validateTradeConstraints({
+      minNotionalUsdt: this.minTradeNotionalUsdt,
+      minQuantity: this.minTradeQuantity,
+      price: params.price,
+      quantity: params.quantity
+    });
+    const rejectReason = constraints.quantity < this.minTradeQuantity
       ? "quantity_below_minimum"
-      : notionalUsdt < this.minTradeNotionalUsdt
+      : constraints.notionalUsdt < this.minTradeNotionalUsdt
         ? "notional_below_minimum"
         : null;
 
@@ -88,11 +93,11 @@ class ExecutionEngine {
       this.logger.info("position_open_rejected", {
         botId: params.botId,
         executionMode: this.executionMode,
-        minNotionalUsdt: Number(this.minTradeNotionalUsdt.toFixed(4)),
-        minQuantity: Number(this.minTradeQuantity.toFixed(8)),
-        notionalUsdt: Number(notionalUsdt.toFixed(4)),
-        price: price.toFixed(4),
-        quantity: quantity.toFixed(8),
+        minNotionalUsdt: Number(constraints.minNotionalUsdt.toFixed(4)),
+        minQuantity: Number(constraints.minQuantity.toFixed(8)),
+        notionalUsdt: Number(constraints.notionalUsdt.toFixed(4)),
+        price: constraints.price.toFixed(4),
+        quantity: constraints.quantity.toFixed(8),
         reason: rejectReason,
         strategy: params.strategyId,
         symbol: params.symbol
@@ -103,8 +108,8 @@ class ExecutionEngine {
     const order: OrderRecord = {
       botId: params.botId,
       id: this.buildOrderId(params.botId),
-      price,
-      quantity,
+      price: constraints.price,
+      quantity: constraints.quantity,
       reason: params.reason,
       side: "buy",
       strategyId: params.strategyId,
@@ -115,7 +120,7 @@ class ExecutionEngine {
     const position: PositionRecord = {
       botId: params.botId,
       confidence: params.confidence,
-      entryPrice: price,
+      entryPrice: constraints.price,
       id: order.id,
       lastLifecycleEvent: null,
       lifecycleState: "ACTIVE",
@@ -126,7 +131,7 @@ class ExecutionEngine {
       managedRecoveryStartedAt: null,
       notes: params.reason,
       openedAt: order.timestamp,
-      quantity,
+      quantity: constraints.quantity,
       strategyId: params.strategyId,
       symbol: params.symbol
     };
@@ -136,8 +141,8 @@ class ExecutionEngine {
     this.logger.info("position_opened", {
       botId: params.botId,
       executionMode: this.executionMode,
-      price: price.toFixed(4),
-      quantity: quantity.toFixed(6),
+      price: constraints.price.toFixed(4),
+      quantity: constraints.quantity.toFixed(6),
       strategy: params.strategyId,
       symbol: params.symbol
     });

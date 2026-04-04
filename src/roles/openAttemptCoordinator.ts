@@ -5,6 +5,8 @@ import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ExecutionEngineLike, RiskManagerLike, TradeConstraints } from "../types/runtime.ts";
 import type { PositionRecord } from "../types/trade.ts";
 
+const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
+
 export interface OpenAttemptCoordinatorParams {
   executionEngine: ExecutionEngineLike;
   riskManager: RiskManagerLike;
@@ -141,19 +143,24 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
 
     if (!opened) {
       const executionConstraints = this.getExecutionConstraints();
-      const executionNotionalUsdt = params.price * Math.max(params.quantity, 0);
-      const blockReason = params.quantity < executionConstraints.minQuantity
+      const validation = validateTradeConstraints({
+        minNotionalUsdt: executionConstraints.minNotionalUsdt,
+        minQuantity: executionConstraints.minQuantity,
+        price: params.price,
+        quantity: params.quantity
+      });
+      const blockReason = validation.quantity < executionConstraints.minQuantity
         ? "execution_quantity_below_minimum"
-        : executionNotionalUsdt < executionConstraints.minNotionalUsdt
+        : validation.notionalUsdt < executionConstraints.minNotionalUsdt
           ? "execution_notional_below_minimum"
           : "execution_open_rejected";
       return {
         blockReason,
         executionDiagnostics: {
-          minNotionalUsdt: Number(Number(executionConstraints.minNotionalUsdt || 0).toFixed(4)),
-          minQuantity: Number(Number(executionConstraints.minQuantity || 0).toFixed(8)),
-          notionalUsdt: Number(executionNotionalUsdt.toFixed(4)),
-          quantity: Number(Number(params.quantity).toFixed(8))
+          minNotionalUsdt: Number(validation.minNotionalUsdt.toFixed(4)),
+          minQuantity: Number(validation.minQuantity.toFixed(8)),
+          notionalUsdt: Number(validation.notionalUsdt.toFixed(4)),
+          quantity: Number(validation.quantity.toFixed(8))
         },
         kind: "execution_rejected"
       };

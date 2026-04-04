@@ -3,6 +3,7 @@
 import type { MarketKline, MarketMode, MarketTick } from "../types/market.ts";
 
 const ccxt = require("ccxt");
+const { elapsedMs, startTimer } = require("../utils/timing.ts");
 const { now } = require("../utils/time.ts");
 
 class MarketStream {
@@ -22,6 +23,9 @@ class MarketStream {
   fallbackTimer: NodeJS.Timeout | null;
   fallbackExchange: any;
   fallbackRestUrl: string;
+  highLatencyWarnMs: number;
+  latencyLogIntervalMs: number;
+  lastLatencyLogAtBySymbol: Map<string, number>;
 
   constructor(deps: {
     wsManager: any;
@@ -53,6 +57,9 @@ class MarketStream {
     this.fallbackTimer = null;
     this.fallbackExchange = null;
     this.fallbackRestUrl = deps.restExchangeId || "binance";
+    this.highLatencyWarnMs = 1000;
+    this.latencyLogIntervalMs = 30_000;
+    this.lastLatencyLogAtBySymbol = new Map();
   }
 
   start(symbols: string[]) {
@@ -160,8 +167,65 @@ class MarketStream {
   }
 
   handleTick(tick: MarketTick) {
+    const tickTimer = startTimer();
+    const stateTimer = startTimer();
     this.store.updatePrice(tick);
+    const stateUpdateMs = elapsedMs(stateTimer);
+    const publishTimer = startTimer();
     this.wsManager.publish(`market:${tick.symbol}`, tick);
+    const publishFanoutMs = elapsedMs(publishTimer);
+    const totalTickPipelineMs = elapsedMs(tickTimer);
+    if (typeof this.store.recordTickLatencySample === "function") {
+      this.store.recordTickLatencySample(tick.symbol, {
+        publishFanoutMs,
+        stateUpdateMs,
+        totalTickPipelineMs
+      }, tick.receivedAt || Date.now());
+    }
+    this.maybeLogTickLatency(tick, totalTickPipelineMs);
+  }
+
+  maybeLogTickLatency(tick: MarketTick, totalTickPipelineMs: number) {
+    const pipeline = typeof this.store.getPipelineSnapshot === "function"
+      ? this.store.getPipelineSnapshot(tick.symbol)
+      : null;
+    const tickLatency = pipeline?.tickLatency || null;
+    if (!tickLatency) {
+      return;
+    }
+
+    const loggedAt = Date.now();
+    const lastLoggedAt = this.lastLatencyLogAtBySymbol.get(tick.symbol) || 0;
+    const shouldWarn = totalTickPipelineMs >= this.highLatencyWarnMs;
+    const shouldSample = (loggedAt - lastLoggedAt) >= this.latencyLogIntervalMs;
+    if (!shouldWarn && !shouldSample) {
+      return;
+    }
+
+    this.lastLatencyLogAtBySymbol.set(tick.symbol, loggedAt);
+    const transport = {
+      botToExecutionMs: pipeline?.botToExecutionMs ?? null,
+      exchangeToReceiveMs: pipeline?.exchangeToReceiveMs ?? null,
+      receiveToStateMs: pipeline?.receiveToStateMs ?? null,
+      stateToBotMs: pipeline?.stateToBotMs ?? null
+    };
+    const payload = {
+      recentWorstTotalMs: tickLatency.recentWorstTotalMs,
+      sampleCount: tickLatency.sampleCount,
+      source: tick.source,
+      stageAverage: JSON.stringify(tickLatency.average),
+      stageLast: JSON.stringify(tickLatency.last),
+      stageMax: JSON.stringify(tickLatency.max),
+      symbol: tick.symbol,
+      tickTimestamp: tick.timestamp,
+      totalPipelineMs: tickLatency.last.totalTickPipelineMs,
+      transportBreakdown: JSON.stringify(transport)
+    };
+    if (shouldWarn) {
+      this.logger.warn("tick_pipeline_latency_high", payload);
+      return;
+    }
+    this.logger.info("tick_pipeline_latency", payload);
   }
 
   handleKline(kline: MarketKline) {

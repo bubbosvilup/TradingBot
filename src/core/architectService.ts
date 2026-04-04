@@ -3,6 +3,8 @@
 import type { ArchitectAssessment, ArchitectPublisherState, MarketRegime } from "../types/architect.ts";
 import type { MarketTick } from "../types/market.ts";
 
+const { elapsedMs, startTimer } = require("../utils/timing.ts");
+
 class ArchitectService {
   store: any;
   marketStream: any;
@@ -75,10 +77,7 @@ class ArchitectService {
     return created;
   }
 
-  observe(symbol: string, observedAt: number) {
-    const context = this.store.getContextSnapshot(symbol);
-    if (!context) return null;
-
+  prepareObservation(symbol: string, observedAt: number, context: any) {
     let publisher = this.ensurePublisherState(symbol);
     if (publisher.warmupStartedAt === null) {
       publisher = {
@@ -87,25 +86,69 @@ class ArchitectService {
         warmupStartedAt: context.windowStartedAt !== null ? context.windowStartedAt : observedAt
       };
     }
-
-    const assessment = this.botArchitect.assess(context);
-    this.store.setArchitectObservedAssessment(symbol, assessment);
     publisher = {
       ...publisher,
       lastObservedAt: observedAt
     };
     this.store.setArchitectPublisherState(symbol, publisher);
+    return publisher;
+  }
 
-    // Warm-up readiness belongs to ContextService; Architect only publishes after context is ready.
-    if (!context.warmupComplete || (publisher.nextPublishAt && observedAt < publisher.nextPublishAt)) {
-      return assessment;
+  shouldAssess(context: any, publisher: ArchitectPublisherState, observedAt: number) {
+    // Architect publish cadence is authoritative here: if the tick cannot possibly result in a publish
+    // cycle yet, skip the heavy assessment path and only keep publisher timing metadata fresh.
+    if (!context.warmupComplete) {
+      return false;
     }
+    if (publisher.nextPublishAt && observedAt < publisher.nextPublishAt) {
+      return false;
+    }
+    return true;
+  }
+
+  observe(symbol: string, observedAt: number) {
+    const observeTimer = startTimer();
+    const context = this.store.getContextSnapshot(symbol);
+    if (!context) return null;
+
+    const publisher = this.prepareObservation(symbol, observedAt, context);
+    if (!this.shouldAssess(context, publisher, observedAt)) {
+      if (typeof this.store.recordTickLatencySample === "function") {
+        this.store.recordTickLatencySample(symbol, {
+          architectAssessMs: 0,
+          architectObserveMs: elapsedMs(observeTimer),
+          architectPublishMs: 0
+        }, observedAt);
+      }
+      return null;
+    }
+
+    const assessTimer = startTimer();
+    const assessment = this.botArchitect.assess(context);
+    const architectAssessMs = elapsedMs(assessTimer);
+    this.store.setArchitectObservedAssessment(symbol, assessment);
     const minPublishMaturity = Math.max(Number(this.botArchitect?.minMaturity) || 0, 0);
     if (assessment.contextMaturity < minPublishMaturity) {
+      if (typeof this.store.recordTickLatencySample === "function") {
+        this.store.recordTickLatencySample(symbol, {
+          architectAssessMs,
+          architectObserveMs: elapsedMs(observeTimer),
+          architectPublishMs: 0
+        }, observedAt);
+      }
       return assessment;
     }
 
+    const publishTimer = startTimer();
     this.publish(symbol, assessment, observedAt, context);
+    const architectPublishMs = elapsedMs(publishTimer);
+    if (typeof this.store.recordTickLatencySample === "function") {
+      this.store.recordTickLatencySample(symbol, {
+        architectAssessMs,
+        architectObserveMs: elapsedMs(observeTimer),
+        architectPublishMs
+      }, observedAt);
+    }
     return assessment;
   }
 

@@ -42,22 +42,25 @@ import type {
   TradingBotTelemetryInstance,
   TradingBotTelemetryParams
 } from "../roles/tradingBotTelemetry.ts";
+import type { ExitPlan } from "../roles/exitDecisionCoordinator.ts";
 
 const { BaseBot } = require("./baseBot.ts") as { BaseBot: BaseBotClass<BotDeps> };
 const { resolveLogType } = require("../utils/logger.ts");
 const {
   beginPositionExit,
   closePositionLifecycle,
-  enterManagedRecovery,
-  getManagedRecoveryPolicy,
   isManagedRecoveryPosition,
   POSITION_LIFECYCLE_EVENTS,
   resolveLifecycleEventFromReasons
 } = require("../roles/positionLifecycleManager.ts");
 const { resolveExitPolicy } = require("../roles/exitPolicyRegistry.ts");
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../roles/recoveryTargetResolver.ts");
-const { resolveManagedRecoveryExit } = require("../roles/managedRecoveryExitResolver.ts");
+const { ExitDecisionCoordinator } = require("../roles/exitDecisionCoordinator.ts") as {
+  ExitDecisionCoordinator: new () => { resolve: (params: any) => ExitPlan; };
+};
+const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
 const { estimateEntryEconomics: estimateStrategyEntryEconomics } = require("../roles/entryEconomicsEstimator.ts");
+const { elapsedMs, startTimer } = require("../utils/timing.ts");
 const { ArchitectCoordinator } = require("../roles/architectCoordinator.ts") as {
   ArchitectCoordinator: new (params: ArchitectCoordinatorParams) => ArchitectCoordinatorInstance;
 };
@@ -113,19 +116,6 @@ type TradingTickDecisionContext = Readonly<TradingTickArchitectContext & {
   signalState: any;
 }>;
 
-type ExitPlan = {
-  estimatedExitEconomics?: any;
-  exitMechanism?: PositionExitMechanism | null;
-  exitNow: boolean;
-  invalidationLevel?: string | null;
-  invalidationMode?: InvalidationMode | null;
-  lifecycleEvent?: any;
-  nextPosition?: PositionRecord | null;
-  protectionMode?: string | null;
-  reason: string[];
-  transition?: "managed_recovery";
-};
-
 class TradingBot extends BaseBot {
   strategy: Strategy;
   allowedStrategies: string[];
@@ -147,6 +137,7 @@ class TradingBot extends BaseBot {
   entryCoordinator: EntryCoordinatorInstance;
   entryOutcomeCoordinator: EntryOutcomeCoordinatorInstance;
   exitOutcomeCoordinator: ExitOutcomeCoordinatorInstance;
+  exitDecisionCoordinator: InstanceType<typeof ExitDecisionCoordinator>;
   openAttemptCoordinator: OpenAttemptCoordinatorInstance;
   telemetry: TradingBotTelemetryInstance;
   postLossArchitectLatch: InstanceType<typeof PostLossArchitectLatch>;
@@ -196,6 +187,7 @@ class TradingBot extends BaseBot {
     this.exitOutcomeCoordinator = new ExitOutcomeCoordinator({
       riskManager: this.deps.riskManager
     });
+    this.exitDecisionCoordinator = new ExitDecisionCoordinator();
     this.openAttemptCoordinator = new OpenAttemptCoordinator({
       executionEngine: this.deps.executionEngine,
       riskManager: this.deps.riskManager
@@ -559,17 +551,6 @@ class TradingBot extends BaseBot {
     return exitReasons.includes("rsi_exit_confirmed") || exitReasons.includes("rsi_exit_threshold_hit");
   }
 
-  getDecisionReasons(decision: any) {
-    return Array.isArray(decision?.reason) ? decision.reason : [];
-  }
-
-  getProtectionStopMode() {
-    const stopMode = String(this.getExitPolicy()?.protection?.stopMode || "fixed_pct");
-    return stopMode === "structural_min" || stopMode === "atr_trailing" || stopMode === "fixed_pct"
-      ? stopMode
-      : "fixed_pct";
-  }
-
   getArchitectTimingMetadata(timestamp: number): ArchitectTimingMetadata {
     return this.architectCoordinator.getTimingMetadata(timestamp);
   }
@@ -618,21 +599,6 @@ class TradingBot extends BaseBot {
     ));
   }
 
-  buildExitReason(decisionReasons: string[], primaryReason: string, confirmationTicks?: number | null) {
-    const nextReasons = decisionReasons.filter((reason) =>
-      reason !== "rsi_exit_threshold_hit"
-      && reason !== "emergency_stop"
-      && reason !== "managed_recovery_rsi_ignored"
-    );
-    if (!nextReasons.includes(primaryReason)) {
-      nextReasons.push(primaryReason);
-    }
-    if (Number.isFinite(Number(confirmationTicks)) && Number(confirmationTicks) > 0) {
-      nextReasons.push(`exit_confirmed_${Number(confirmationTicks)}ticks`);
-    }
-    return nextReasons;
-  }
-
   estimateExitEconomics(position: PositionRecord, price: number) {
     if (typeof this.deps.executionEngine?.calculateCloseEconomics === "function") {
       return this.deps.executionEngine.calculateCloseEconomics(position, price);
@@ -658,104 +624,8 @@ class TradingBot extends BaseBot {
     };
   }
 
-  getManagedRecoveryPolicy() {
-    return getManagedRecoveryPolicy(this.getExitPolicy());
-  }
-
   getExitPolicy(): ExitPolicy | null {
     return resolveExitPolicy(this.strategy?.config);
-  }
-
-  getRsiExitFloorNetPnlUsdt() {
-    const exitPolicy = this.getExitPolicy();
-    const estimatedCostMultiplier = Number(exitPolicy?.qualification?.estimatedCostMultiplier);
-    const costMultiplier = Number.isFinite(estimatedCostMultiplier)
-      ? estimatedCostMultiplier
-      : 1;
-    const minTickProfit = Number(exitPolicy?.qualification?.minTickProfit);
-    const baseFloor = Number.isFinite(minTickProfit)
-      ? minTickProfit
-      : 0;
-    const qualificationMode = String(exitPolicy?.qualification?.pnlExitFloorMode || "strict_net_positive");
-
-    if (qualificationMode === "allow_small_loss_on_regime_risk") {
-      return baseFloor * -1;
-    }
-
-    if (qualificationMode === "cost_buffered_positive") {
-      return Math.max(baseFloor * costMultiplier, 0);
-    }
-
-    return Math.max(baseFloor, 0);
-  }
-
-  matchesInvalidationMode(architectState: any, mode: InvalidationMode) {
-    const blockReason = architectState?.blockReason || null;
-    if (mode === "family_mismatch") {
-      return architectState?.familyMatch === false;
-    }
-    if (mode === "low_maturity") {
-      return blockReason === "architect_low_maturity" || blockReason === "architect_post_switch_low_maturity";
-    }
-    if (mode === "unclear") {
-      return blockReason === "architect_unclear";
-    }
-    if (mode === "no_trade") {
-      return blockReason === "architect_no_trade";
-    }
-    if (mode === "not_ready") {
-      return blockReason === "architect_not_ready" || blockReason === "missing_published_architect";
-    }
-    if (mode === "stale") {
-      return blockReason === "architect_stale";
-    }
-    if (mode === "symbol_mismatch") {
-      return blockReason === "architect_symbol_mismatch";
-    }
-    if (mode === "regime_change") {
-      return architectState?.usable && architectState?.familyMatch === false;
-    }
-    if (mode === "extreme_volatility") {
-      return false;
-    }
-    return false;
-  }
-
-  resolveManagedRecoveryInvalidation(architectState: any, decisionReasons: string[]) {
-    const exitPolicy = this.getExitPolicy();
-    const modes = Array.isArray(exitPolicy?.invalidation?.modes)
-      ? exitPolicy.invalidation.modes
-      : [];
-    const invalidationMode = modes.find((mode) => this.matchesInvalidationMode(architectState, mode)) || null;
-    if (!invalidationMode) {
-      return null;
-    }
-    return {
-      exitMechanism: "invalidation" as const,
-      invalidationLevel: this.telemetry.resolveInvalidationLevel(architectState, invalidationMode),
-      invalidationMode,
-      lifecycleEvent: POSITION_LIFECYCLE_EVENTS.REGIME_INVALIDATION,
-      reason: this.buildExitReason(decisionReasons, "regime_invalidation_exit")
-    };
-  }
-
-  isProtectiveExitTriggered(position: PositionRecord, price: number) {
-    if (this.getProtectionStopMode() !== "fixed_pct") {
-      return false;
-    }
-    return this.isEmergencyExit(position, price);
-  }
-
-  resolveProtectiveExit(position: PositionRecord, price: number, decisionReasons: string[]) {
-    if (!this.isProtectiveExitTriggered(position, price)) {
-      return null;
-    }
-    return {
-      exitMechanism: "protection" as const,
-      lifecycleEvent: POSITION_LIFECYCLE_EVENTS.PROTECTIVE_STOP_HIT,
-      protectionMode: this.getProtectionStopMode(),
-      reason: this.buildExitReason(decisionReasons, "protective_stop_exit")
-    };
   }
 
   resolveManagedRecoveryTarget(params: { context: any; position: PositionRecord }) {
@@ -776,15 +646,6 @@ class TradingBot extends BaseBot {
         && Number(latestPrice) >= Number(resolvedTarget.targetPrice)
       )
     };
-  }
-
-  resolveManagedRecoveryPosition(position: PositionRecord, tick: MarketTick, exitFloorNetPnlUsdt: number) {
-    const transition = enterManagedRecovery(position, {
-      exitFloorNetPnlUsdt,
-      reason: "rsi_exit_deferred",
-      startedAt: tick.timestamp
-    });
-    return transition.allowed ? transition.position : null;
   }
 
   persistManagedRecoveryPosition(position: PositionRecord, metadata: Record<string, unknown>) {
@@ -878,12 +739,6 @@ class TradingBot extends BaseBot {
     return true;
   }
 
-  isEmergencyExit(position: PositionRecord, price: number) {
-    const profile = this.deps.riskManager.getProfile(this.config.riskProfile, this.config.riskOverrides || null);
-    const drawdownPct = position.entryPrice > 0 ? ((position.entryPrice - price) / position.entryPrice) : 0;
-    return drawdownPct >= profile.emergencyStopPct;
-  }
-
   shouldExitPosition(params: {
     architectState?: any;
     decision: any;
@@ -893,95 +748,21 @@ class TradingBot extends BaseBot {
     tick: MarketTick;
   }): ExitPlan {
     const profile = this.deps.riskManager.getProfile(this.config.riskProfile, this.config.riskOverrides || null);
-    const holdMs = params.tick.timestamp - params.position.openedAt;
-    const decisionReasons = this.getDecisionReasons(params.decision);
-    const protectiveExit = this.resolveProtectiveExit(params.position, params.tick.price, decisionReasons);
-    const exitPolicy = this.getExitPolicy();
-    const inManagedRecovery = isManagedRecoveryPosition(params.position);
-    const managedRecoveryPolicy = getManagedRecoveryPolicy(exitPolicy);
-    const meanReversionPosition = params.position.strategyId === "rsiReversion";
-    const priceTargetHit = inManagedRecovery
-      ? Boolean(params.managedRecoveryTarget?.hit)
-      : decisionReasons.includes("reversion_price_target_hit");
-    const rsiExitThresholdHit = decisionReasons.includes("rsi_exit_threshold_hit");
-
-    if (inManagedRecovery) {
-      const managedRecoveryStartedAt = Number(params.position.managedRecoveryStartedAt || params.position.openedAt || 0);
-      const invalidationExit = params.architectState
-        ? this.resolveManagedRecoveryInvalidation(params.architectState, decisionReasons)
-        : null;
-      return resolveManagedRecoveryExit({
-        buildExitReason: (reasons, primaryReason, confirmationTicks) =>
-          this.buildExitReason(reasons, primaryReason, confirmationTicks),
-        decisionReasons,
-        exitConfirmationTicks: profile.exitConfirmationTicks,
-        exitSignalStreak: params.signalState.exitSignalStreak,
-        invalidationExit,
-        managedRecoveryStartedAt,
-        priceTargetHit,
-        protectiveExit,
-        rsiExitThresholdHit,
-        tickTimestamp: params.tick.timestamp,
-        timeoutMs: managedRecoveryPolicy.timeoutMs
-      });
-    }
-
-    if (protectiveExit) {
-      return {
-        exitNow: true,
-        ...protectiveExit
-      };
-    }
-
-    if (holdMs < profile.minHoldMs) {
-      return {
-        exitNow: false,
-        reason: [...decisionReasons, `minimum_hold_${profile.minHoldMs}ms`]
-      };
-    }
-
-    if (params.decision.action === "sell" && params.signalState.exitSignalStreak >= profile.exitConfirmationTicks) {
-      if (meanReversionPosition && rsiExitThresholdHit) {
-        const estimatedExitEconomics = this.estimateExitEconomics(params.position, params.tick.price);
-        const exitFloorNetPnlUsdt = this.getRsiExitFloorNetPnlUsdt();
-        if (estimatedExitEconomics.netPnl < exitFloorNetPnlUsdt) {
-          return {
-            estimatedExitEconomics,
-            exitMechanism: "qualification" as const,
-            exitNow: false,
-            lifecycleEvent: POSITION_LIFECYCLE_EVENTS.RSI_EXIT_HIT,
-            nextPosition: this.resolveManagedRecoveryPosition(params.position, params.tick, exitFloorNetPnlUsdt),
-            reason: this.buildExitReason(decisionReasons, "rsi_exit_deferred"),
-            transition: "managed_recovery"
-          };
-        }
-
-        return {
-          exitMechanism: "qualification" as const,
-          exitNow: true,
-          lifecycleEvent: POSITION_LIFECYCLE_EVENTS.RSI_EXIT_HIT,
-          reason: this.buildExitReason(decisionReasons, "rsi_exit_confirmed", profile.exitConfirmationTicks)
-        };
-      }
-
-      return {
-        exitMechanism: meanReversionPosition && priceTargetHit
-          ? "recovery"
-          : null,
-        exitNow: true,
-        lifecycleEvent: meanReversionPosition && priceTargetHit
-          ? POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
-          : null,
-        reason: meanReversionPosition && priceTargetHit
-          ? this.buildExitReason(decisionReasons, "reversion_price_target_hit", profile.exitConfirmationTicks)
-          : [...decisionReasons, `exit_confirmed_${profile.exitConfirmationTicks}ticks`]
-      };
-    }
-
-    return {
-      exitNow: false,
-      reason: decisionReasons
-    };
+    return this.exitDecisionCoordinator.resolve({
+      architectState: params.architectState,
+      decision: params.decision,
+      emergencyStopPct: profile.emergencyStopPct,
+      estimateExitEconomics: (position: PositionRecord, price: number) => this.estimateExitEconomics(position, price),
+      exitConfirmationTicks: profile.exitConfirmationTicks,
+      exitPolicy: this.getExitPolicy(),
+      managedRecoveryTarget: params.managedRecoveryTarget,
+      minHoldMs: profile.minHoldMs,
+      position: params.position,
+      resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) =>
+        this.telemetry.resolveInvalidationLevel(architectState, mode),
+      signalState: params.signalState,
+      tick: params.tick
+    });
   }
 
   logEntryBlocked(state: any, reason: string) {
@@ -1195,6 +976,12 @@ class TradingBot extends BaseBot {
       quantity: params.quantity
     });
     const tradeConstraints = this.deps.riskManager.getTradeConstraints();
+    const tradeConstraintValidation = validateTradeConstraints({
+      minNotionalUsdt: tradeConstraints.minNotionalUsdt,
+      minQuantity: tradeConstraints.minQuantity,
+      price: params.tick.price,
+      quantity: params.quantity
+    });
     const diagnostics = this.buildEntryDiagnostics({
       architectState,
       context: params.context,
@@ -1208,13 +995,22 @@ class TradingBot extends BaseBot {
       strategyId: this.strategy.id,
       tick: params.tick
     });
+    if (tradeConstraintValidation.belowMinNotional) {
+      return { allowed: false, diagnostics: { ...diagnostics, blockReason: "notional_below_minimum" } };
+    }
+    if (tradeConstraintValidation.belowMinQuantity) {
+      return { allowed: false, diagnostics: { ...diagnostics, blockReason: "quantity_below_minimum" } };
+    }
     return this.entryCoordinator.evaluateFinalGate({
       architectState,
       diagnostics,
       economics,
       postLossArchitectLatchBlocking: this.postLossArchitectLatch.getState(this.strategy.id, params.state).blocking,
       quantity: params.quantity,
-      tradeConstraints
+      tradeConstraints: {
+        minNotionalUsdt: 0,
+        minQuantity: 0
+      }
     });
   }
 
@@ -1241,6 +1037,8 @@ class TradingBot extends BaseBot {
     const latchRefresh = this.postLossArchitectLatch.refresh();
     this.emitPostLossArchitectLatchTransition(latchRefresh.transition);
     state = latchRefresh.state || this.deps.store.getBotState(this.config.id);
+    // Max-drawdown pause is intentionally manual-only. Once this state is reached, ticks are ignored
+    // until an explicit external resume flips the bot back to running.
     if (!state || (state.status === "paused" && state.pausedReason === "max_drawdown_reached")) {
       return null;
     }
@@ -1705,22 +1503,69 @@ class TradingBot extends BaseBot {
   }
 
   onMarketTick(tick: MarketTick) {
+    const tickTimer = startTimer();
+    const prepareTimer = startTimer();
     const preparedSnapshot = this.prepareTickSnapshot(tick);
-    if (!preparedSnapshot) return;
-
-    const architectSnapshot = this.applyArchitectTickPhase(preparedSnapshot);
-    if (!architectSnapshot.position && architectSnapshot.architectState && !architectSnapshot.architectState.usable) {
-      this.handleArchitectEntryShortCircuit(architectSnapshot);
+    const botPrepareMs = elapsedMs(prepareTimer);
+    if (!preparedSnapshot) {
+      if (typeof this.deps.store.recordTickLatencySample === "function") {
+        this.deps.store.recordTickLatencySample(this.config.symbol, {
+          botActionMs: 0,
+          botArchitectPhaseMs: 0,
+          botDecisionMs: 0,
+          botPrepareMs,
+          botTickMs: elapsedMs(tickTimer)
+        }, tick.timestamp);
+      }
       return;
     }
 
+    const architectPhaseTimer = startTimer();
+    const architectSnapshot = this.applyArchitectTickPhase(preparedSnapshot);
+    const botArchitectPhaseMs = elapsedMs(architectPhaseTimer);
+    if (!architectSnapshot.position && architectSnapshot.architectState && !architectSnapshot.architectState.usable) {
+      const actionTimer = startTimer();
+      this.handleArchitectEntryShortCircuit(architectSnapshot);
+      if (typeof this.deps.store.recordTickLatencySample === "function") {
+        this.deps.store.recordTickLatencySample(this.config.symbol, {
+          botActionMs: elapsedMs(actionTimer),
+          botArchitectPhaseMs,
+          botDecisionMs: 0,
+          botPrepareMs,
+          botTickMs: elapsedMs(tickTimer)
+        }, tick.timestamp);
+      }
+      return;
+    }
+
+    const decisionTimer = startTimer();
     const decisionSnapshot = this.evaluateTickDecision(architectSnapshot);
+    const botDecisionMs = elapsedMs(decisionTimer);
+    const actionTimer = startTimer();
     if (!decisionSnapshot.position) {
       this.handleEntryTick(decisionSnapshot);
+      if (typeof this.deps.store.recordTickLatencySample === "function") {
+        this.deps.store.recordTickLatencySample(this.config.symbol, {
+          botActionMs: elapsedMs(actionTimer),
+          botArchitectPhaseMs,
+          botDecisionMs,
+          botPrepareMs,
+          botTickMs: elapsedMs(tickTimer)
+        }, tick.timestamp);
+      }
       return;
     }
 
     this.handleExitTick(decisionSnapshot);
+    if (typeof this.deps.store.recordTickLatencySample === "function") {
+      this.deps.store.recordTickLatencySample(this.config.symbol, {
+        botActionMs: elapsedMs(actionTimer),
+        botArchitectPhaseMs,
+        botDecisionMs,
+        botPrepareMs,
+        botTickMs: elapsedMs(tickTimer)
+      }, tick.timestamp);
+    }
   }
 }
 

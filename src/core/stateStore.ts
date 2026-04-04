@@ -29,7 +29,63 @@ interface PipelineSnapshot {
   stateToBotMs: number | null;
   botToExecutionMs: number | null;
   totalPipelineMs: number | null;
+  tickLatency: TickLatencySummary | null;
 }
+
+type TickLatencyStageKey =
+  | "stateUpdateMs"
+  | "publishFanoutMs"
+  | "totalTickPipelineMs"
+  | "contextObserveMs"
+  | "contextBuildMs"
+  | "architectObserveMs"
+  | "architectAssessMs"
+  | "architectPublishMs"
+  | "botTickMs"
+  | "botPrepareMs"
+  | "botArchitectPhaseMs"
+  | "botDecisionMs"
+  | "botActionMs";
+
+interface TickLatencyStageAggregate {
+  count: number;
+  lastMs: number | null;
+  maxMs: number | null;
+  totalMs: number;
+}
+
+interface TickLatencyAccumulator {
+  lastRecordedAt: number | null;
+  recentTotalSamples: number[];
+  stages: Record<TickLatencyStageKey, TickLatencyStageAggregate>;
+}
+
+interface TickLatencySummary {
+  lastRecordedAt: number | null;
+  recentWorstTotalMs: number | null;
+  sampleCount: number;
+  average: Record<TickLatencyStageKey, number | null>;
+  last: Record<TickLatencyStageKey, number | null>;
+  max: Record<TickLatencyStageKey, number | null>;
+}
+
+const TICK_LATENCY_STAGES: TickLatencyStageKey[] = [
+  "stateUpdateMs",
+  "publishFanoutMs",
+  "totalTickPipelineMs",
+  "contextObserveMs",
+  "contextBuildMs",
+  "architectObserveMs",
+  "architectAssessMs",
+  "architectPublishMs",
+  "botTickMs",
+  "botPrepareMs",
+  "botArchitectPhaseMs",
+  "botDecisionMs",
+  "botActionMs"
+];
+
+const RECENT_TICK_LATENCY_SAMPLE_SIZE = 20;
 
 interface WsConnectionSnapshot {
   connectionId: string;
@@ -47,6 +103,7 @@ class StateStore {
   botConfigs: Map<string, BotConfig>;
   botStates: Map<string, BotRuntimeState>;
   prices: Map<string, PriceSnapshot>;
+  priceHistoryRevisionBySymbol: Map<string, number>;
   klines: Map<string, Map<string, MarketKline[]>>;
   orders: Map<string, OrderRecord[]>;
   closedTrades: Map<string, ClosedTradeRecord[]>;
@@ -55,6 +112,7 @@ class StateStore {
   performanceHistory: Map<string, PerformanceHistoryPoint[]>;
   wsConnections: Map<string, WsConnectionSnapshot>;
   pipelineBySymbol: Map<string, PipelineSnapshot>;
+  tickLatencyBySymbol: Map<string, TickLatencyAccumulator>;
   contextBySymbol: Map<string, ContextSnapshot>;
   architectObservedBySymbol: Map<string, ArchitectAssessment>;
   architectPublishedBySymbol: Map<string, ArchitectAssessment>;
@@ -78,6 +136,7 @@ class StateStore {
     this.botConfigs = new Map();
     this.botStates = new Map();
     this.prices = new Map();
+    this.priceHistoryRevisionBySymbol = new Map();
     this.klines = new Map();
     this.orders = new Map();
     this.closedTrades = new Map();
@@ -86,6 +145,7 @@ class StateStore {
     this.performanceHistory = new Map();
     this.wsConnections = new Map();
     this.pipelineBySymbol = new Map();
+    this.tickLatencyBySymbol = new Map();
     this.contextBySymbol = new Map();
     this.architectObservedBySymbol = new Map();
     this.architectPublishedBySymbol = new Map();
@@ -186,6 +246,7 @@ class StateStore {
         receiveToStateMs: null,
         stateToBotMs: null,
         symbol: config.symbol,
+        tickLatency: null,
         totalPipelineMs: null
       });
     }
@@ -211,8 +272,10 @@ class StateStore {
     }
 
     this.prices.delete(symbol);
+    this.priceHistoryRevisionBySymbol.delete(symbol);
     this.klines.delete(symbol);
     this.pipelineBySymbol.delete(symbol);
+    this.tickLatencyBySymbol.delete(symbol);
     this.contextBySymbol.delete(symbol);
     this.architectObservedBySymbol.delete(symbol);
     this.architectPublishedBySymbol.delete(symbol);
@@ -235,6 +298,10 @@ class StateStore {
       symbol: normalizedTick.symbol,
       updatedAt: normalizedTick.timestamp
     });
+    this.priceHistoryRevisionBySymbol.set(
+      tick.symbol,
+      (this.priceHistoryRevisionBySymbol.get(tick.symbol) || 0) + 1
+    );
     this.recordPipelineFromTick(normalizedTick);
   }
 
@@ -273,6 +340,10 @@ class StateStore {
       return [...history];
     }
     return history.slice(-limit);
+  }
+
+  getPriceHistoryRevision(symbol: string): number {
+    return this.priceHistoryRevisionBySymbol.get(symbol) || 0;
   }
 
   getPriceHistorySince(symbol: string, sinceTimestamp: number): MarketTick[] {
@@ -402,6 +473,53 @@ class StateStore {
     return Array.from(this.pipelineBySymbol.values());
   }
 
+  recordTickLatencySample(
+    symbol: string,
+    sample: Partial<Record<TickLatencyStageKey, number | null | undefined>>,
+    recordedAt: number = Date.now()
+  ) {
+    const accumulator = this.tickLatencyBySymbol.get(symbol) || this.createTickLatencyAccumulator();
+    let updated = false;
+
+    for (const stage of TICK_LATENCY_STAGES) {
+      const rawValue = sample?.[stage];
+      if (rawValue === null || rawValue === undefined) {
+        continue;
+      }
+      const numericValue = Number(rawValue);
+      if (!Number.isFinite(numericValue) || numericValue < 0) {
+        continue;
+      }
+
+      updated = true;
+      const roundedValue = this.roundLatencyMs(numericValue);
+      const stageAccumulator = accumulator.stages[stage];
+      stageAccumulator.count += 1;
+      stageAccumulator.lastMs = roundedValue;
+      stageAccumulator.maxMs = stageAccumulator.maxMs === null
+        ? roundedValue
+        : Math.max(stageAccumulator.maxMs, roundedValue);
+      stageAccumulator.totalMs += roundedValue;
+
+      if (stage === "totalTickPipelineMs") {
+        accumulator.recentTotalSamples.push(roundedValue);
+        accumulator.recentTotalSamples = accumulator.recentTotalSamples.slice(-RECENT_TICK_LATENCY_SAMPLE_SIZE);
+      }
+    }
+
+    if (!updated) {
+      return;
+    }
+
+    accumulator.lastRecordedAt = recordedAt;
+    this.tickLatencyBySymbol.set(symbol, accumulator);
+    const current = this.pipelineBySymbol.get(symbol) || this.createPipelineSnapshot(symbol);
+    this.pipelineBySymbol.set(symbol, {
+      ...current,
+      tickLatency: this.buildTickLatencySummary(accumulator)
+    });
+  }
+
   setContextSnapshot(symbol: string, snapshot: ContextSnapshot) {
     this.contextBySymbol.set(symbol, snapshot);
   }
@@ -497,8 +615,55 @@ class StateStore {
       receiveToStateMs: null,
       stateToBotMs: null,
       symbol,
+      tickLatency: null,
       totalPipelineMs: null
     };
+  }
+
+  createTickLatencyAccumulator(): TickLatencyAccumulator {
+    return {
+      lastRecordedAt: null,
+      recentTotalSamples: [],
+      stages: TICK_LATENCY_STAGES.reduce((result, stage) => {
+        result[stage] = {
+          count: 0,
+          lastMs: null,
+          maxMs: null,
+          totalMs: 0
+        };
+        return result;
+      }, {} as Record<TickLatencyStageKey, TickLatencyStageAggregate>)
+    };
+  }
+
+  buildTickLatencySummary(accumulator: TickLatencyAccumulator): TickLatencySummary {
+    const average = {} as Record<TickLatencyStageKey, number | null>;
+    const last = {} as Record<TickLatencyStageKey, number | null>;
+    const max = {} as Record<TickLatencyStageKey, number | null>;
+
+    for (const stage of TICK_LATENCY_STAGES) {
+      const stageAccumulator = accumulator.stages[stage];
+      average[stage] = stageAccumulator.count > 0
+        ? this.roundLatencyMs(stageAccumulator.totalMs / stageAccumulator.count)
+        : null;
+      last[stage] = stageAccumulator.lastMs;
+      max[stage] = stageAccumulator.maxMs;
+    }
+
+    return {
+      average,
+      last,
+      lastRecordedAt: accumulator.lastRecordedAt,
+      max,
+      recentWorstTotalMs: accumulator.recentTotalSamples.length > 0
+        ? this.roundLatencyMs(Math.max(...accumulator.recentTotalSamples))
+        : null,
+      sampleCount: accumulator.stages.totalTickPipelineMs.count
+    };
+  }
+
+  roundLatencyMs(value: number) {
+    return Number(value.toFixed(3));
   }
 
   recordPipelineFromTick(tick: MarketTick) {

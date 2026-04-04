@@ -187,6 +187,36 @@ function runStateStoreTests() {
   if (sharedSymbolStore.getOrders("bot_b").length !== 0 || sharedSymbolStore.getClosedTrades("bot_b").length !== 0) {
     throw new Error("unregisterBot should not disturb untouched per-bot state for remaining bots");
   }
+
+  const latencyStore = new StateStore();
+  latencyStore.registerBot(createBotConfig({ id: "bot_latency", symbol: "SOL/USDT" }));
+  latencyStore.recordTickLatencySample("SOL/USDT", {
+    botTickMs: 4,
+    contextObserveMs: 3,
+    stateUpdateMs: 2,
+    totalTickPipelineMs: 9
+  }, 1_000);
+  latencyStore.recordTickLatencySample("SOL/USDT", {
+    architectObserveMs: 4,
+    stateUpdateMs: 6,
+    totalTickPipelineMs: 12
+  }, 2_000);
+  const latencySnapshot = latencyStore.getPipelineSnapshot("SOL/USDT");
+  if (!latencySnapshot?.tickLatency) {
+    throw new Error("tick latency summary should be attached to the pipeline snapshot");
+  }
+  if (latencySnapshot.tickLatency.sampleCount !== 2) {
+    throw new Error(`tick latency sample count should follow total pipeline recordings: ${JSON.stringify(latencySnapshot.tickLatency)}`);
+  }
+  if (latencySnapshot.tickLatency.last.totalTickPipelineMs !== 12 || latencySnapshot.tickLatency.max.totalTickPipelineMs !== 12) {
+    throw new Error(`tick latency should retain the latest and max total pipeline duration: ${JSON.stringify(latencySnapshot.tickLatency)}`);
+  }
+  if (latencySnapshot.tickLatency.average.stateUpdateMs !== 4 || latencySnapshot.tickLatency.last.stateUpdateMs !== 6) {
+    throw new Error(`tick latency should aggregate per-stage averages and latest values: ${JSON.stringify(latencySnapshot.tickLatency)}`);
+  }
+  if (latencySnapshot.tickLatency.recentWorstTotalMs !== 12) {
+    throw new Error(`tick latency should retain the recent worst-case total duration: ${JSON.stringify(latencySnapshot.tickLatency)}`);
+  }
 }
 
 module.exports = {
