@@ -140,7 +140,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const enabledBots = (botConfig.bots || []).filter((bot: any) => bot.enabled);
   const marketStream = new MarketStream({
     klineIntervals: botConfig.market?.klineIntervals || [],
-    liveEmitIntervalMs: botConfig.market?.liveEmitIntervalMs || 1000,
+    liveEmitIntervalMs: botConfig.market?.liveEmitIntervalMs,
     logger: logger.child("market"),
     restExchangeId: botConfig.market?.provider || "binance",
     streamType: botConfig.market?.streamType || "trade",

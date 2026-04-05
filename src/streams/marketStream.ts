@@ -47,7 +47,7 @@ class MarketStream {
       throw new Error(`market stream mode ${deps.mode} is not supported; active runtime market data is live-only`);
     }
     this.mode = "live";
-    this.liveEmitIntervalMs = Math.max(deps.liveEmitIntervalMs || 1000, 250);
+    this.liveEmitIntervalMs = Math.max(deps.liveEmitIntervalMs ?? 250, 250);
     this.streamType = deps.streamType || "trade";
     this.wsBaseUrl = deps.wsBaseUrl || "wss://stream.binance.com:9443";
     this.klineIntervals = [...new Set(deps.klineIntervals || [])];
@@ -168,6 +168,9 @@ class MarketStream {
 
   handleTick(tick: MarketTick) {
     const tickTimer = startTimer();
+    const flushDelayMs = tick.receivedAt !== undefined
+      ? Math.max(0, Date.now() - tick.receivedAt)
+      : 0;
     const stateTimer = startTimer();
     this.store.updatePrice(tick);
     const stateUpdateMs = elapsedMs(stateTimer);
@@ -177,6 +180,7 @@ class MarketStream {
     const totalTickPipelineMs = elapsedMs(tickTimer);
     if (typeof this.store.recordTickLatencySample === "function") {
       this.store.recordTickLatencySample(tick.symbol, {
+        flushDelayMs,
         publishFanoutMs,
         stateUpdateMs,
         totalTickPipelineMs
@@ -209,17 +213,23 @@ class MarketStream {
       receiveToStateMs: pipeline?.receiveToStateMs ?? null,
       stateToBotMs: pipeline?.stateToBotMs ?? null
     };
+    const wsToStoreMs = pipeline?.receiveToStateMs ?? null;
     const payload = {
+      exchangeToWsMs: pipeline?.exchangeToReceiveMs ?? null,
+      flushDelayMs: tickLatency.last.flushDelayMs,
+      publishFanoutMs: tickLatency.last.publishFanoutMs,
       recentWorstTotalMs: tickLatency.recentWorstTotalMs,
       sampleCount: tickLatency.sampleCount,
       source: tick.source,
       stageAverage: JSON.stringify(tickLatency.average),
       stageLast: JSON.stringify(tickLatency.last),
       stageMax: JSON.stringify(tickLatency.max),
+      stateUpdateMs: tickLatency.last.stateUpdateMs,
       symbol: tick.symbol,
       tickTimestamp: tick.timestamp,
       totalPipelineMs: tickLatency.last.totalTickPipelineMs,
-      transportBreakdown: JSON.stringify(transport)
+      transportBreakdown: JSON.stringify(transport),
+      wsToStoreMs
     };
     if (shouldWarn) {
       this.logger.warn("tick_pipeline_latency_high", payload);

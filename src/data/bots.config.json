@@ -6,7 +6,7 @@
     "streamType": "trade",
     "wsBaseUrl": "wss://stream.binance.com:9443",
     "klineIntervals": ["1m", "5m", "1h"],
-    "liveEmitIntervalMs": 1000
+    "liveEmitIntervalMs": 250
   },
   "bots": [
     {

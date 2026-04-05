@@ -33,7 +33,7 @@ const { runStrategySwitcherTests } = require("./strategySwitcher.test");
 const { runTradingBotTests } = require("./tradingBot.test");
 const { runUserStreamTests } = require("./userStream.test");
 const { runWsManagerTests } = require("./wsManager.test");
-const { runMarketStreamTests } = require("./marketStream.test");
+const { runMarketStreamTests, runMarketStreamLiveEmitIntervalTests } = require("./marketStream.test");
 const { runManagedRecoveryExitResolverTests } = require("./managedRecoveryExitResolver.test");
 const { runTradingBotTelemetryTests } = require("./tradingBotTelemetry.test");
 
@@ -72,6 +72,7 @@ async function main() {
     { name: "userStream", run: async () => runUserStreamTests() },
     { name: "wsManager", run: async () => runWsManagerTests() },
     { name: "marketStream", run: async () => runMarketStreamTests() },
+    { name: "marketStream.liveEmitInterval", run: async () => runMarketStreamLiveEmitIntervalTests() },
     { name: "systemServer", run: async () => runSystemServerTests() },
     { name: "runtime", run: async () => runRuntimeTests() },
     { name: "server", run: runServerTests }

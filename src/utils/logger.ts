@@ -62,6 +62,9 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
   if (message === "entry_evaluated" || message === "entry_gate_allowed" || message === "entry_gate_blocked" || message === "position_opened" || message === "position_closed" || message === "position_open_rejected") {
     return "evaluation";
   }
+  if (message === "tick_pipeline_latency" || message === "tick_pipeline_latency_high") {
+    return "evaluation";
+  }
   if (message === "architect_published") {
     return "architect_change";
   }

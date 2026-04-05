@@ -55,6 +55,14 @@ function runLoggerTests() {
     if (lines.length !== 8 || lines.some((line) => line.includes("heartbeat")) || lines.some((line) => line.includes("ws_connected")) || lines.some((line) => line.includes("architect_publish_refreshed"))) {
       throw new Error(`strategy_debug mode should keep only strategy-tuning events: ${JSON.stringify(lines)}`);
     }
+    lines.length = 0;
+    const { categorizeEvent } = require("../src/utils/logger.ts");
+    if (categorizeEvent("orchestrator:market", "INFO", "tick_pipeline_latency") !== "evaluation") {
+      throw new Error("tick_pipeline_latency should be categorized as evaluation, not other");
+    }
+    if (categorizeEvent("orchestrator:market", "WARN", "tick_pipeline_latency_high") !== "warning") {
+      throw new Error("tick_pipeline_latency_high at WARN level should be categorized as warning");
+    }
   } finally {
     console.log = originalConsoleLog;
   }

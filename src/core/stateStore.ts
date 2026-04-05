@@ -33,6 +33,7 @@ interface PipelineSnapshot {
 }
 
 type TickLatencyStageKey =
+  | "flushDelayMs"
   | "stateUpdateMs"
   | "publishFanoutMs"
   | "totalTickPipelineMs"
@@ -70,6 +71,7 @@ interface TickLatencySummary {
 }
 
 const TICK_LATENCY_STAGES: TickLatencyStageKey[] = [
+  "flushDelayMs",
   "stateUpdateMs",
   "publishFanoutMs",
   "totalTickPipelineMs",
