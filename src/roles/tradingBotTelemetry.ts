@@ -52,6 +52,22 @@ export interface TradingBotTelemetryInstance {
   buildArchitectEntryShortCircuitLogMetadata(architectState: ArchitectUsabilityState | null): Record<string, unknown>;
   buildCompactArchitectDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor;
   buildCompactBuyDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor;
+  buildCompactEntryMetadata(params: {
+    allowReason?: string | null;
+    architectState: ArchitectUsabilityState;
+    context?: Partial<MarketContext> | null;
+    decision?: StrategyDecision | null;
+    economics: EntryEconomicsEstimate;
+    outcome: "blocked" | "opened" | "skipped";
+    profile?: Pick<RiskProfileSettings, "entryDebounceTicks"> | null;
+    quantity: number | null;
+    riskGate?: EntryRiskGateTelemetry | null;
+    signalState?: Partial<BotRuntimeState> | null;
+    blockReason?: string | null;
+    state?: Partial<BotRuntimeState> | null;
+    strategyId: string;
+    tick: MarketTick;
+  }): Record<string, unknown>;
   buildCompactRiskDescriptor(strategyId: string, metadata: Record<string, unknown>, dedupeKey?: string, signature?: string): CompactLogDescriptor;
   buildCompactSellDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor;
   buildEntryBlockedMetadata(params: {
@@ -138,6 +154,19 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       : null;
   }
 
+  toSignaturePart(value: unknown) {
+    if (value === null || value === undefined) return "~";
+    if (typeof value === "boolean") return value ? "1" : "0";
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "~";
+    return String(value)
+      .replaceAll("\\", "\\\\")
+      .replaceAll("|", "\\|");
+  }
+
+  buildPrimitiveSignature(parts: unknown[]) {
+    return parts.map((part) => this.toSignaturePart(part)).join("|");
+  }
+
   buildArchitectEntryShortCircuitLogMetadata(architectState: ArchitectUsabilityState | null) {
     return {
       architectAgeMs: architectState?.architectAgeMs || null,
@@ -207,16 +236,16 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
               ? "arming"
               : "idle";
 
-    return JSON.stringify({
-      allowReason: metadata.allowReason || null,
-      blockReason: metadata.blockReason || null,
-      decisionAction: metadata.decisionAction || "not_evaluated",
-      family: metadata.publishedFamily || metadata.targetFamily || null,
+    return this.buildPrimitiveSignature([
+      metadata.allowReason || null,
+      metadata.blockReason || null,
+      metadata.decisionAction || "not_evaluated",
+      metadata.publishedFamily || metadata.targetFamily || null,
       readinessState,
-      regime: metadata.publishedRegime || null,
-      riskReason: metadata.riskReason || null,
-      strategy: metadata.strategy || strategyId
-    });
+      metadata.publishedRegime || null,
+      metadata.riskReason || null,
+      metadata.strategy || strategyId
+    ]);
   }
 
   maybeBuildCompactSetupDescriptor(metadata: Record<string, unknown>, strategyId: string): CompactLogDescriptor | null {
@@ -261,12 +290,12 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       dedupeKey: "BLOCK_CHANGE",
       message: "BLOCK_CHANGE",
       metadata: blockMetadata,
-      signature: JSON.stringify({
-        blockReason: blockMetadata.blockReason,
-        decisionAction: blockMetadata.decisionAction,
-        riskReason: blockMetadata.riskReason,
-        strategy: blockMetadata.strategy
-      })
+      signature: this.buildPrimitiveSignature([
+        blockMetadata.blockReason,
+        blockMetadata.decisionAction,
+        blockMetadata.riskReason,
+        blockMetadata.strategy
+      ])
     };
   }
 
@@ -318,15 +347,60 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     };
   }
 
+  buildCompactEntryMetadata(params: {
+    allowReason?: string | null;
+    architectState: ArchitectUsabilityState;
+    context?: Partial<MarketContext> | null;
+    decision?: StrategyDecision | null;
+    economics: EntryEconomicsEstimate;
+    outcome: "blocked" | "opened" | "skipped";
+    profile?: Pick<RiskProfileSettings, "entryDebounceTicks"> | null;
+    quantity: number | null;
+    riskGate?: EntryRiskGateTelemetry | null;
+    signalState?: Partial<BotRuntimeState> | null;
+    blockReason?: string | null;
+    state?: Partial<BotRuntimeState> | null;
+    strategyId: string;
+    tick: MarketTick;
+  }) {
+    const state = params.state || {};
+    const signalState = params.signalState || state;
+    const architect = params.architectState.architect;
+    const strategyRsiRaw = params.context?.indicators?.rsi;
+    const strategyRsi = Number.isFinite(Number(strategyRsiRaw))
+      ? Number(Number(strategyRsiRaw).toFixed(4))
+      : null;
+
+    return {
+      allowReason: params.allowReason || null,
+      blockReason: params.blockReason || null,
+      decisionAction: params.decision?.action || "not_evaluated",
+      decisionConfidence: params.decision ? Number(Number(params.decision.confidence || 0).toFixed(4)) : 0,
+      entryDebounceRequired: params.profile?.entryDebounceTicks ?? null,
+      entrySignalStreak: signalState?.entrySignalStreak ?? state.entrySignalStreak ?? 0,
+      estimatedCostPct: Number((params.economics.estimatedEntryFeePct + params.economics.estimatedExitFeePct + params.economics.estimatedSlippagePct).toFixed(4)),
+      expectedGrossEdgePct: Number(params.economics.expectedGrossEdgePct.toFixed(4)),
+      expectedNetEdgePct: Number(params.economics.expectedNetEdgePct.toFixed(4)),
+      latestPrice: Number(Number(params.tick?.price || 0).toFixed(4)),
+      outcome: params.outcome,
+      publishedFamily: architect?.recommendedFamily || null,
+      publishedRegime: architect?.marketRegime || null,
+      riskReason: params.riskGate?.reason || null,
+      strategy: params.strategyId,
+      strategyRsi,
+      targetFamily: params.architectState.actionableFamily || null
+    };
+  }
+
   buildManagedRecoverySignature(metadata: Record<string, unknown>) {
-    return JSON.stringify({
-      exitEvent: metadata.exitEvent || null,
-      invalidationLevel: metadata.invalidationLevel || null,
-      positionStatus: metadata.positionStatus || null,
-      status: metadata.status || null,
-      targetPrice: metadata.targetPrice || null,
-      timeoutRemainingMs: metadata.timeoutRemainingMs || null
-    });
+    return this.buildPrimitiveSignature([
+      metadata.exitEvent || null,
+      metadata.invalidationLevel || null,
+      metadata.positionStatus || null,
+      metadata.status || null,
+      metadata.targetPrice || null,
+      metadata.timeoutRemainingMs || null
+    ]);
   }
 
   buildEntryBlockedMetadata(params: {

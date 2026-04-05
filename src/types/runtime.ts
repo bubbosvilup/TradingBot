@@ -70,7 +70,12 @@ export interface BotStateStoreLike {
   getArchitectPublishedAssessment(symbol: string): ArchitectAssessment | null;
   getArchitectPublisherState(symbol: string): ArchitectPublisherState | null;
   recordBotEvaluation(botId: string, symbol: string, evaluatedAt: number): void;
-  recordExecution(botId: string, symbol: string, executedAt: number): void;
+  recordExecution(
+    botId: string,
+    symbol: string,
+    executedAt: number,
+    options?: { skipBotStateWrite?: boolean }
+  ): void;
   recordTickLatencySample?(symbol: string, sample: Record<string, number | null | undefined>, recordedAt?: number): void;
 }
 

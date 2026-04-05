@@ -37,10 +37,8 @@ class ContextBuilder {
       return this.createEmptySnapshot(params.symbol, params.dataMode, observedAt);
     }
 
-    const rollingPrices = ticks.map((tick) => Number(tick.price));
-    const rollingTimestamps = ticks.map((tick) => Number(tick.timestamp));
-    const rollingLatestTimestamp = rollingTimestamps[rollingTimestamps.length - 1];
-    const rollingOldestTimestamp = rollingTimestamps[0];
+    const rollingLatestTimestamp = Number(ticks[ticks.length - 1].timestamp);
+    const rollingOldestTimestamp = Number(ticks[0].timestamp);
     const windowSpanMs = Math.max(0, rollingLatestTimestamp - rollingOldestTimestamp);
     const rollingMaturity = clamp(windowSpanMs / params.maxWindowMs, 0, 1);
     const warmupComplete = windowSpanMs >= params.warmupMs;

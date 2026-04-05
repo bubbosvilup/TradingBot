@@ -267,6 +267,7 @@ function createHarness(strategyEvaluate, options = {}) {
     bot,
     botLogs,
     config,
+    executionEngine,
     store
   };
 }
@@ -606,6 +607,17 @@ function runTradingBotTests() {
       lossInitialBalance - lossEntryNotional,
       "loss scenario open should reserve entry notional from available balance"
     );
+    const lossLastExecutionWrites = [];
+    const originalLossUpdateBotState = lossAccountingHarness.store.updateBotState.bind(lossAccountingHarness.store);
+    lossAccountingHarness.store.updateBotState = (botId, patch) => {
+      if (Object.prototype.hasOwnProperty.call(patch, "lastExecutionAt")) {
+        lossLastExecutionWrites.push({
+          botId,
+          patch: { ...patch }
+        });
+      }
+      return originalLossUpdateBotState(botId, patch);
+    };
     clock += 1_000;
     lossAccountingHarness.bot.onMarketTick({ price: 99.95, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     if (!lossAccountingHarness.store.getPosition("bot_test")) {
@@ -637,11 +649,18 @@ function runTradingBotTests() {
     if (lossClosedState.lossStreak !== 1) {
       throw new Error(`loss close should increment loss streak exactly once: ${lossClosedState.lossStreak}`);
     }
+    if (lossLastExecutionWrites.length !== 1 || lossLastExecutionWrites[0].patch.lastExecutionAt !== clock) {
+      throw new Error(`closed trade path should write lastExecutionAt once via outcome statePatch: ${JSON.stringify(lossLastExecutionWrites)}`);
+    }
     if (lossClosedState.cooldownReason !== "loss_cooldown" || lossClosedState.cooldownUntil !== clock + 75_000) {
       throw new Error(`loss close should apply the medium-profile loss cooldown in a single state update: ${JSON.stringify(lossClosedState)}`);
     }
     if (lossClosedState.lastTradeAt !== clock || lossClosedState.lastExecutionAt !== clock || lossClosedState.entrySignalStreak !== 0 || lossClosedState.exitSignalStreak !== 0) {
       throw new Error(`loss close should update accounting and runtime state coherently on the closing tick: ${JSON.stringify(lossClosedState)}`);
+    }
+    const lossPipeline = lossAccountingHarness.store.getPipelineSnapshot("BTC/USDT");
+    if (!lossPipeline || lossPipeline.lastExecutionAt !== clock || lossPipeline.botToExecutionMs !== 0) {
+      throw new Error(`closed trade path should preserve pipeline execution metadata: ${JSON.stringify(lossPipeline)}`);
     }
 
     clock += 10_000;
@@ -1549,6 +1568,79 @@ function runTradingBotTests() {
     }
 
     clock += 10_000;
+    const architectReuseHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["no_trade"]
+    }), {
+      allowedStrategies: ["emaCross", "rsiReversion"],
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross",
+      strategySwitcher: new StrategySwitcher({
+        resolveStrategyFamily: resolveTestStrategyFamily
+      })
+    });
+    let architectReuseCalls = 0;
+    let firstArchitectState = null;
+    const originalEvaluateArchitectStateForTick = architectReuseHarness.bot.evaluateArchitectStateForTick.bind(architectReuseHarness.bot);
+    architectReuseHarness.bot.evaluateArchitectStateForTick = (...args) => {
+      architectReuseCalls += 1;
+      const result = originalEvaluateArchitectStateForTick(...args);
+      if (!firstArchitectState) {
+        firstArchitectState = result;
+      }
+      return result;
+    };
+    const architectReusePhase = architectReuseHarness.bot.applyArchitectTickPhase(
+      architectReuseHarness.bot.createTickSnapshot({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock })
+    );
+    if (architectReuseCalls !== 1) {
+      throw new Error(`flat-bot architect phase should compute architect usability once per tick: ${architectReuseCalls}`);
+    }
+    if (architectReusePhase.architectState !== firstArchitectState) {
+      throw new Error("architect phase should reuse the original architect state object when family does not change");
+    }
+    if (architectReusePhase.architectState?.currentFamily !== "trend_following" || architectReusePhase.architectState?.familyMatch !== true) {
+      throw new Error(`reused architect state should preserve family alignment when no switch occurs: ${JSON.stringify(architectReusePhase.architectState)}`);
+    }
+
+    clock += 10_000;
+    const architectSwitchHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["no_trade"]
+    }), {
+      allowedStrategies: ["emaCross", "rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross",
+      strategySwitcher: new StrategySwitcher({
+        resolveStrategyFamily: resolveTestStrategyFamily
+      })
+    });
+    let architectSwitchCalls = 0;
+    const originalSwitchEvaluate = architectSwitchHarness.bot.evaluateArchitectStateForTick.bind(architectSwitchHarness.bot);
+    architectSwitchHarness.bot.evaluateArchitectStateForTick = (...args) => {
+      architectSwitchCalls += 1;
+      return originalSwitchEvaluate(...args);
+    };
+    const architectSwitchPhase = architectSwitchHarness.bot.applyArchitectTickPhase(
+      architectSwitchHarness.bot.createTickSnapshot({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock })
+    );
+    if (architectSwitchCalls !== 1) {
+      throw new Error(`family-switch architect phase should still compute architect usability once: ${architectSwitchCalls}`);
+    }
+    if (architectSwitchHarness.store.getBotState("bot_test").activeStrategyId !== "rsiReversion") {
+      throw new Error("architect phase should still apply the published family switch on the flat-bot path");
+    }
+    if (architectSwitchPhase.architectState?.currentFamily !== "mean_reversion" || architectSwitchPhase.architectState?.familyMatch !== true) {
+      throw new Error(`returned architect state should patch currentFamily/familyMatch after a mid-tick switch: ${JSON.stringify(architectSwitchPhase.architectState)}`);
+    }
+
+    clock += 10_000;
     const unclearHarness = createHarness(() => ({
       action: "buy",
       confidence: 0.91,
@@ -2120,6 +2212,62 @@ function runTradingBotTests() {
     }
 
     clock += 10_000;
+    const singleDiagnosticsHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      initialBalanceUsdt: 20,
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    let singleDiagnosticsCalls = 0;
+    const originalSingleDiagnostics = singleDiagnosticsHarness.bot.buildEntryDiagnostics.bind(singleDiagnosticsHarness.bot);
+    singleDiagnosticsHarness.bot.buildEntryDiagnostics = (params) => {
+      singleDiagnosticsCalls += 1;
+      return originalSingleDiagnostics(params);
+    };
+    singleDiagnosticsHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    singleDiagnosticsCalls = 0;
+    clock += 1_000;
+    singleDiagnosticsHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (singleDiagnosticsCalls !== 1) {
+      throw new Error(`entry diagnostics should be built only once on the same final-gate-blocked path: ${singleDiagnosticsCalls}`);
+    }
+    const singleDiagnosticsLog = singleDiagnosticsHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.blockReason === "notional_below_minimum");
+    if (!singleDiagnosticsLog || singleDiagnosticsLog.metadata.tickTimestamp !== clock || singleDiagnosticsLog.metadata.expectedNetEdgePct === undefined) {
+      throw new Error(`single-build diagnostics path should preserve entry_evaluated metadata content: ${JSON.stringify(singleDiagnosticsLog)}`);
+    }
+
+    clock += 10_000;
+    const gateBlockedEconomicsHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      initialBalanceUsdt: 20,
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    let gateBlockedEconomicsCalls = 0;
+    const originalGateBlockedEconomics = gateBlockedEconomicsHarness.bot.estimateEntryEconomics.bind(gateBlockedEconomicsHarness.bot);
+    gateBlockedEconomicsHarness.bot.estimateEntryEconomics = (params) => {
+      gateBlockedEconomicsCalls += 1;
+      return originalGateBlockedEconomics(params);
+    };
+    gateBlockedEconomicsHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    gateBlockedEconomicsCalls = 0;
+    clock += 1_000;
+    gateBlockedEconomicsHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (gateBlockedEconomicsCalls !== 2) {
+      throw new Error(`gate-passing blocked entry path should reuse sized economics instead of recomputing it: ${gateBlockedEconomicsCalls}`);
+    }
+
+    clock += 10_000;
     const lowQuantityHarness = createHarness(() => ({
       action: "buy",
       confidence: 0.93,
@@ -2165,6 +2313,270 @@ function runTradingBotTests() {
     }
     if (openedEvaluation.metadata.publisherLastPublishedAt !== clock - 1_000 || openedEvaluation.metadata.tickTimestamp !== clock) {
       throw new Error("opened entry evaluation log missing publisher/tick timing");
+    }
+
+    clock += 10_000;
+    const executionRejectedEconomicsHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    executionRejectedEconomicsHarness.executionEngine.openLong = () => null;
+    let executionRejectedEconomicsCalls = 0;
+    const originalExecutionRejectedEconomics = executionRejectedEconomicsHarness.bot.estimateEntryEconomics.bind(executionRejectedEconomicsHarness.bot);
+    executionRejectedEconomicsHarness.bot.estimateEntryEconomics = (params) => {
+      executionRejectedEconomicsCalls += 1;
+      return originalExecutionRejectedEconomics(params);
+    };
+    executionRejectedEconomicsHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    executionRejectedEconomicsCalls = 0;
+    clock += 1_000;
+    executionRejectedEconomicsHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (executionRejectedEconomicsCalls !== 2) {
+      throw new Error(`execution-rejected entry path should reuse sized economics instead of recomputing it: ${executionRejectedEconomicsCalls}`);
+    }
+    if (!executionRejectedEconomicsHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.blockReason === "execution_open_rejected")) {
+      throw new Error("execution-rejected path should preserve existing blocked outcome semantics");
+    }
+
+    clock += 10_000;
+    const compactDedupDiagnosticsHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      initialBalanceUsdt: 20,
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    let compactDedupDiagnosticsCalls = 0;
+    const originalCompactDedupDiagnostics = compactDedupDiagnosticsHarness.bot.buildEntryDiagnostics.bind(compactDedupDiagnosticsHarness.bot);
+    compactDedupDiagnosticsHarness.bot.buildEntryDiagnostics = (params) => {
+      compactDedupDiagnosticsCalls += 1;
+      return originalCompactDedupDiagnostics(params);
+    };
+    const compactDedupTick = { price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock };
+    const compactDedupRuntimeState = compactDedupDiagnosticsHarness.store.getBotState("bot_test");
+    const compactDedupContextSnapshot = compactDedupDiagnosticsHarness.store.getContextSnapshot("BTC/USDT");
+    const compactDedupArchitectState = compactDedupDiagnosticsHarness.bot.evaluateArchitectUsability({
+      architect: compactDedupDiagnosticsHarness.store.getArchitectPublishedAssessment("BTC/USDT"),
+      contextSnapshot: compactDedupContextSnapshot,
+      currentFamily: compactDedupDiagnosticsHarness.bot.deps.strategySwitcher.getStrategyFamily(compactDedupDiagnosticsHarness.bot.strategy.id),
+      publisher: compactDedupDiagnosticsHarness.store.getArchitectPublisherState("BTC/USDT"),
+      timestamp: compactDedupTick.timestamp
+    });
+    const compactDedupContext = compactDedupDiagnosticsHarness.bot.buildContext(compactDedupTick, {
+      performance: compactDedupDiagnosticsHarness.store.getPerformance("bot_test"),
+      position: null
+    });
+    const compactDedupEconomics = compactDedupDiagnosticsHarness.bot.estimateEntryEconomics({
+      context: compactDedupContext,
+      price: compactDedupTick.price,
+      quantity: 0.02
+    });
+    const compactDedupProfile = compactDedupDiagnosticsHarness.bot.deps.riskManager.getProfile(
+      compactDedupDiagnosticsHarness.bot.config.riskProfile,
+      compactDedupDiagnosticsHarness.bot.config.riskOverrides || null
+    );
+    process.env.LOG_TYPE = "minimal";
+    compactDedupDiagnosticsHarness.bot.logEntryEvaluation({
+      architectState: compactDedupArchitectState,
+      blockReason: "notional_below_minimum",
+      context: compactDedupContext,
+      contextSnapshot: compactDedupContextSnapshot,
+      decision: {
+        action: "buy",
+        confidence: 0.93,
+        reason: ["buy_signal"]
+      },
+      economics: compactDedupEconomics,
+      outcome: "blocked",
+      profile: compactDedupProfile,
+      quantity: 0.02,
+      signalEvaluated: true,
+      state: compactDedupRuntimeState,
+      strategyId: compactDedupDiagnosticsHarness.bot.strategy.id,
+      tick: compactDedupTick
+    });
+    compactDedupDiagnosticsCalls = 0;
+    compactDedupDiagnosticsHarness.bot.logEntryEvaluation({
+      architectState: compactDedupArchitectState,
+      blockReason: "notional_below_minimum",
+      context: compactDedupContext,
+      contextSnapshot: compactDedupContextSnapshot,
+      decision: {
+        action: "buy",
+        confidence: 0.93,
+        reason: ["buy_signal"]
+      },
+      economics: compactDedupEconomics,
+      outcome: "blocked",
+      profile: compactDedupProfile,
+      quantity: 0.02,
+      signalEvaluated: true,
+      state: compactDedupRuntimeState,
+      strategyId: compactDedupDiagnosticsHarness.bot.strategy.id,
+      tick: compactDedupTick
+    });
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
+    if (compactDedupDiagnosticsCalls !== 0) {
+      throw new Error(`compact deduped entry evaluation should skip full diagnostics construction: ${compactDedupDiagnosticsCalls}`);
+    }
+    const compactBlockedChanges = compactDedupDiagnosticsHarness.botLogs.filter((entry) =>
+      entry.message === "BLOCK_CHANGE"
+      && entry.metadata.blockReason === "notional_below_minimum"
+    );
+    if (compactBlockedChanges.length !== 1) {
+      throw new Error(`compact deduped path should preserve existing BLOCK_CHANGE dedupe semantics: ${JSON.stringify(compactBlockedChanges)}`);
+    }
+
+    clock += 10_000;
+    const openedEconomicsHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      })
+    });
+    let openedEconomicsCalls = 0;
+    const originalOpenedEconomics = openedEconomicsHarness.bot.estimateEntryEconomics.bind(openedEconomicsHarness.bot);
+    openedEconomicsHarness.bot.estimateEntryEconomics = (params) => {
+      openedEconomicsCalls += 1;
+      return originalOpenedEconomics(params);
+    };
+    openedEconomicsHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    openedEconomicsCalls = 0;
+    clock += 1_000;
+    const openedLastExecutionWrites = [];
+    const originalOpenedUpdateBotState = openedEconomicsHarness.store.updateBotState.bind(openedEconomicsHarness.store);
+    openedEconomicsHarness.store.updateBotState = (botId, patch) => {
+      if (Object.prototype.hasOwnProperty.call(patch, "lastExecutionAt")) {
+        openedLastExecutionWrites.push({
+          botId,
+          patch: { ...patch }
+        });
+      }
+      return originalOpenedUpdateBotState(botId, patch);
+    };
+    openedEconomicsHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (openedEconomicsCalls !== 2) {
+      throw new Error(`opened entry path should reuse sized economics instead of recomputing it: ${openedEconomicsCalls}`);
+    }
+    if (!openedEconomicsHarness.store.getPosition("bot_test")) {
+      throw new Error("opened entry path should preserve normal open behavior after economics reuse");
+    }
+    if (openedLastExecutionWrites.length !== 1 || openedLastExecutionWrites[0].patch.lastExecutionAt !== clock) {
+      throw new Error(`opened entry path should write lastExecutionAt once via outcome statePatch: ${JSON.stringify(openedLastExecutionWrites)}`);
+    }
+    const openedState = openedEconomicsHarness.store.getBotState("bot_test");
+    if (openedState.lastExecutionAt !== clock || openedState.lastTradeAt !== clock) {
+      throw new Error(`opened entry path should preserve runtime execution timestamps: ${JSON.stringify(openedState)}`);
+    }
+    const openedPipeline = openedEconomicsHarness.store.getPipelineSnapshot("BTC/USDT");
+    if (!openedPipeline || openedPipeline.lastExecutionAt !== clock || openedPipeline.botToExecutionMs !== 0) {
+      throw new Error(`opened entry path should preserve pipeline execution metadata: ${JSON.stringify(openedPipeline)}`);
+    }
+
+    clock += 10_000;
+    const dedupDiagnosticsHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.52,
+      reason: ["neutral_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    let dedupDiagnosticsCalls = 0;
+    const originalDedupDiagnostics = dedupDiagnosticsHarness.bot.buildEntryDiagnostics.bind(dedupDiagnosticsHarness.bot);
+    dedupDiagnosticsHarness.bot.buildEntryDiagnostics = (params) => {
+      dedupDiagnosticsCalls += 1;
+      return originalDedupDiagnostics(params);
+    };
+    const dedupTick = { price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock };
+    const dedupRuntimeState = dedupDiagnosticsHarness.store.getBotState("bot_test");
+    const dedupContextSnapshot = dedupDiagnosticsHarness.store.getContextSnapshot("BTC/USDT");
+    const dedupArchitectState = dedupDiagnosticsHarness.bot.evaluateArchitectUsability({
+      architect: dedupDiagnosticsHarness.store.getArchitectPublishedAssessment("BTC/USDT"),
+      contextSnapshot: dedupContextSnapshot,
+      currentFamily: dedupDiagnosticsHarness.bot.deps.strategySwitcher.getStrategyFamily(dedupDiagnosticsHarness.bot.strategy.id),
+      publisher: dedupDiagnosticsHarness.store.getArchitectPublisherState("BTC/USDT"),
+      timestamp: dedupTick.timestamp
+    });
+    const dedupContext = dedupDiagnosticsHarness.bot.buildContext(dedupTick, {
+      performance: dedupDiagnosticsHarness.store.getPerformance("bot_test"),
+      position: null
+    });
+    const dedupEconomics = dedupDiagnosticsHarness.bot.estimateEntryEconomics({
+      context: dedupContext,
+      price: dedupTick.price,
+      quantity: null
+    });
+    const dedupProfile = dedupDiagnosticsHarness.bot.deps.riskManager.getProfile(
+      dedupDiagnosticsHarness.bot.config.riskProfile,
+      dedupDiagnosticsHarness.bot.config.riskOverrides || null
+    );
+    process.env.LOG_TYPE = "verbose";
+    dedupDiagnosticsHarness.bot.logEntryEvaluation({
+      architectState: dedupArchitectState,
+      context: dedupContext,
+      contextSnapshot: dedupContextSnapshot,
+      decision: {
+        action: "hold",
+        confidence: 0.52,
+        reason: ["neutral_signal"]
+      },
+      economics: dedupEconomics,
+      outcome: "skipped",
+      profile: dedupProfile,
+      quantity: null,
+      signalEvaluated: true,
+      state: dedupRuntimeState,
+      strategyId: dedupDiagnosticsHarness.bot.strategy.id,
+      tick: dedupTick
+    });
+    dedupDiagnosticsHarness.bot.logEntryEvaluation({
+      architectState: dedupArchitectState,
+      context: dedupContext,
+      contextSnapshot: dedupContextSnapshot,
+      decision: {
+        action: "hold",
+        confidence: 0.52,
+        reason: ["neutral_signal"]
+      },
+      economics: dedupEconomics,
+      outcome: "skipped",
+      profile: dedupProfile,
+      quantity: null,
+      signalEvaluated: true,
+      state: dedupRuntimeState,
+      strategyId: dedupDiagnosticsHarness.bot.strategy.id,
+      tick: dedupTick
+    });
+    if (originalLogType === undefined) {
+      delete process.env.LOG_TYPE;
+    } else {
+      process.env.LOG_TYPE = originalLogType;
+    }
+    if (dedupDiagnosticsCalls !== 1) {
+      throw new Error(`deduped verbose entry evaluation should skip rebuilding diagnostics on unchanged repeats: ${dedupDiagnosticsCalls}`);
+    }
+    if (dedupDiagnosticsHarness.botLogs.filter((entry) => entry.message === "entry_evaluated").length !== 1) {
+      throw new Error("deduped verbose entry evaluation should preserve single-log behavior");
     }
 
     clock += 10_000;

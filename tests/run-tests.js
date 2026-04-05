@@ -6,6 +6,7 @@ const { runArchitectServiceTests } = require("./architectService.test");
 const { runArchitectCoordinatorTests } = require("./architectCoordinator.test");
 const { runBotArchitectTests } = require("./botArchitect.test");
 const { runConfigLoaderTests } = require("./configLoader.test");
+const { runContextBuilderTests } = require("./contextBuilder.test");
 const { runContextServiceTests } = require("./contextService.test");
 const { runEntryCoordinatorTests } = require("./entryCoordinator.test");
 const { runEntryOutcomeCoordinatorTests } = require("./entryOutcomeCoordinator.test");
@@ -21,6 +22,7 @@ const { runPostLossArchitectLatchTests } = require("./postLossArchitectLatch.tes
 const { runPositionLifecycleManagerTests } = require("./positionLifecycleManager.test");
 const { runRiskManagerTests } = require("./riskManager.test");
 const { runRecoveryTargetResolverTests } = require("./recoveryTargetResolver.test");
+const { runRegimeDetectorTests } = require("./regimeDetector.test");
 const { runSystemServerTests } = require("./systemServer.test");
 const { runServerTests } = require("./server.test");
 const { runTradeConstraintsTests } = require("./tradeConstraints.test");
@@ -33,6 +35,7 @@ const { runUserStreamTests } = require("./userStream.test");
 const { runWsManagerTests } = require("./wsManager.test");
 const { runMarketStreamTests } = require("./marketStream.test");
 const { runManagedRecoveryExitResolverTests } = require("./managedRecoveryExitResolver.test");
+const { runTradingBotTelemetryTests } = require("./tradingBotTelemetry.test");
 
 async function main() {
   const tests = [
@@ -42,6 +45,7 @@ async function main() {
     { name: "backtest", run: async () => runBacktestTests() },
     { name: "botArchitect", run: async () => runBotArchitectTests() },
     { name: "configLoader", run: async () => runConfigLoaderTests() },
+    { name: "contextBuilder", run: async () => runContextBuilderTests() },
     { name: "contextService", run: async () => runContextServiceTests() },
     { name: "entryCoordinator", run: async () => runEntryCoordinatorTests() },
     { name: "entryOutcomeCoordinator", run: async () => runEntryOutcomeCoordinatorTests() },
@@ -58,10 +62,12 @@ async function main() {
     { name: "positionLifecycleManager", run: async () => runPositionLifecycleManagerTests() },
     { name: "riskManager", run: async () => runRiskManagerTests() },
     { name: "recoveryTargetResolver", run: async () => runRecoveryTargetResolverTests() },
+    { name: "regimeDetector", run: async () => runRegimeDetectorTests() },
     { name: "stateStore", run: async () => runStateStoreTests() },
     { name: "strategy", run: async () => runStrategyTests() },
     { name: "strategySwitcher", run: async () => runStrategySwitcherTests() },
     { name: "tradeConstraints", run: async () => runTradeConstraintsTests() },
+    { name: "tradingBotTelemetry", run: async () => runTradingBotTelemetryTests() },
     { name: "tradingBot", run: async () => runTradingBotTests() },
     { name: "userStream", run: async () => runUserStreamTests() },
     { name: "wsManager", run: async () => runWsManagerTests() },

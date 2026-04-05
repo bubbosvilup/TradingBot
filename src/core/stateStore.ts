@@ -451,10 +451,17 @@ class StateStore {
     this.pipelineBySymbol.set(symbol, next);
   }
 
-  recordExecution(botId: string, symbol: string, executedAt: number) {
-    this.updateBotState(botId, {
-      lastExecutionAt: executedAt
-    });
+  recordExecution(
+    botId: string,
+    symbol: string,
+    executedAt: number,
+    options?: { skipBotStateWrite?: boolean }
+  ) {
+    if (!options?.skipBotStateWrite) {
+      this.updateBotState(botId, {
+        lastExecutionAt: executedAt
+      });
+    }
     const current = this.pipelineBySymbol.get(symbol) || this.createPipelineSnapshot(symbol);
     const next = {
       ...current,

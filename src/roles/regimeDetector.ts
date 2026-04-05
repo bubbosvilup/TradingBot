@@ -10,9 +10,13 @@ class RegimeDetector {
     const start = prices[Math.max(0, prices.length - 20)];
     const end = prices[prices.length - 1];
     const slope = start > 0 ? ((end - start) / start) * 100 : 0;
-    const window = prices.slice(-20);
-    const max = Math.max(...window);
-    const min = Math.min(...window);
+    let max = prices[prices.length - 20];
+    let min = max;
+    for (let index = Math.max(0, prices.length - 20); index < prices.length; index += 1) {
+      const price = prices[index];
+      if (price > max) max = price;
+      if (price < min) min = price;
+    }
     const rangePct = min > 0 ? ((max - min) / min) * 100 : 0;
 
     if (slope > 1.2) return "trend";

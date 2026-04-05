@@ -116,6 +116,10 @@ type TradingTickDecisionContext = Readonly<TradingTickArchitectContext & {
   signalState: any;
 }>;
 
+type FinalEntryGateEvaluationResult = EntryGateResult & {
+  economics: EntryEconomicsEstimate;
+};
+
 class TradingBot extends BaseBot {
   strategy: Strategy;
   allowedStrategies: string[];
@@ -377,7 +381,49 @@ class TradingBot extends BaseBot {
     strategyId: string;
     tick: MarketTick;
   }) {
-    const baseDiagnostics = this.buildEntryDiagnostics({
+    const logAt = Number.isFinite(Number(params.tick?.timestamp)) ? Number(params.tick.timestamp) : now();
+    const logKey = this.telemetry.buildEntryEvaluationLogKey({
+      allowReason: params.allowReason || null,
+      architectUsable: params.architectState?.usable,
+      blockReason: params.blockReason || null,
+      decisionAction: params.decision?.action || "not_evaluated",
+      outcome: params.outcome,
+      signalEvaluated: params.signalEvaluated !== false,
+      skipReason: params.skipReason || null
+    });
+    const shouldLog = this.lastEntryEvaluationLogKey !== logKey
+      || this.lastEntryEvaluationLogAt === null
+      || (logAt - this.lastEntryEvaluationLogAt) >= this.entryEvaluationLogSampleMs;
+    const compactLoggingActive = this.getLogType() !== "verbose";
+
+    this.recordEntryEvaluationCounters(params.outcome, shouldLog);
+    if (!compactLoggingActive && !shouldLog) {
+      return;
+    }
+
+    if (compactLoggingActive && !shouldLog) {
+      const compactMetadata = this.telemetry.buildCompactEntryMetadata({
+        allowReason: params.allowReason,
+        architectState: params.architectState,
+        blockReason: params.blockReason,
+        context: params.context,
+        decision: params.decision,
+        economics: params.economics,
+        outcome: params.outcome,
+        profile: params.profile,
+        quantity: params.quantity,
+        riskGate: params.riskGate,
+        signalState: params.signalState,
+        state: params.state,
+        strategyId: params.strategyId,
+        tick: params.tick
+      });
+      this.emitCompactDescriptor(this.telemetry.maybeBuildCompactSetupDescriptor(compactMetadata, this.strategy.id));
+      this.emitCompactDescriptor(this.telemetry.maybeBuildCompactBlockChangeDescriptor(compactMetadata, this.strategy.id));
+      return;
+    }
+
+    const diagnostics = params.diagnostics || this.buildEntryDiagnostics({
       architectState: params.architectState,
       context: params.context,
       contextSnapshot: params.contextSnapshot,
@@ -392,9 +438,6 @@ class TradingBot extends BaseBot {
       strategyId: params.strategyId,
       tick: params.tick
     });
-    const diagnostics = params.diagnostics
-      ? { ...baseDiagnostics, ...params.diagnostics }
-      : baseDiagnostics;
     const metadata = this.telemetry.buildEntryEvaluationMetadata({
       allowReason: params.allowReason,
       blockReason: params.blockReason,
@@ -405,13 +448,6 @@ class TradingBot extends BaseBot {
     });
     this.emitCompactDescriptor(this.telemetry.maybeBuildCompactSetupDescriptor(metadata, this.strategy.id));
     this.emitCompactDescriptor(this.telemetry.maybeBuildCompactBlockChangeDescriptor(metadata, this.strategy.id));
-    const logAt = Number.isFinite(Number(params.tick?.timestamp)) ? Number(params.tick.timestamp) : now();
-    const logKey = this.telemetry.buildEntryEvaluationLogKey(metadata);
-    const shouldLog = this.lastEntryEvaluationLogKey !== logKey
-      || this.lastEntryEvaluationLogAt === null
-      || (logAt - this.lastEntryEvaluationLogAt) >= this.entryEvaluationLogSampleMs;
-
-    this.recordEntryEvaluationCounters(params.outcome, shouldLog);
     if (!shouldLog) {
       return;
     }
@@ -436,7 +472,9 @@ class TradingBot extends BaseBot {
       this.deps.store.updateBotState(this.config.id, outcome.statePatch);
     }
     if (Number.isFinite(Number(outcome.recordExecutionAt))) {
-      this.deps.store.recordExecution(this.config.id, this.config.symbol, Number(outcome.recordExecutionAt));
+      this.deps.store.recordExecution(this.config.id, this.config.symbol, Number(outcome.recordExecutionAt), {
+        skipBotStateWrite: true
+      });
     }
     if (outcome.entryOpenedMetadata) {
       this.deps.logger.bot(this.config, "entry_opened", outcome.entryOpenedMetadata);
@@ -461,7 +499,9 @@ class TradingBot extends BaseBot {
       this.deps.logger.bot(this.config, "managed_recovery_exited", outcome.managedRecoveryExitedLogMetadata);
     }
     this.logCompactSell(outcome.compactSellMetadata);
-    this.deps.store.recordExecution(this.config.id, this.config.symbol, outcome.recordExecutionAt);
+    this.deps.store.recordExecution(this.config.id, this.config.symbol, outcome.recordExecutionAt, {
+      skipBotStateWrite: true
+    });
   }
 
   ensureCooldownState(timestamp: number) {
@@ -960,7 +1000,7 @@ class TradingBot extends BaseBot {
     quantity: number;
     state?: any;
     tick: MarketTick;
-  }): EntryGateResult {
+  }): FinalEntryGateEvaluationResult {
     const contextSnapshot = params.contextSnapshot !== undefined
       ? params.contextSnapshot
       : this.deps.store.getContextSnapshot(this.config.symbol);
@@ -996,12 +1036,12 @@ class TradingBot extends BaseBot {
       tick: params.tick
     });
     if (tradeConstraintValidation.belowMinNotional) {
-      return { allowed: false, diagnostics: { ...diagnostics, blockReason: "notional_below_minimum" } };
+      return { allowed: false, diagnostics: { ...diagnostics, blockReason: "notional_below_minimum" }, economics };
     }
     if (tradeConstraintValidation.belowMinQuantity) {
-      return { allowed: false, diagnostics: { ...diagnostics, blockReason: "quantity_below_minimum" } };
+      return { allowed: false, diagnostics: { ...diagnostics, blockReason: "quantity_below_minimum" }, economics };
     }
-    return this.entryCoordinator.evaluateFinalGate({
+    const gateResult = this.entryCoordinator.evaluateFinalGate({
       architectState,
       diagnostics,
       economics,
@@ -1012,6 +1052,10 @@ class TradingBot extends BaseBot {
         minQuantity: 0
       }
     });
+    return {
+      ...gateResult,
+      economics
+    };
   }
 
   createTickSnapshot(tick: MarketTick, overrides: Partial<TradingTickSnapshot> = {}): TradingTickSnapshot {
@@ -1056,6 +1100,24 @@ class TradingBot extends BaseBot {
     });
   }
 
+  patchArchitectStateFamily(
+    architectState: ArchitectUsabilityState | null,
+    currentFamily: ArchitectUsabilityState["currentFamily"]
+  ) {
+    if (!architectState) {
+      return null;
+    }
+    if (architectState.currentFamily === currentFamily) {
+      return architectState;
+    }
+    const actionableFamily = architectState.actionableFamily;
+    return {
+      ...architectState,
+      currentFamily,
+      familyMatch: actionableFamily ? currentFamily === actionableFamily : null
+    };
+  }
+
   applyArchitectTickPhase(snapshot: TradingTickSnapshot): TradingTickArchitectContext {
     const architectState = !snapshot.position
       ? this.evaluateArchitectStateForTick(snapshot, snapshot.tick.timestamp)
@@ -1080,7 +1142,10 @@ class TradingBot extends BaseBot {
     return Object.freeze({
       ...nextSnapshot,
       architectState: !nextSnapshot.position
-        ? this.evaluateArchitectStateForTick(nextSnapshot, snapshot.tick.timestamp)
+        ? this.patchArchitectStateFamily(
+            architectState,
+            nextSnapshot.currentFamily
+          )
         : null
     });
   }
@@ -1233,11 +1298,7 @@ class TradingBot extends BaseBot {
           contextSnapshot: snapshot.contextSnapshot,
           decision: snapshot.decision,
           diagnostics: finalEntryGate.diagnostics,
-          economics: this.estimateEntryEconomics({
-            context: snapshot.context,
-            price: snapshot.tick.price,
-            quantity: sizing.quantity
-          }),
+          economics: finalEntryGate.economics,
           profile: snapshot.profile,
           quantity: sizing.quantity,
           riskGate,
@@ -1274,11 +1335,7 @@ class TradingBot extends BaseBot {
           contextSnapshot: snapshot.contextSnapshot,
           decision: snapshot.decision,
           diagnostics: executionDiagnostics,
-          economics: this.estimateEntryEconomics({
-            context: snapshot.context,
-            price: snapshot.tick.price,
-            quantity: sizing.quantity
-          }),
+          economics: finalEntryGate.economics,
           profile: snapshot.profile,
           quantity: sizing.quantity,
           riskGate,
@@ -1297,11 +1354,7 @@ class TradingBot extends BaseBot {
         contextSnapshot: snapshot.contextSnapshot,
         decision: snapshot.decision,
         diagnostics: finalEntryGate.diagnostics,
-        economics: this.estimateEntryEconomics({
-          context: snapshot.context,
-          price: snapshot.tick.price,
-          quantity: sizing.quantity
-        }),
+        economics: finalEntryGate.economics,
         openedAt: opened.openedAt,
         openedQuantity: opened.quantity,
         profile: snapshot.profile,
