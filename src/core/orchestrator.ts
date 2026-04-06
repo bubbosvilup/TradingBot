@@ -23,6 +23,7 @@ const { StateStore } = require("./stateStore.ts");
 const { createLogger } = require("../utils/logger.ts");
 const { resolveFeeRateFromEnv } = require("../utils/executionConfig.ts");
 const { formatDuration, now, sleep } = require("../utils/time.ts");
+const { ExperimentReporter } = require("./experimentReporter.ts");
 
 function parseArgs(argv: string[]) {
   const args = new Map<string, string>();
@@ -79,6 +80,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
   const configLoader = new ConfigLoader();
   const botConfig = configLoader.loadBotsConfig();
+  const loggingMode = String(botConfig.loggingMode || process.env.LOGGING_MODE || process.env.LOG_TYPE || "normal").trim().replace(/^["']|["']$/g, "").toLowerCase();
+  const isSilent = loggingMode === "silent";
   const marketModeSource = cliArgs.marketMode
     ? "cli"
     : process.env.MARKET_MODE
@@ -208,29 +211,54 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   }
 
   userStream.subscribe((payload: any) => {
-    logger.info("user_stream_event", {
-      botId: payload.order?.botId || "n/a",
-      side: payload.order?.side || "n/a",
-      symbol: payload.order?.symbol || "n/a",
-      type: payload.type || "unknown"
-    });
+    if (!isSilent) {
+      logger.info("user_stream_event", {
+        botId: payload.order?.botId || "n/a",
+        side: payload.order?.side || "n/a",
+        symbol: payload.order?.symbol || "n/a",
+        type: payload.type || "unknown"
+      });
+    }
   });
 
-  logger.info("system_ready", {
-    bots: enabledBots.length,
-    executionMode,
-    feeRate: executionFee.feeRate,
-    feeRateBps: executionFee.feeBps,
-    feeRateSource: executionFee.source,
-    executionSafety: simulatedExecutionOnly ? "simulated_only" : "exchange_execution_enabled",
-    marketMode,
-    marketModeSource,
-    requestedExecutionMode,
-    requestedExecutionModeSource: executionModeSource,
-    strategies: strategyRegistry.listStrategyIds().join(",")
+  if (!isSilent) {
+    logger.info("system_ready", {
+      bots: enabledBots.length,
+      executionMode,
+      feeRate: executionFee.feeRate,
+      feeRateBps: executionFee.feeBps,
+      feeRateSource: executionFee.source,
+      executionSafety: simulatedExecutionOnly ? "simulated_only" : "exchange_execution_enabled",
+      marketMode,
+      marketModeSource,
+      requestedExecutionMode,
+      requestedExecutionModeSource: executionModeSource,
+      strategies: strategyRegistry.listStrategyIds().join(",")
+    });
+  }
+
+  const experimentConfig = botConfig.experimentMetrics || {};
+  const experimentReporter = new ExperimentReporter({
+    logger: logger.child("experiment"),
+    store,
+    config: {
+      enabled: Boolean(experimentConfig.enabled),
+      label: String(experimentConfig.label || "").trim() || "experiment",
+      summaryIntervalMs: Math.max(Number(experimentConfig.summaryIntervalMs) || 60_000, 10_000)
+    },
+    loggingMode
   });
+
+  if (experimentReporter.isEnabled() && !isSilent) {
+    logger.info("experiment_enabled", {
+      label: experimentReporter.getLabel(),
+      summaryIntervalMs: experimentReporter.getSummaryIntervalMs()
+    });
+  }
 
   let stopped = false;
+  let finalReportWritten = false;
+  let lastExperimentCheckpointAt = startedAt;
   let userStreamStopPromise: Promise<void> | null = null;
   let gracefulStopPromise: Promise<void> | null = null;
   const stop = () => {
@@ -245,7 +273,16 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       systemServer.stop();
     }
     wsManager.closeAll();
-    logger.info("system_stopped");
+    if (!isSilent) {
+      logger.info("system_stopped");
+    }
+  };
+
+  const writeFinalReport = () => {
+    if (experimentReporter.isEnabled() && !finalReportWritten) {
+      finalReportWritten = true;
+      experimentReporter.logFinalSummary();
+    }
   };
 
   const stopGracefully = async () => {
@@ -253,12 +290,20 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     stop();
     gracefulStopPromise = (async () => {
       await (userStreamStopPromise || Promise.resolve());
+      // Write final report AFTER shutdown completes
+      writeFinalReport();
+      // Small delay to ensure file is flushed before process.exit
+      await new Promise((resolve) => setTimeout(resolve, 200));
     })();
     return gracefulStopPromise;
   };
 
+  const handleShutdown = async () => {
+    await stopGracefully();
+  };
+
   process.on("SIGINT", () => {
-    stopGracefully()
+    handleShutdown()
       .then(() => {
         process.exit(0);
       })
@@ -268,7 +313,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       });
   });
   process.on("SIGTERM", () => {
-    stopGracefully()
+    handleShutdown()
       .then(() => {
         process.exit(0);
       })
@@ -276,6 +321,12 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
         console.error(error);
         process.exit(1);
       });
+  });
+  // Fallback: write report on any exit path
+  process.on("beforeExit", () => {
+    if (experimentReporter.isEnabled()) {
+      writeFinalReport();
+    }
   });
 
   while (!stopped) {
@@ -292,19 +343,31 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       + ` skipped=${bot.entrySkippedCount || 0}`
       + ` opened=${bot.entryOpenedCount || 0}`
     )).join("; ");
-    logger.info("heartbeat", {
-      botsRunning: runningBots.length,
-      botSummaries,
-      latestPrices: latestPricesSummary,
-      openPositions: snapshot.openPositions.length,
-      pendingBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "pending").length,
-      syncedBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "synced").length,
-      waitingFlatBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "waiting_flat").length
-    });
+    if (!isSilent) {
+      logger.info("heartbeat", {
+        botsRunning: runningBots.length,
+        botSummaries,
+        latestPrices: latestPricesSummary,
+        openPositions: snapshot.openPositions.length,
+        pendingBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "pending").length,
+        syncedBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "synced").length,
+        waitingFlatBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "waiting_flat").length
+      });
+    }
 
     if (cli.durationMs && now() - startedAt >= cli.durationMs) {
-      logger.info("duration_reached", { duration: formatDuration(now() - startedAt) });
+      if (!isSilent) {
+        logger.info("duration_reached", { duration: formatDuration(now() - startedAt) });
+      }
       break;
+    }
+
+    if (experimentReporter.isEnabled() && (now() - lastExperimentCheckpointAt) >= experimentReporter.getSummaryIntervalMs()) {
+      lastExperimentCheckpointAt = now();
+      experimentReporter.writeCheckpoint();
+      if (!isSilent) {
+        experimentReporter.logSummary();
+      }
     }
 
     await sleep(cli.summaryEveryMs);

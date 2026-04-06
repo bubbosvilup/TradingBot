@@ -12,6 +12,7 @@ const { runEntryCoordinatorTests } = require("./entryCoordinator.test");
 const { runEntryOutcomeCoordinatorTests } = require("./entryOutcomeCoordinator.test");
 const { runExitDecisionCoordinatorTests } = require("./exitDecisionCoordinator.test");
 const { runExecutionEngineTests } = require("./executionEngine.test");
+const { runExperimentReporterTests } = require("./experimentReporter.test");
 const { runExitOutcomeCoordinatorTests } = require("./exitOutcomeCoordinator.test");
 const { runExitPolicyRegistryTests } = require("./exitPolicyRegistry.test");
 const { runExitLifecycleReportTests } = require("./exitLifecycleReport.test");
@@ -51,6 +52,7 @@ async function main() {
     { name: "entryOutcomeCoordinator", run: async () => runEntryOutcomeCoordinatorTests() },
     { name: "exitDecisionCoordinator", run: async () => runExitDecisionCoordinatorTests() },
     { name: "executionEngine", run: async () => runExecutionEngineTests() },
+    { name: "experimentReporter", run: async () => runExperimentReporterTests() },
     { name: "exitOutcomeCoordinator", run: async () => runExitOutcomeCoordinatorTests() },
     { name: "exitLifecycleReport", run: async () => runExitLifecycleReportTests() },
     { name: "exitPolicyRegistry", run: async () => runExitPolicyRegistryTests() },

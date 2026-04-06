@@ -1,0 +1,2 @@
+label=allow_small_loss_floor05 | elapsedMs=1381718 | totalNetPnl=-1.85 | closedTradesCount=14 | avgNetPnl=-0.1321 | winRate=0.1429 | profitFactor=0.0255 | entryOpened=14 | entryBlocked=2909 | entrySkipped=2342
+managedRecoveryEntries=0 | exitManagedRecoveryTimeout=13 | exitManagedRecoveryTarget=0 | exitManagedRecoveryInvalidation=0 | exitManagedRecoveryProtection=0 | exitManagedRecoveryOther=0 | exitNormal=1 | exitProtectiveStop=0 | totalAccountedExits=14 | avgHoldPipelineMs=0.7875 | reconciliationError=0

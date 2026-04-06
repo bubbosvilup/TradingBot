@@ -19,7 +19,7 @@ const RSI_REVERSION_PRO: ExitPolicy = {
   recovery: {
     targetOffsetPct: 0.015,
     targetSource: "emaSlow",
-    timeoutMs: 120_000
+    timeoutMs: 30_000
   }
 };
 

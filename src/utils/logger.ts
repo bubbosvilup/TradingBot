@@ -2,7 +2,7 @@
 
 import type { BotConfig } from "../types/bot.ts";
 
-type LogType = "verbose" | "minimal" | "only_trades" | "strategy_debug";
+type LogType = "verbose" | "minimal" | "only_trades" | "strategy_debug" | "silent";
 type LogCategory =
   | "startup"
   | "architect_change"
@@ -18,11 +18,12 @@ type LogCategory =
   | "evaluation"
   | "heartbeat"
   | "ws_flow"
+  | "experiment_summary"
   | "other";
 
 function resolveLogType(value?: string | null): LogType {
-  const normalized = String(value || process.env.LOG_TYPE || "verbose").trim().toLowerCase();
-  if (normalized === "minimal" || normalized === "only_trades" || normalized === "strategy_debug") {
+  const normalized = String(value || process.env.LOG_TYPE || "verbose").trim().replace(/^["']|["']$/g, "").toLowerCase();
+  if (normalized === "minimal" || normalized === "only_trades" || normalized === "strategy_debug" || normalized === "silent") {
     return normalized;
   }
   return "verbose";
@@ -53,6 +54,9 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
   if (message === "stopped" || message === "system_stopped" || message === "duration_reached") {
     return "shutdown";
   }
+  if (message === "experiment_enabled") {
+    return "startup";
+  }
   if (message === "cooldown_started" || message === "cooldown_ended") {
     return "cooldown";
   }
@@ -64,6 +68,9 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
   }
   if (message === "tick_pipeline_latency" || message === "tick_pipeline_latency_high") {
     return "evaluation";
+  }
+  if (message === "experiment_summary" || message === "experiment_final_summary") {
+    return "experiment_summary";
   }
   if (message === "architect_published") {
     return "architect_change";
@@ -80,13 +87,53 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
 
 function shouldLog(logType: LogType, category: LogCategory) {
   if (logType === "verbose") return true;
+  if (logType === "silent") return false;
 
-  const categorySets: Record<Exclude<LogType, "verbose">, Set<LogCategory>> = {
-    minimal: new Set(["startup", "architect_change", "blocked", "cooldown", "risk_change", "trade_open", "trade_close", "shutdown", "warning", "error"]),
+  const categorySets: Record<Exclude<LogType, "verbose" | "silent">, Set<LogCategory>> = {
+    minimal: new Set(["startup", "architect_change", "blocked", "cooldown", "risk_change", "trade_open", "trade_close", "shutdown", "warning", "error", "experiment_summary"]),
     only_trades: new Set(["trade_open", "trade_close", "warning", "error"]),
     strategy_debug: new Set(["setup", "blocked", "risk_change", "architect_change", "trade_open", "trade_close", "warning", "error"])
   };
   return categorySets[logType].has(category);
+}
+
+// Noisy message patterns that should be deduplicated/throttled in minimal mode.
+const NOISY_MESSAGES = new Set([
+  "BLOCK_CHANGE",
+  "entry_blocked",
+  "managed_recovery_updated",
+  "architect_published"
+]);
+
+const DEDUPE_WINDOW_MS = 15_000; // suppress identical noisy messages within 15s
+const lastNoisyEmit = new Map<string, number>();
+
+function makeDedupeKey(message: string, metadata?: Record<string, unknown>): string {
+  if (message === "BLOCK_CHANGE") {
+    return `BLOCK_CHANGE|${metadata?.botId || ""}|${metadata?.reason || ""}`;
+  }
+  if (message === "entry_blocked") {
+    return `entry_blocked|${metadata?.botId || ""}|${metadata?.reason || ""}`;
+  }
+  if (message === "managed_recovery_updated") {
+    return `managed_recovery_updated|${metadata?.botId || ""}|${metadata?.status || ""}`;
+  }
+  if (message === "architect_published") {
+    return `architect_published|${metadata?.botId || ""}|${metadata?.strategy || ""}`;
+  }
+  return `${message}|${JSON.stringify(metadata || {})}`;
+}
+
+function shouldSuppressNoisy(message: string, metadata?: Record<string, unknown>): boolean {
+  if (!NOISY_MESSAGES.has(message)) return false;
+  const key = makeDedupeKey(message, metadata);
+  const last = lastNoisyEmit.get(key) || 0;
+  return (Date.now() - last) < DEDUPE_WINDOW_MS;
+}
+
+function recordNoisyEmit(message: string, metadata?: Record<string, unknown>) {
+  const key = makeDedupeKey(message, metadata);
+  lastNoisyEmit.set(key, Date.now());
 }
 
 function createLogger(scope: string, options: { eventSink?: ((event: any) => void) | null; logType?: string | null } = {}) {
@@ -97,9 +144,27 @@ function createLogger(scope: string, options: { eventSink?: ((event: any) => voi
     if (!shouldLog(logType, category)) {
       return;
     }
+
+    // Deduplicate noisy messages in minimal mode only
+    if (logType === "minimal" && shouldSuppressNoisy(message, metadata)) {
+      return;
+    }
+
     const time = Date.now();
-    const suffix = metadata && Object.keys(metadata).length > 0
-      ? ` | ${Object.entries(metadata).map(([key, value]) => `${key}=${String(value)}`).join(" | ")}`
+
+    // Compact architect_published payload in minimal mode
+    let compactMetadata = metadata;
+    if (logType === "minimal" && message === "architect_published" && metadata) {
+      compactMetadata = {
+        botId: metadata.botId,
+        strategy: metadata.strategy,
+        family: metadata.family,
+        confidence: metadata.confidence
+      };
+    }
+
+    const suffix = compactMetadata && Object.keys(compactMetadata).length > 0
+      ? ` | ${Object.entries(compactMetadata).map(([key, value]) => `${key}=${String(value)}`).join(" | ")}`
       : "";
     console.log(`[${new Date(time).toISOString()}] ${scope} | ${level} | ${message}${suffix}`);
     if (typeof options.eventSink === "function" && message !== "heartbeat") {
@@ -112,6 +177,10 @@ function createLogger(scope: string, options: { eventSink?: ((event: any) => voi
         scope,
         time
       });
+    }
+
+    if (logType === "minimal" && NOISY_MESSAGES.has(message)) {
+      recordNoisyEmit(message, metadata);
     }
   }
 

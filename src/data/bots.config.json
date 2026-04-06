@@ -1,6 +1,11 @@
 {
   "executionMode": "paper",
   "marketMode": "live",
+  "experimentMetrics": {
+    "enabled": true,
+    "label": "allow_small_loss_floor05",
+    "summaryIntervalMs": 60000
+  },
   "market": {
     "provider": "binance",
     "streamType": "trade",
