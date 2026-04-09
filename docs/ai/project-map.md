@@ -1,0 +1,45 @@
+# Project Map
+
+Current runtime shape:
+
+- `src/core/`: bootstrap, config, store, system server, architect/context services
+- `src/roles/`: extracted operational roles and coordinators
+- `src/bots/`: bot classes; `tradingBot.ts` is the top-level runtime orchestrator
+- `src/engines/`: execution, indicators, backtest engine
+- `src/streams/`: market and user stream integration
+- `src/ui/` and `public/`: dashboard adapters and static frontend
+- `tests/`: behavior lock for runtime, roles, store, server, and stream flows
+- `legacy/`: isolated old code, not the target architecture
+
+Important repo facts:
+
+- `src/core/orchestrator.ts` currently enforces `market-mode=live`.
+- `src/core/orchestrator.ts` currently rejects `execution-mode=live`; execution remains paper-only.
+- `src/data/bots.config.json` currently carries experiment label `allow_small_loss_floor05`.
+- `reports/experiments/` contains recent experiment output for that label.
+- `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`.
+
+Boundary map:
+
+- `ContextService` and `ContextBuilder`: rolling feature inputs only
+- `ArchitectService`, `BotArchitect`, `architectCoordinator`: regime/family/usability publish and apply flow
+- `TradingBot`: per-tick orchestration, coordination, execution handoff
+- `entryCoordinator`, `openAttemptCoordinator`, `entryOutcomeCoordinator`: entry-side flow ownership
+- `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, `recoveryTargetResolver`: exit planning and shaping
+- `postLossArchitectLatch`: post-loss re-entry defense
+- `tradingBotTelemetry`: operator-facing metadata shaping
+- `StateStore`: single runtime state container
+- `SystemServer` plus `public/` and `src/ui/`: dashboard/API surface, separate from core decision logic
+
+Hotspots to treat carefully:
+
+- `src/bots/tradingBot.ts`
+- `src/core/stateStore.ts`
+- `src/core/orchestrator.ts`
+- `src/core/systemServer.ts`
+- `src/roles/architectCoordinator.ts`
+- `src/roles/postLossArchitectLatch.ts`
+- `src/roles/exitDecisionCoordinator.ts`
+- `tests/tradingBot.test.js`
+- `tests/systemServer.test.js`
+- `tests/stateStore.test.js`
