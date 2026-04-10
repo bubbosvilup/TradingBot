@@ -560,6 +560,9 @@ function runTradingBotTests() {
     if (!profitTrade || !(profitTrade.netPnl > 0)) {
       throw new Error(`profit characterization scenario should close with positive netPnl: ${JSON.stringify(profitTrade)}`);
     }
+    if (profitTrade.closedAt !== clock) {
+      throw new Error(`profit close should use the triggering tick timestamp as closedAt: ${JSON.stringify(profitTrade)}`);
+    }
     const expectedProfitFees = ((profitTrade.entryPrice * profitTrade.quantity) + (profitTrade.exitPrice * profitTrade.quantity)) * 0.001;
     const expectedProfitGrossPnl = (profitTrade.exitPrice - profitTrade.entryPrice) * profitTrade.quantity;
     const expectedProfitNetPnl = expectedProfitGrossPnl - expectedProfitFees;
@@ -1269,6 +1272,60 @@ function runTradingBotTests() {
     }
     if (!postLossLatchHarness.botLogs.find((entry) => entry.message === "post_loss_architect_latch_released")) {
       throw new Error("missing post_loss_architect_latch_released log");
+    }
+
+    clock += 10_000;
+    const singleFreshPublishLatchHarness = createHarness(postLossStrategyEvaluate, {
+      allowedStrategies: ["rsiReversion"],
+      postLossArchitectLatchPublishesRequired: 1,
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion"
+    });
+    singleFreshPublishLatchHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.9,
+      entryPrice: 100,
+      id: "pos-loss-latch-single",
+      lifecycleMode: "normal",
+      managedRecoveryDeferredReason: null,
+      managedRecoveryExitFloorNetPnlUsdt: null,
+      managedRecoveryStartedAt: null,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 20_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    singleFreshPublishLatchHarness.store.updateBotState("bot_test", {
+      activeStrategyId: "rsiReversion",
+      exitSignalStreak: 1
+    });
+    singleFreshPublishLatchHarness.bot.onMarketTick({ price: 99, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const singlePublishClosedTrade = singleFreshPublishLatchHarness.store.getClosedTrades("bot_test")[0];
+    if (!singlePublishClosedTrade || !(singlePublishClosedTrade.netPnl < 0)) {
+      throw new Error("single fresh-publish latch scenario should still produce a real losing trade");
+    }
+    clock += 80_000;
+    singleFreshPublishLatchHarness.store.updateBotState("bot_test", {
+      cooldownReason: null,
+      cooldownUntil: null,
+      entrySignalStreak: 1
+    });
+    const singleFreshPublishAt = singlePublishClosedTrade.closedAt + 10_000;
+    singleFreshPublishLatchHarness.store.setArchitectPublisherState("BTC/USDT", {
+      ...singleFreshPublishLatchHarness.store.getArchitectPublisherState("BTC/USDT"),
+      lastPublishedAt: singleFreshPublishAt,
+      ready: true
+    });
+    singleFreshPublishLatchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const singleFreshPublishState = singleFreshPublishLatchHarness.store.getBotState("bot_test");
+    if (singleFreshPublishState.postLossArchitectLatchActive || singleFreshPublishState.postLossArchitectLatchFreshPublishCount !== 1) {
+      throw new Error(`configured single fresh publish should release the latch immediately: ${JSON.stringify(singleFreshPublishState)}`);
+    }
+    if (!singleFreshPublishLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("configured single fresh publish should make re-entry eligible on the first fresh architect publication");
     }
 
     const reloadedStore = new StateStore();
@@ -2577,6 +2634,51 @@ function runTradingBotTests() {
     }
     if (dedupDiagnosticsHarness.botLogs.filter((entry) => entry.message === "entry_evaluated").length !== 1) {
       throw new Error("deduped verbose entry evaluation should preserve single-log behavior");
+    }
+
+    clock += 10_000;
+    const portfolioKillSwitchHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    portfolioKillSwitchHarness.store.setPortfolioKillSwitchConfig({
+      enabled: true,
+      maxDrawdownPct: 5,
+      mode: "block_entries_only"
+    });
+    portfolioKillSwitchHarness.store.updateBotState("bot_test", {
+      realizedPnl: -60
+    });
+    portfolioKillSwitchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (portfolioKillSwitchHarness.store.getPosition("bot_test")) {
+      throw new Error("portfolio kill switch should block new entries before an open position is created");
+    }
+    const portfolioKillSwitchState = portfolioKillSwitchHarness.store.getPortfolioKillSwitchState({
+      feeRate: portfolioKillSwitchHarness.executionEngine.feeRate,
+      now: clock
+    });
+    if (!portfolioKillSwitchState.triggered || !portfolioKillSwitchState.blockingEntries) {
+      throw new Error(`portfolio kill switch should be latched in shared runtime state once the aggregate drawdown threshold is breached: ${JSON.stringify(portfolioKillSwitchState)}`);
+    }
+    const portfolioBlockedLog = portfolioKillSwitchHarness.botLogs.find((entry) =>
+      entry.message === "entry_blocked"
+      && entry.metadata.reason === "portfolio_kill_switch_active"
+    );
+    if (!portfolioBlockedLog) {
+      throw new Error("portfolio kill switch should emit an explicit entry_blocked reason");
+    }
+    const portfolioGateLog = portfolioKillSwitchHarness.botLogs.find((entry) =>
+      entry.message === "entry_gate_blocked"
+      && entry.metadata.riskReason === "portfolio_kill_switch_active"
+    );
+    if (!portfolioGateLog) {
+      throw new Error("portfolio kill switch should flow through entry diagnostics as the blocking risk reason");
     }
 
     clock += 10_000;

@@ -17,6 +17,7 @@ const RSI_REVERSION_PRO: ExitPolicy = {
     pnlExitFloorMode: "strict_net_positive"
   },
   recovery: {
+    maxConsecutiveEntries: 2,
     targetOffsetPct: 0.015,
     targetSource: "emaSlow",
     timeoutMs: 30_000
@@ -91,7 +92,7 @@ function resolveExitPolicy(strategyConfig: Record<string, unknown> | null | unde
     invalidation: { modes: [] },
     protection: { allowBreakEven: false, stopMode: "fixed_pct" as const },
     qualification: { estimatedCostMultiplier: 1, pnlExitFloorMode: "strict_net_positive" as const },
-    recovery: { targetOffsetPct: 0, targetSource: "emaSlow" as const }
+    recovery: { maxConsecutiveEntries: 2, targetOffsetPct: 0, targetSource: "emaSlow" as const }
   };
 
   return {

@@ -14,6 +14,7 @@ class ArchitectService {
   switchDelta: number;
   requiredConfirmations: number;
   subscriptions: Array<() => void>;
+  warmupMs: number;
 
   constructor(deps: {
     store: any;
@@ -23,6 +24,7 @@ class ArchitectService {
     publishIntervalMs?: number;
     switchDelta?: number;
     requiredConfirmations?: number;
+    warmupMs?: number;
   }) {
     this.store = deps.store;
     this.marketStream = deps.marketStream;
@@ -31,6 +33,7 @@ class ArchitectService {
     this.publishIntervalMs = Math.max(deps.publishIntervalMs || 30_000, 5_000);
     this.switchDelta = deps.switchDelta ?? 0.12;
     this.requiredConfirmations = Math.max(deps.requiredConfirmations || 2, 1);
+    this.warmupMs = Math.max(deps.warmupMs || 30_000, 5_000);
     this.subscriptions = [];
   }
 
@@ -380,8 +383,10 @@ class ArchitectService {
       publisherLastRegimeSwitchTo: params.publisher.lastRegimeSwitchTo,
       publisherMetadataOnly: params.publisherMetadataOnly,
       publisherNextPublishAt: params.publisher.nextPublishAt,
+      publisherPublishIntervalMs: params.publisher.publishIntervalMs,
       publisherReady: params.publisher.ready,
       symbol: params.symbol,
+      warmupMs: this.warmupMs,
       trendBias: candidate.trendBias || params.context?.trendBias || "neutral",
       updatedAt: published.updatedAt,
       via: params.via || null,

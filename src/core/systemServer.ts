@@ -7,11 +7,12 @@ import type { SystemEvent } from "../types/event.ts";
 import type { MarketKline, PriceSnapshot } from "../types/market.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ClosedTradeRecord, PositionRecord } from "../types/trade.ts";
-import type { LoggerLike } from "../types/runtime.ts";
+import type { LoggerLike, PortfolioKillSwitchState, SymbolStateRetentionSnapshot } from "../types/runtime.ts";
 
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
 
 interface PipelineSnapshotLike {
   symbol: string;
@@ -58,6 +59,13 @@ interface SystemServerStore {
   }>;
   getPipelineSnapshot(symbol: string): PipelineSnapshotLike | null;
   getPriceSnapshot(symbol: string): PriceSnapshot | null;
+  getPortfolioKillSwitchState(options?: {
+    feeRate?: number;
+    now?: number;
+  }): PortfolioKillSwitchState;
+  getSymbolStateSnapshot(options?: {
+    now?: number;
+  }): SymbolStateRetentionSnapshot;
   getRecentEvents(limit?: number): SystemEvent[];
   getSystemSnapshot(): SystemSnapshotLike;
   getWsConnections(): WsConnectionSnapshotLike[];
@@ -67,7 +75,6 @@ interface SystemServerStore {
 function getMimeType(filePath: string) {
   if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
   if (filePath.endsWith(".js")) return "application/javascript; charset=utf-8";
-  if (filePath.endsWith(".ts")) return "application/javascript; charset=utf-8";
   if (filePath.endsWith(".json")) return "application/json; charset=utf-8";
   return "text/html; charset=utf-8";
 }
@@ -78,11 +85,12 @@ class SystemServer {
   host: string;
   port: number;
   publicDir: string;
-  uiDir: string;
   startedAt: number;
   server: any;
   feedMode: string;
   executionMode: string;
+  feeRate: number;
+  architectWarmupMs: number;
   resolveStrategyFamily: (strategyId: string | null | undefined) => RecommendedFamily | "other";
 
   constructor(deps: {
@@ -91,10 +99,11 @@ class SystemServer {
     host?: string;
     port?: number;
     publicDir?: string;
-    uiDir?: string;
     startedAt?: number;
     feedMode?: string;
     executionMode?: string;
+    feeRate?: number;
+    architectWarmupMs?: number;
     resolveStrategyFamily?: (strategyId: string | null | undefined) => RecommendedFamily | "other";
   }) {
     this.store = deps.store;
@@ -102,14 +111,33 @@ class SystemServer {
     this.host = deps.host || "127.0.0.1";
     this.port = deps.port || 3000;
     this.publicDir = deps.publicDir || path.resolve(process.cwd(), "public");
-    this.uiDir = deps.uiDir || path.resolve(process.cwd(), "src", "ui");
     this.startedAt = deps.startedAt || Date.now();
     this.server = null;
     this.feedMode = deps.feedMode || "live";
     this.executionMode = deps.executionMode || "paper";
+    this.feeRate = Math.max(Number(deps.feeRate) || 0, 0);
+    this.architectWarmupMs = Math.max(Number(deps.architectWarmupMs) || 30_000, 5_000);
     this.resolveStrategyFamily = typeof deps.resolveStrategyFamily === "function"
       ? deps.resolveStrategyFamily
       : () => "other";
+  }
+
+  calculateUnrealizedPnl(position: PositionRecord | null, latestPrice: number | null) {
+    if (!position || !Number.isFinite(Number(latestPrice))) return 0;
+    const entryPrice = Math.max(Number(position.entryPrice) || 0, 0);
+    const markPrice = Math.max(Number(latestPrice) || 0, 0);
+    const quantity = Math.max(Number(position.quantity) || 0, 0);
+    const side = normalizeTradeSide(position.side);
+    const entryNotionalUsdt = entryPrice * quantity;
+    const markNotionalUsdt = markPrice * quantity;
+    const grossPnl = calculateDirectionalGrossPnl({
+      entryPrice,
+      exitPrice: markPrice,
+      quantity,
+      side
+    }).grossPnl;
+    const fees = (entryNotionalUsdt + markNotionalUsdt) * this.feeRate;
+    return grossPnl - fees;
   }
 
   start() {
@@ -184,7 +212,11 @@ class SystemServer {
 
   getArchitectWarmupRemainingMs(context: any) {
     if (context?.warmupComplete || !context?.windowSpanMs) return 0;
-    return Math.max(0, 30_000 - context.windowSpanMs);
+    return Math.max(0, this.architectWarmupMs - context.windowSpanMs);
+  }
+
+  isManualResumeRequired(state: BotRuntimeState | null | undefined) {
+    return state?.status === "paused" && state?.pausedReason === "max_drawdown_reached";
   }
 
   decorateArchitectAssessment(assessment: any, publisher: any, context: any, source: "published" | "observed") {
@@ -267,12 +299,18 @@ class SystemServer {
 
   buildSystemPayload() {
     const snapshot = this.store.getSystemSnapshot();
+    const portfolioKillSwitch = this.store.getPortfolioKillSwitchState({ feeRate: this.feeRate });
+    const symbolState = this.store.getSymbolStateSnapshot({ now: Date.now() });
     const running = snapshot.botStates.filter((bot: any) => bot.status === "running").length;
+    const paused = snapshot.botStates.filter((bot: any) => bot.status === "paused");
+    const manualResumeRequiredBots = paused.filter((bot: any) => this.isManualResumeRequired(bot)).length;
     const marketConnection = this.store.getWsConnections().find((connection: any) => connection.connectionId === "market-stream") || null;
     const latestLatency = this.store.getAllPipelineSnapshots()
       .filter((item: any) => item.lastStateUpdatedAt)
       .sort((left: any, right: any) => (right.lastStateUpdatedAt || 0) - (left.lastStateUpdatedAt || 0))[0] || null;
     return {
+      botsManualResumeRequired: manualResumeRequiredBots,
+      botsPaused: paused.length,
       botsRunning: running,
       botsTotal: snapshot.botStates.length,
       executionMode: this.executionMode,
@@ -281,6 +319,8 @@ class SystemServer {
       feedMode: this.feedMode,
       latency: latestLatency,
       openPositions: snapshot.openPositions.length,
+      portfolioKillSwitch,
+      symbolState,
       startedAt: this.startedAt,
       uptimeMs: Date.now() - this.startedAt,
       wsConnection: marketConnection,
@@ -290,6 +330,7 @@ class SystemServer {
 
   buildBotsPayload() {
     const now = Date.now();
+    const portfolioKillSwitch = this.store.getPortfolioKillSwitchState({ feeRate: this.feeRate, now });
     return Array.from(this.store.botConfigs.values()).map((config: any) => {
       const state = this.store.getBotState(config.id);
       const performance = this.store.getPerformance(config.id);
@@ -314,15 +355,14 @@ class SystemServer {
         ? architectPublished.recommendedFamily
         : null;
       const cooldownRemainingMs = state?.cooldownUntil ? Math.max(0, state.cooldownUntil - now) : 0;
-      const unrealizedPnl = position && latestPrice
-        ? (latestPrice - position.entryPrice) * position.quantity
-        : 0;
+      const unrealizedPnl = this.calculateUnrealizedPnl(position, latestPrice);
       const derivedSyncStatus = position && targetFamily && activeFamily !== targetFamily
         ? "waiting_flat"
         : architect
           ? "synced"
           : "pending";
       const syncStatus = state?.architectSyncStatus || derivedSyncStatus;
+      const manualResumeRequired = this.isManualResumeRequired(state);
 
       return {
         activeStrategyId: state?.activeStrategyId || config.strategy,
@@ -344,13 +384,16 @@ class SystemServer {
         lastExecutionAt: state?.lastExecutionAt || null,
         lastTickAt: state?.lastTickAt || null,
         lossStreak: state?.lossStreak || 0,
+        manualResumeRequired,
         openPosition: position ? {
           entryPrice: position.entryPrice,
           openedAt: position.openedAt,
           quantity: position.quantity,
           unrealizedPnl
         } : null,
+        pausedReason: state?.pausedReason || null,
         performance,
+        portfolioKillSwitch,
         price: latestPrice,
         riskProfile: config.riskProfile,
         syntheticArchitect: Boolean(architectFallback),
@@ -381,7 +424,7 @@ class SystemServer {
           quantity: position.quantity,
           strategyId: position.strategyId,
           symbol: position.symbol,
-          unrealizedPnl: (latestPrice - position.entryPrice) * position.quantity
+          unrealizedPnl: this.calculateUnrealizedPnl(position, latestPrice)
         };
       })
       .filter(Boolean);
@@ -410,7 +453,7 @@ class SystemServer {
           netPnl: trade.netPnl,
           quantity: trade.quantity,
           result: trade.netPnl > 0 ? "win" : trade.netPnl < 0 ? "loss" : "flat",
-          side: trade.side || "long",
+          side: normalizeTradeSide(trade.side),
           strategyId: trade.strategyId,
           symbol: trade.symbol,
           tradeId: trade.id
@@ -590,7 +633,7 @@ class SystemServer {
     }
     if (pathname.startsWith("/ui/")) {
       const fileName = pathname.replace(/^\/ui\//, "");
-      this.serveFile(response, path.join(this.uiDir, fileName));
+      this.serveFile(response, path.join(this.publicDir, "ui", fileName));
       return;
     }
 

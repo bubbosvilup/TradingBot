@@ -49,8 +49,18 @@ class ContextBuilder {
       && requestedEffectiveTicks.length > 0
       && requestedEffectiveTicks.length < ticks.length;
     const effectiveTicks = usePostSwitchSegment ? requestedEffectiveTicks : ticks;
-    const prices = effectiveTicks.map((tick) => Number(tick.price));
-    const timestamps = effectiveTicks.map((tick) => Number(tick.timestamp));
+    const prices = new Array<number>(effectiveTicks.length);
+    const timestamps = new Array<number>(effectiveTicks.length);
+    let windowHigh = -Infinity;
+    let windowLow = Infinity;
+    for (let index = 0; index < effectiveTicks.length; index += 1) {
+      const tick = effectiveTicks[index];
+      const price = Number(tick.price);
+      prices[index] = price;
+      timestamps[index] = Number(tick.timestamp);
+      if (price > windowHigh) windowHigh = price;
+      if (price < windowLow) windowLow = price;
+    }
     const latestPrice = prices[prices.length - 1];
     const latestTimestamp = timestamps[timestamps.length - 1];
     const oldestTimestamp = timestamps[0];
@@ -61,13 +71,17 @@ class ContextBuilder {
       ? clamp(effectiveWindowSpanMs / windowSpanMs, 0, 1)
       : null;
 
-    const diffs = prices.slice(1).map((value, index) => value - prices[index]);
-    const absoluteDiffs = diffs.map((value) => Math.abs(value));
-    const returns = prices.slice(1).map((value, index) => {
-      const previous = prices[index];
-      return previous > 0 ? (value - previous) / previous : 0;
-    });
-    const absoluteReturns = returns.map((value) => Math.abs(value));
+    const diffs = new Array<number>(Math.max(prices.length - 1, 0));
+    const absoluteDiffs = new Array<number>(Math.max(prices.length - 1, 0));
+    const returns = new Array<number>(Math.max(prices.length - 1, 0));
+    for (let index = 1; index < prices.length; index += 1) {
+      const previous = prices[index - 1];
+      const diff = prices[index] - previous;
+      const targetIndex = index - 1;
+      diffs[targetIndex] = diff;
+      absoluteDiffs[targetIndex] = Math.abs(diff);
+      returns[targetIndex] = previous > 0 ? diff / previous : 0;
+    }
     const recentLength = Math.max(8, Math.min(30, prices.length - 1));
     const recentReturns = returns.slice(-recentLength);
     const recentAbsoluteDiffs = absoluteDiffs.slice(-recentLength);
@@ -82,7 +96,7 @@ class ContextBuilder {
     const netChange = Math.abs(latestPrice - prices[0]);
     const travel = absoluteDiffs.reduce((sum, value) => sum + value, 0);
     const directionalEfficiency = clamp(travel > 0 ? netChange / travel : 0, 0, 1);
-    const windowRange = Math.max(...prices) - Math.min(...prices);
+    const windowRange = windowHigh - windowLow;
     const atrProxy = Math.max(mean(recentAbsoluteDiffs) || 0, windowRange / Math.max(prices.length - 1, 1), epsilon);
     const emaSeparationRaw = Math.abs((emaFast || latestPrice) - (emaSlow || latestPrice)) / (atrProxy + epsilon);
     const emaSeparation = clamp(emaSeparationRaw / (1 + emaSeparationRaw), 0, 1);
@@ -111,8 +125,14 @@ class ContextBuilder {
     const volRatio = recentVol / (baselineVol + epsilon);
     const volLift = Math.max(0, volRatio - 1);
     const midPoint = Math.max(2, Math.floor(prices.length / 2));
-    const baselinePrices = prices.slice(0, midPoint);
-    const baselineRange = baselinePrices.length > 1 ? Math.max(...baselinePrices) - Math.min(...baselinePrices) : windowRange;
+    let baselineHigh = prices[0];
+    let baselineLow = prices[0];
+    for (let index = 1; index < midPoint; index += 1) {
+      const price = prices[index];
+      if (price > baselineHigh) baselineHigh = price;
+      if (price < baselineLow) baselineLow = price;
+    }
+    const baselineRange = midPoint > 1 ? baselineHigh - baselineLow : windowRange;
     const rangeExpansion = Math.max(0, (windowRange / (baselineRange + epsilon)) - 1);
     const volatilityRisk = clamp(
       (0.65 * (volLift / (1 + volLift))) + (0.35 * (rangeExpansion / (1 + rangeExpansion))),
@@ -129,10 +149,19 @@ class ContextBuilder {
       : 0;
     const chopiness = clamp((0.65 * (1 - directionalEfficiency)) + (0.35 * signFlipRate), 0, 1);
 
-    const breakoutLookback = prices.slice(-Math.min(prices.length, 40));
-    const referenceWindow = breakoutLookback.slice(0, -1);
-    const breakoutHigh = referenceWindow.length > 0 ? Math.max(...referenceWindow) : latestPrice;
-    const breakoutLow = referenceWindow.length > 0 ? Math.min(...referenceWindow) : latestPrice;
+    const breakoutWindowLength = Math.min(prices.length, 40);
+    const breakoutStartIndex = prices.length - breakoutWindowLength;
+    let breakoutHigh = latestPrice;
+    let breakoutLow = latestPrice;
+    if (breakoutWindowLength > 1) {
+      breakoutHigh = prices[breakoutStartIndex];
+      breakoutLow = prices[breakoutStartIndex];
+      for (let index = breakoutStartIndex + 1; index < prices.length - 1; index += 1) {
+        const price = prices[index];
+        if (price > breakoutHigh) breakoutHigh = price;
+        if (price < breakoutLow) breakoutLow = price;
+      }
+    }
     const breakoutUpDistance = latestPrice > breakoutHigh ? (latestPrice - breakoutHigh) / (atrProxy + epsilon) : 0;
     const breakoutDownDistance = latestPrice < breakoutLow ? (breakoutLow - latestPrice) / (atrProxy + epsilon) : 0;
     const breakoutDirection = breakoutUpDistance > 0
@@ -141,19 +170,36 @@ class ContextBuilder {
         ? "down"
         : "none";
     const breakoutDistance = Math.max(breakoutUpDistance, breakoutDownDistance);
-    const breakoutTail = breakoutLookback.slice(-Math.min(8, breakoutLookback.length));
-    const breakoutPersistence = breakoutDirection === "up"
-      ? breakoutTail.filter((price) => price >= breakoutHigh).length / Math.max(breakoutTail.length, 1)
-      : breakoutDirection === "down"
-        ? breakoutTail.filter((price) => price <= breakoutLow).length / Math.max(breakoutTail.length, 1)
-        : 0;
+    const breakoutTailLength = Math.min(8, breakoutWindowLength);
+    const breakoutTailStartIndex = prices.length - breakoutTailLength;
+    let breakoutPersistenceMatches = 0;
+    if (breakoutDirection !== "none") {
+      for (let index = breakoutTailStartIndex; index < prices.length; index += 1) {
+        const price = prices[index];
+        if (breakoutDirection === "up" && price >= breakoutHigh) {
+          breakoutPersistenceMatches += 1;
+        }
+        if (breakoutDirection === "down" && price <= breakoutLow) {
+          breakoutPersistenceMatches += 1;
+        }
+      }
+    }
+    const breakoutPersistence = breakoutDirection === "none"
+      ? 0
+      : breakoutPersistenceMatches / Math.max(breakoutTailLength, 1);
     const breakoutQuality = clamp(
       (0.55 * (breakoutDistance / (1 + breakoutDistance))) + (0.45 * breakoutPersistence),
       0,
       1
     );
 
-    const timeDiffs = timestamps.slice(1).map((value, index) => value - timestamps[index]).filter((value) => value > 0);
+    const timeDiffs = [];
+    for (let index = 1; index < timestamps.length; index += 1) {
+      const diff = timestamps[index] - timestamps[index - 1];
+      if (diff > 0) {
+        timeDiffs.push(diff);
+      }
+    }
     const averageIntervalMs = timeDiffs.length > 0 ? mean(timeDiffs) : 1000;
     const expectedSamples = Math.max(2, Math.floor(Math.max(windowSpanMs, params.warmupMs) / Math.max(averageIntervalMs, 250)));
     const sampleDensity = clamp(prices.length / expectedSamples, 0, 1);

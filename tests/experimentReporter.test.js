@@ -28,30 +28,59 @@ function runExperimentReporterTests() {
       ...store.getBotState("bot_report"),
       entryBlockedCount: 1,
       entryEvaluationsCount: 3,
+      managedRecoveryConsecutiveCount: 0,
       entryOpenedCount: 1,
       entrySkippedCount: 1
     });
-    store.closedTrades.set("bot_report", [{
-      botId: "bot_report",
-      closedAt: 2_000,
-      entryPrice: 100,
-      entryReason: ["entry_signal"],
-      exitPrice: 101,
-      exitReason: ["take_profit_hit"],
-      fees: 0.2,
-      id: "trade_report",
-      lifecycleEvent: "PRICE_TARGET_HIT",
-      lifecycleMode: "normal",
-      lifecycleState: "CLOSED",
-      netPnl: 0.8,
-      openedAt: 1_000,
-      pnl: 1,
-      quantity: 1,
-      reason: ["round_trip"],
-      side: "long",
-      strategyId: "emaCross",
-      symbol: "BTC/USDT"
-    }]);
+    store.closedTrades.set("bot_report", [
+      {
+        botId: "bot_report",
+        closedAt: 2_000,
+        entryPrice: 100,
+        entryReason: ["entry_signal"],
+        exitPrice: 101,
+        exitReason: ["take_profit_hit"],
+        fees: 0.2,
+        id: "trade_report",
+        lifecycleEvent: "PRICE_TARGET_HIT",
+        lifecycleMode: "normal",
+        lifecycleState: "CLOSED",
+        netPnl: 0.8,
+        openedAt: 1_000,
+        pnl: 1,
+        quantity: 1,
+        reason: ["round_trip"],
+        side: "long",
+        strategyId: "emaCross",
+        symbol: "BTC/USDT"
+      },
+      {
+        botId: "bot_report",
+        closedAt: 4_000,
+        entryPrice: 100,
+        entryReason: ["entry_signal"],
+        exitPrice: 99.9,
+        exitReason: ["managed_recovery_breaker_exit"],
+        fees: 0.2,
+        id: "trade_report_breaker",
+        lifecycleEvent: "MANAGED_RECOVERY_BREAKER_HIT",
+        lifecycleMode: "normal",
+        lifecycleState: "CLOSED",
+        netPnl: -0.3,
+        openedAt: 3_000,
+        pnl: -0.1,
+        quantity: 1,
+        reason: ["managed_recovery_breaker_exit"],
+        side: "long",
+        strategyId: "rsiReversion",
+        symbol: "BTC/USDT"
+      }
+    ]);
+    store.events.push(
+      { message: "rsi_exit_deferred" },
+      { message: "rsi_exit_deferred" },
+      { message: "rsi_exit_deferred" }
+    );
 
     const reporter = new ExperimentReporter({
       config: {
@@ -72,8 +101,11 @@ function runExperimentReporterTests() {
       throw new Error(`checkpoint report should be written to the configured report dir: ${latestPath}`);
     }
     const latestContent = fs.readFileSync(latestPath, "utf8");
-    if (!latestContent.includes("label=ctrlc_report") || !latestContent.includes("closedTradesCount=1")) {
+    if (!latestContent.includes("label=ctrlc_report") || !latestContent.includes("closedTradesCount=2")) {
       throw new Error(`checkpoint report content should include summary metrics: ${latestContent}`);
+    }
+    if (!latestContent.includes("managedRecoveryEntries=1") || !latestContent.includes("managedRecoveryClosedOutcomes=1") || !latestContent.includes("managedRecoveryOpenDeferredEvents=2") || !latestContent.includes("managedRecoveryUnpairedDeferredEvents=2") || !latestContent.includes("exitManagedRecoveryBreaker=1")) {
+      throw new Error(`checkpoint report should conservatively reconcile managed recovery entry/exit counts: ${latestContent}`);
     }
 
     reporter.logFinalSummary();
@@ -83,6 +115,22 @@ function runExperimentReporterTests() {
     );
     if (files.length < 2) {
       throw new Error(`final report should preserve latest and timestamped files: ${JSON.stringify(files)}`);
+    }
+
+    const quarantinedReporter = new ExperimentReporter({
+      config: {
+        enabled: true,
+        label: "allow_small_loss_floor05",
+        summaryIntervalMs: 10_000
+      },
+      logger: {
+        info() {}
+      },
+      loggingMode: "silent",
+      store
+    });
+    if (quarantinedReporter.isEnabled() !== false || quarantinedReporter.getLabel() !== "quarantined_allow_small_loss_floor05") {
+      throw new Error("toxic allow_small_loss_floor05 experiment label should be quarantined out of active use");
     }
   } finally {
     if (originalReportDir === undefined) {

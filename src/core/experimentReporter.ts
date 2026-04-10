@@ -114,6 +114,10 @@ function buildReportLine1(label: string, elapsedMs: number, m: Record<string, un
 function buildReportLine2(m: Record<string, unknown>): string {
   return [
     `managedRecoveryEntries=${m.managedRecoveryEntries ?? 0}`,
+    `managedRecoveryClosedOutcomes=${m.managedRecoveryClosedOutcomes ?? 0}`,
+    `managedRecoveryOpenDeferredEvents=${m.managedRecoveryOpenDeferredEvents ?? 0}`,
+    `managedRecoveryUnpairedDeferredEvents=${m.managedRecoveryUnpairedDeferredEvents ?? 0}`,
+    `exitManagedRecoveryBreaker=${m.exitManagedRecoveryBreaker ?? 0}`,
     `exitManagedRecoveryTimeout=${m.exitManagedRecoveryTimeout ?? 0}`,
     `exitManagedRecoveryTarget=${m.exitManagedRecoveryTarget ?? 0}`,
     `exitManagedRecoveryInvalidation=${m.exitManagedRecoveryInvalidation ?? 0}`,
@@ -127,14 +131,38 @@ function buildReportLine2(m: Record<string, unknown>): string {
   ].join(" | ");
 }
 
+const QUARANTINED_EXPERIMENT_LABELS = new Set([
+  "allow_small_loss_floor05"
+]);
+
+function normalizeExperimentConfig(config: ExperimentMetricsConfig | undefined): ExperimentMetricsConfig {
+  const nextConfig = config ?? {
+    enabled: false,
+    label: "",
+    summaryIntervalMs: 60_000
+  };
+  const label = String(nextConfig.label || "").trim();
+  if (!QUARANTINED_EXPERIMENT_LABELS.has(label)) {
+    return nextConfig;
+  }
+  return {
+    ...nextConfig,
+    enabled: false,
+    label: `quarantined_${label}`
+  };
+}
+
 // Classify a single ClosedTradeRecord into an exit bucket.
-// Returns one of: "normal", "protective_stop", "recovery_timeout", "recovery_target",
+// Returns one of: "normal", "protective_stop", "recovery_breaker", "recovery_timeout", "recovery_target",
 //                  "recovery_invalidation", "recovery_protection", "recovery_other"
 function classifyExit(trade: any): string {
   const exitReason = Array.isArray(trade.exitReason) ? trade.exitReason.join(",") : String(trade.exitReason || "");
   const lifecycleEvent = String(trade.lifecycleEvent || "");
   const lifecycleState = String(trade.lifecycleState || "");
   const lifecycleMode = String(trade.lifecycleMode || "");
+  if (exitReason.includes("managed_recovery_breaker") || lifecycleEvent === "MANAGED_RECOVERY_BREAKER_HIT") {
+    return "recovery_breaker";
+  }
   const isManagedRecovery = lifecycleMode === "managed_recovery" ||
     exitReason.includes("managed_recovery") ||
     lifecycleEvent.includes("RSI_EXIT") ||
@@ -180,11 +208,7 @@ class ExperimentReporter implements ExperimentReporterInstance {
   constructor(params: ExperimentReporterParams) {
     this.store = params.store;
     this.logger = params.logger;
-    this.config = params.config ?? {
-      enabled: false,
-      label: "",
-      summaryIntervalMs: 60_000
-    };
+    this.config = normalizeExperimentConfig(params.config);
     this.loggingMode = params.loggingMode || "normal";
     this.startAt = Date.now();
   }
@@ -265,12 +289,14 @@ class ExperimentReporter implements ExperimentReporterInstance {
         managedRecoveryAvgNetPnl: null,
         exitNormal: 0,
         exitProtectiveStop: 0,
+        exitManagedRecoveryBreaker: 0,
         exitManagedRecoveryTimeout: 0,
         exitManagedRecoveryTarget: 0,
         exitManagedRecoveryInvalidation: 0,
         exitManagedRecoveryProtection: 0,
         exitManagedRecoveryOther: 0,
         exitManagedRecoveryTotal: 0,
+        managedRecoveryUnpairedDeferredEvents: 0,
         avgHoldPipelineMs: null
       };
     }
@@ -338,6 +364,7 @@ class ExperimentReporter implements ExperimentReporterInstance {
     let exitManagedRecoveryTarget = 0;
     let exitManagedRecoveryInvalidation = 0;
     let exitManagedRecoveryProtection = 0;
+    let exitManagedRecoveryBreaker = 0;
     let exitManagedRecoveryOther = 0;
     let totalNetPnl = 0;
     let totalWins = 0;
@@ -353,6 +380,7 @@ class ExperimentReporter implements ExperimentReporterInstance {
       switch (bucket) {
         case "normal": exitNormal += 1; break;
         case "protective_stop": exitProtectiveStop += 1; break;
+        case "recovery_breaker": exitManagedRecoveryBreaker += 1; break;
         case "recovery_timeout": exitManagedRecoveryTimeout += 1; break;
         case "recovery_target": exitManagedRecoveryTarget += 1; break;
         case "recovery_invalidation": exitManagedRecoveryInvalidation += 1; break;
@@ -367,8 +395,8 @@ class ExperimentReporter implements ExperimentReporterInstance {
           break;
       }
 
-      // Also count managed recovery PnL from recovery_target and recovery_timeout
-      if (bucket === "recovery_target" || bucket === "recovery_timeout" || bucket === "recovery_invalidation") {
+      // Also count managed recovery PnL from resolved recovery safety and exit outcomes.
+      if (bucket === "recovery_breaker" || bucket === "recovery_target" || bucket === "recovery_timeout" || bucket === "recovery_invalidation") {
         const mrPnl = asNumber(trade.netPnl);
         if (mrPnl !== null) {
           managedRecoveryNetPnl += mrPnl;
@@ -378,7 +406,7 @@ class ExperimentReporter implements ExperimentReporterInstance {
     }
 
     const totalTrades = allClosedTrades.length;
-    const exitManagedRecoveryTotal = exitManagedRecoveryTimeout + exitManagedRecoveryTarget + exitManagedRecoveryInvalidation + exitManagedRecoveryProtection + exitManagedRecoveryOther;
+    const exitManagedRecoveryTotal = exitManagedRecoveryBreaker + exitManagedRecoveryTimeout + exitManagedRecoveryTarget + exitManagedRecoveryInvalidation + exitManagedRecoveryProtection + exitManagedRecoveryOther;
     const totalAccountedExits = exitNormal + exitProtectiveStop + exitManagedRecoveryTotal;
     const reconciliationError = totalTrades - totalAccountedExits;
 
@@ -406,9 +434,13 @@ class ExperimentReporter implements ExperimentReporterInstance {
 
     // Managed recovery entries from events
     const events = store.events || [];
-    const managedRecoveryEntries = events.filter(
+    const rawManagedRecoveryDeferredEvents = events.filter(
       (e: any) => e.message === "rsi_exit_deferred"
     ).length;
+    const managedRecoveryClosedOutcomes = exitManagedRecoveryTotal;
+    const managedRecoveryEntries = Math.min(rawManagedRecoveryDeferredEvents, managedRecoveryClosedOutcomes);
+    const managedRecoveryUnpairedDeferredEvents = Math.max(rawManagedRecoveryDeferredEvents - managedRecoveryEntries, 0);
+    const managedRecoveryOpenDeferredEvents = managedRecoveryUnpairedDeferredEvents;
 
     // Average hold duration from pipeline snapshots
     let avgHoldMs: number | null = null;
@@ -435,9 +467,13 @@ class ExperimentReporter implements ExperimentReporterInstance {
       entryBlocked: totalBlocked,
       entrySkipped: totalSkipped,
       managedRecoveryEntries,
+      managedRecoveryClosedOutcomes,
       managedRecoveryAvgNetPnl,
+      managedRecoveryOpenDeferredEvents,
+      managedRecoveryUnpairedDeferredEvents,
       exitNormal,
       exitProtectiveStop,
+      exitManagedRecoveryBreaker,
       exitManagedRecoveryTimeout,
       exitManagedRecoveryTarget,
       exitManagedRecoveryInvalidation,

@@ -67,6 +67,42 @@ function parseArgs(argv: string[]) {
   };
 }
 
+function resolvePaperOnlyExecutionMode(cliArgs: { executionMode?: string | null }, botConfig: { executionMode?: string | null }) {
+  const paperTradingEnv = process.env.PAPER_TRADING;
+  const requestedExecutionMode = cliArgs.executionMode !== null && cliArgs.executionMode !== undefined && cliArgs.executionMode !== ""
+    ? String(cliArgs.executionMode).toLowerCase()
+    : process.env.EXECUTION_MODE
+      ? String(process.env.EXECUTION_MODE).toLowerCase()
+      : botConfig.executionMode
+        ? String(botConfig.executionMode).toLowerCase()
+        : "paper";
+  const executionModeSource = cliArgs.executionMode
+    ? "cli"
+    : process.env.EXECUTION_MODE
+      ? "env"
+      : botConfig.executionMode
+        ? "config"
+        : "runtime_paper_only";
+
+  if (paperTradingEnv !== undefined && String(paperTradingEnv).toLowerCase() === "false") {
+    throw new Error("PAPER_TRADING=false is not supported; active runtime is paper-only and live execution remains gated for future live-readiness work");
+  }
+
+  if (requestedExecutionMode === "live") {
+    throw new Error("execution-mode=live is not supported; active runtime is paper-only and live execution remains gated for future live-readiness work");
+  }
+
+  if (requestedExecutionMode !== "paper") {
+    throw new Error(`execution-mode=${requestedExecutionMode} is invalid; active runtime only supports execution-mode=paper`);
+  }
+
+  return {
+    executionMode: "paper" as const,
+    executionModeSource,
+    requestedExecutionMode
+  };
+}
+
 async function startOrchestrator(runtimeOptions: { durationMs?: number | null; summaryEveryMs?: number | null; serverEnabled?: boolean; port?: number | null } = {}) {
   const startedAt = now();
   const cliArgs = parseArgs(process.argv.slice(2));
@@ -80,6 +116,12 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
   const configLoader = new ConfigLoader();
   const botConfig = configLoader.loadBotsConfig();
+  const architectWarmupMs = Math.max(Number(botConfig.architectWarmupMs) || 30_000, 5_000);
+  const architectPublishIntervalMs = Math.max(Number(botConfig.architectPublishIntervalMs) || 30_000, 5_000);
+  const postLossLatchMinFreshPublications = Math.max(Number(botConfig.postLossLatchMinFreshPublications) || 2, 1);
+  const symbolStateRetentionMs = Math.max(Number(botConfig.symbolStateRetentionMs) || (30 * 60 * 1000), 60_000);
+  store.setSymbolStateRetentionMs(symbolStateRetentionMs);
+  store.setPortfolioKillSwitchConfig(botConfig.portfolioKillSwitch || null);
   const loggingMode = String(botConfig.loggingMode || process.env.LOGGING_MODE || process.env.LOG_TYPE || "normal").trim().replace(/^["']|["']$/g, "").toLowerCase();
   const isSilent = loggingMode === "silent";
   const marketModeSource = cliArgs.marketMode
@@ -94,19 +136,11 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     throw new Error(`market-mode=${requestedMarketMode} is not supported; startup aborted because the active runtime requires live market data`);
   }
   const marketMode: "live" = "live";
-  const executionModeSource = cliArgs.executionMode
-    ? "cli"
-    : process.env.EXECUTION_MODE
-      ? "env"
-      : botConfig.executionMode
-        ? "config"
-        : "paper_trading_fallback";
-  const requestedExecutionMode = ((cliArgs.executionMode || process.env.EXECUTION_MODE || botConfig.executionMode || (String(process.env.PAPER_TRADING || "true").toLowerCase() === "false" ? "live" : "paper")) as string).toLowerCase();
-  if (requestedExecutionMode === "live") {
-    throw new Error("execution-mode=live is not supported; startup aborted because real order routing is not implemented");
-  }
-  const executionMode: "paper" | "live" = "paper";
-  const liveExecutionEnabled = false;
+  const {
+    executionMode,
+    executionModeSource,
+    requestedExecutionMode
+  } = resolvePaperOnlyExecutionMode(cliArgs, botConfig);
   const simulatedExecutionOnly = executionMode === "paper";
   const wsManager = new WSManager({
     logger: logger.child("ws")
@@ -140,7 +174,14 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const resolveStrategyFamily = (strategyId: string | null | undefined) => strategyRegistry.getStrategyFamily(strategyId);
   const strategySwitcher = new StrategySwitcher({ resolveStrategyFamily });
 
-  const enabledBots = (botConfig.bots || []).filter((bot: any) => bot.enabled);
+  const enabledBots = (botConfig.bots || [])
+    .filter((bot: any) => bot.enabled)
+    .map((bot: any) => ({
+      ...bot,
+      postLossArchitectLatchPublishesRequired: Number.isFinite(Number(bot.postLossArchitectLatchPublishesRequired))
+        ? Math.max(Number(bot.postLossArchitectLatchPublishesRequired), 1)
+        : postLossLatchMinFreshPublications
+    }));
   const marketStream = new MarketStream({
     klineIntervals: botConfig.market?.klineIntervals || [],
     liveEmitIntervalMs: botConfig.market?.liveEmitIntervalMs,
@@ -157,20 +198,22 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     marketStream,
     maxWindowMs: 300_000,
     store,
-    warmupMs: 30_000
+    warmupMs: architectWarmupMs
   });
   const architectService = new ArchitectService({
     botArchitect,
     logger: logger.child("architect"),
     marketStream,
-    publishIntervalMs: 30_000,
+    publishIntervalMs: architectPublishIntervalMs,
     requiredConfirmations: 2,
     store,
     switchDelta: 0.12,
-    warmupMs: 30_000
+    warmupMs: architectWarmupMs
   });
   const systemServer = new SystemServer({
+    architectWarmupMs,
     executionMode,
+    feeRate: executionFee.feeRate,
     feedMode: "live",
     host: process.env.HOST || "127.0.0.1",
     logger,
@@ -201,11 +244,6 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   contextService.start(enabledBots.map((bot: any) => bot.symbol));
   architectService.start(enabledBots.map((bot: any) => bot.symbol));
   botManager.startAll();
-  await userStream.start({
-    enabled: liveExecutionEnabled,
-    mode: "live",
-    reason: executionMode === "paper" ? "paper_execution" : "execution_enabled"
-  });
   if (runtimeOptions.serverEnabled !== false) {
     systemServer.start();
   }
@@ -222,6 +260,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   if (!isSilent) {
+    const portfolioKillSwitch = store.getPortfolioKillSwitchState({ feeRate: executionFee.feeRate, now: startedAt });
     logger.info("system_ready", {
       bots: enabledBots.length,
       executionMode,
@@ -231,6 +270,14 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       executionSafety: simulatedExecutionOnly ? "simulated_only" : "exchange_execution_enabled",
       marketMode,
       marketModeSource,
+      architectPublishIntervalMs,
+      architectWarmupMs,
+      portfolioKillSwitchEnabled: portfolioKillSwitch.enabled,
+      portfolioKillSwitchMaxDrawdownPct: portfolioKillSwitch.maxDrawdownPct,
+      portfolioKillSwitchMode: portfolioKillSwitch.mode,
+      postLossLatchMinFreshPublications,
+      symbolStateRetentionMs,
+      userStreamRuntime: "paper_simulated_events_only",
       requestedExecutionMode,
       requestedExecutionModeSource: executionModeSource,
       strategies: strategyRegistry.listStrategyIds().join(",")
@@ -330,7 +377,20 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   while (!stopped) {
+    const loopNow = now();
+    const symbolState = store.evictStaleSymbolState({ now: loopNow });
+    if (symbolState.evictedSymbols.length > 0) {
+      contextService.pruneSymbols(symbolState.evictedSymbols);
+      if (!isSilent) {
+        logger.info("symbol_state_evicted", {
+          evictedSymbols: symbolState.evictedSymbols.join(","),
+          staleAfterMs: symbolState.staleAfterMs,
+          trackedSymbols: symbolState.trackedSymbols.length
+        });
+      }
+    }
     const snapshot = store.getSystemSnapshot();
+    const portfolioKillSwitch = store.getPortfolioKillSwitchState({ feeRate: executionFee.feeRate });
     const runningBots = snapshot.botStates.filter((bot: any) => bot.status === "running");
     const latestPricesSummary = snapshot.latestPrices
       .map((entry: any) => `${entry.symbol}:${entry.price.toFixed(2)}`)
@@ -349,21 +409,27 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
         botSummaries,
         latestPrices: latestPricesSummary,
         openPositions: snapshot.openPositions.length,
+        portfolioKillSwitchDrawdownPct: portfolioKillSwitch.drawdownPct,
+        portfolioKillSwitchTriggered: portfolioKillSwitch.triggered,
+        portfolioKillSwitchReason: portfolioKillSwitch.reason,
+        symbolStateLastCleanupAt: symbolState.lastCleanupAt,
+        symbolStateStaleCandidates: symbolState.staleCandidateSymbols.length,
+        symbolStateTracked: symbolState.trackedSymbols.length,
         pendingBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "pending").length,
         syncedBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "synced").length,
         waitingFlatBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "waiting_flat").length
       });
     }
 
-    if (cli.durationMs && now() - startedAt >= cli.durationMs) {
+    if (cli.durationMs && loopNow - startedAt >= cli.durationMs) {
       if (!isSilent) {
-        logger.info("duration_reached", { duration: formatDuration(now() - startedAt) });
+        logger.info("duration_reached", { duration: formatDuration(loopNow - startedAt) });
       }
       break;
     }
 
-    if (experimentReporter.isEnabled() && (now() - lastExperimentCheckpointAt) >= experimentReporter.getSummaryIntervalMs()) {
-      lastExperimentCheckpointAt = now();
+    if (experimentReporter.isEnabled() && (loopNow - lastExperimentCheckpointAt) >= experimentReporter.getSummaryIntervalMs()) {
+      lastExperimentCheckpointAt = loopNow;
       experimentReporter.writeCheckpoint();
       if (!isSilent) {
         experimentReporter.logSummary();

@@ -1,12 +1,15 @@
 "use strict";
 
 const {
+  DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES,
   POSITION_LIFECYCLE_EVENTS,
   POSITION_LIFECYCLE_STATES,
   beginPositionExit,
   closePositionLifecycle,
   enterManagedRecovery,
-  getPositionLifecycleState
+  getManagedRecoveryPolicy,
+  getPositionLifecycleState,
+  resolveLifecycleEventFromReasons
 } = require("../src/roles/positionLifecycleManager.ts");
 
 function createPosition(overrides = {}) {
@@ -68,6 +71,14 @@ function runPositionLifecycleManagerTests() {
   });
   if (invalidDirectClose.allowed !== false || !String(invalidDirectClose.error || "").includes("invalid_position_lifecycle_transition")) {
     throw new Error(`invalid direct ACTIVE -> CLOSED transition should be prevented explicitly: ${JSON.stringify(invalidDirectClose)}`);
+  }
+
+  const defaultPolicy = getManagedRecoveryPolicy(null);
+  if (defaultPolicy.maxConsecutiveEntries !== DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES) {
+    throw new Error(`managed recovery policy should expose the default breaker threshold: ${JSON.stringify(defaultPolicy)}`);
+  }
+  if (resolveLifecycleEventFromReasons(["managed_recovery_breaker_exit"]) !== POSITION_LIFECYCLE_EVENTS.MANAGED_RECOVERY_BREAKER_HIT) {
+    throw new Error("managed recovery breaker reason should map to an explicit lifecycle event");
   }
 }
 

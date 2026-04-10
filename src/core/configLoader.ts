@@ -2,6 +2,7 @@
 
 import type { BotConfig } from "../types/bot.ts";
 import type { MarketStreamConfig, MarketMode } from "../types/market.ts";
+import type { PortfolioKillSwitchConfig, RuntimeTuningConfig } from "../types/runtime.ts";
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -10,6 +11,7 @@ const VALID_RISK_PROFILES = new Set(["low", "medium", "high"]);
 const VALID_MARKET_PROVIDERS = new Set(["binance"]);
 const VALID_MARKET_STREAM_TYPES = new Set(["trade", "aggTrade"]);
 const VALID_RISK_OVERRIDE_FIELDS = new Set(["positionPct", "cooldownMs", "emergencyStopPct", "postExitReentryGuardMs", "exitConfirmationTicks", "minHoldMs"]);
+const VALID_PORTFOLIO_KILL_SWITCH_MODES = new Set(["block_entries_only"]);
 
 class ConfigLoader {
   rootDir: string;
@@ -25,9 +27,14 @@ class ConfigLoader {
 
   loadBotsConfig(): {
     bots: BotConfig[];
+    architectPublishIntervalMs?: number;
+    architectWarmupMs?: number;
     executionMode?: "paper" | "live";
     marketMode?: MarketMode;
     market?: MarketStreamConfig;
+    portfolioKillSwitch?: PortfolioKillSwitchConfig;
+    postLossLatchMinFreshPublications?: number;
+    symbolStateRetentionMs?: number;
   } {
     const config = this.loadJson("./data/bots.config.json");
     this.validateRuntimeConfig(config);
@@ -115,9 +122,13 @@ class ConfigLoader {
   }
 
   validateRuntimeConfig(config: {
+    architectPublishIntervalMs?: number;
+    architectWarmupMs?: number;
     executionMode?: string;
     marketMode?: string;
     market?: MarketStreamConfig | unknown;
+    portfolioKillSwitch?: PortfolioKillSwitchConfig | unknown;
+    postLossLatchMinFreshPublications?: number;
   }) {
     if (config.executionMode !== undefined) {
       const executionMode = String(config.executionMode || "").trim().toLowerCase();
@@ -164,6 +175,58 @@ class ConfigLoader {
         if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
           throw new Error(`bots.config.json has invalid market.liveEmitIntervalMs "${String(market.liveEmitIntervalMs)}"`);
         }
+      }
+    }
+
+    if (config.portfolioKillSwitch !== undefined) {
+      if (!config.portfolioKillSwitch || typeof config.portfolioKillSwitch !== "object" || Array.isArray(config.portfolioKillSwitch)) {
+        throw new Error("bots.config.json has invalid portfolioKillSwitch; expected an object");
+      }
+
+      const portfolioKillSwitch = config.portfolioKillSwitch as Record<string, unknown>;
+      if (portfolioKillSwitch.enabled !== undefined && typeof portfolioKillSwitch.enabled !== "boolean") {
+        throw new Error(`bots.config.json has invalid portfolioKillSwitch.enabled "${String(portfolioKillSwitch.enabled)}"`);
+      }
+      if (portfolioKillSwitch.maxDrawdownPct !== undefined) {
+        const maxDrawdownPct = Number(portfolioKillSwitch.maxDrawdownPct);
+        if (!Number.isFinite(maxDrawdownPct) || maxDrawdownPct <= 0) {
+          throw new Error(`bots.config.json has invalid portfolioKillSwitch.maxDrawdownPct "${String(portfolioKillSwitch.maxDrawdownPct)}"`);
+        }
+      }
+      if (portfolioKillSwitch.mode !== undefined && !VALID_PORTFOLIO_KILL_SWITCH_MODES.has(String(portfolioKillSwitch.mode || "").trim())) {
+        throw new Error(`bots.config.json has invalid portfolioKillSwitch.mode "${String(portfolioKillSwitch.mode || "")}"`);
+      }
+    }
+
+    this.validateRuntimeTuningConfig(config);
+  }
+
+  validateRuntimeTuningConfig(config: RuntimeTuningConfig) {
+    if (config.architectWarmupMs !== undefined) {
+      const architectWarmupMs = Number(config.architectWarmupMs);
+      if (!Number.isFinite(architectWarmupMs) || architectWarmupMs < 5_000) {
+        throw new Error(`bots.config.json has invalid architectWarmupMs "${String(config.architectWarmupMs)}"`);
+      }
+    }
+
+    if (config.architectPublishIntervalMs !== undefined) {
+      const architectPublishIntervalMs = Number(config.architectPublishIntervalMs);
+      if (!Number.isFinite(architectPublishIntervalMs) || architectPublishIntervalMs < 5_000) {
+        throw new Error(`bots.config.json has invalid architectPublishIntervalMs "${String(config.architectPublishIntervalMs)}"`);
+      }
+    }
+
+    if (config.postLossLatchMinFreshPublications !== undefined) {
+      const postLossLatchMinFreshPublications = Number(config.postLossLatchMinFreshPublications);
+      if (!Number.isFinite(postLossLatchMinFreshPublications) || postLossLatchMinFreshPublications < 1) {
+        throw new Error(`bots.config.json has invalid postLossLatchMinFreshPublications "${String(config.postLossLatchMinFreshPublications)}"`);
+      }
+    }
+
+    if (config.symbolStateRetentionMs !== undefined) {
+      const symbolStateRetentionMs = Number(config.symbolStateRetentionMs);
+      if (!Number.isFinite(symbolStateRetentionMs) || symbolStateRetentionMs < 60_000) {
+        throw new Error(`bots.config.json has invalid symbolStateRetentionMs "${String(config.symbolStateRetentionMs)}"`);
       }
     }
   }

@@ -6,7 +6,7 @@ import type { ContextSnapshot } from "./context.ts";
 import type { MarketTick } from "./market.ts";
 import type { PerformanceSnapshot } from "./performance.ts";
 import type { IndicatorSnapshot, Strategy, StrategyDecision } from "./strategy.ts";
-import type { ClosedTradeRecord, PositionRecord } from "./trade.ts";
+import type { ClosedTradeRecord, PositionRecord, TradeDirection } from "./trade.ts";
 
 export interface LoggerLike {
   info(message: string, metadata?: Record<string, unknown>): void;
@@ -26,6 +26,49 @@ export interface RiskProfileSettings {
   minHoldMs: number;
   positionPct: number;
   reentryCooldownMs: number;
+}
+
+export type PortfolioKillSwitchMode = "block_entries_only";
+
+export interface PortfolioKillSwitchConfig {
+  enabled: boolean;
+  maxDrawdownPct: number;
+  mode: PortfolioKillSwitchMode;
+}
+
+export interface PortfolioKillSwitchState extends PortfolioKillSwitchConfig {
+  availableBalanceUsdt: number;
+  blockingEntries: boolean;
+  currentEquityUsdt: number;
+  drawdownPct: number;
+  initialEquityUsdt: number;
+  openPositionCount: number;
+  openPositionMarkNotionalUsdt: number;
+  peakEquityUsdt: number;
+  reason: string | null;
+  realizedPnl: number;
+  triggered: boolean;
+  triggeredAt: number | null;
+  unrealizedPnl: number;
+  updatedAt: number | null;
+}
+
+export interface SymbolStateRetentionSnapshot {
+  lastCleanupAt: number | null;
+  lastEvictedAt: number | null;
+  lastEvictedSymbols: string[];
+  protectedSymbols: string[];
+  staleAfterMs: number;
+  staleCandidateSymbols: string[];
+  totalEvictedSymbols: number;
+  trackedSymbols: string[];
+}
+
+export interface RuntimeTuningConfig {
+  architectPublishIntervalMs?: number;
+  architectWarmupMs?: number;
+  postLossLatchMinFreshPublications?: number;
+  symbolStateRetentionMs?: number;
 }
 
 export interface TradeConstraints {
@@ -49,6 +92,7 @@ export interface ExecutionCloseParams {
   lifecycleState?: unknown;
   price: number;
   reason: string[];
+  timestamp?: number;
 }
 
 export interface StrategySwitchPlan {
@@ -69,6 +113,10 @@ export interface BotStateStoreLike {
   getContextSnapshot(symbol: string): ContextSnapshot | null;
   getArchitectPublishedAssessment(symbol: string): ArchitectAssessment | null;
   getArchitectPublisherState(symbol: string): ArchitectPublisherState | null;
+  getPortfolioKillSwitchState?(options?: {
+    feeRate?: number;
+    now?: number;
+  }): PortfolioKillSwitchState;
   recordBotEvaluation(botId: string, symbol: string, evaluatedAt: number): void;
   recordExecution(
     botId: string,
@@ -98,6 +146,18 @@ export interface ExecutionEngineLike {
     grossPnl: number;
     netPnl: number;
     quantity: number;
+    side: TradeDirection;
+  };
+  calculateUnrealizedEconomics?(position: PositionRecord, markPriceInput: number): {
+    entryNotionalUsdt: number;
+    entryPrice: number;
+    fees: number;
+    grossPnl: number;
+    markNotionalUsdt: number;
+    markPrice: number;
+    netPnl: number;
+    quantity: number;
+    side: TradeDirection;
   };
   getTradeConstraints?(): TradeConstraints;
   openLong(params: ExecutionOpenParams): PositionRecord | null;
@@ -111,6 +171,7 @@ export interface RiskManagerLike {
   canOpenTrade(params: {
     now: number;
     performance: PerformanceSnapshot;
+    portfolioKillSwitch?: PortfolioKillSwitchState | null;
     positionOpen: boolean;
     riskProfile: RiskProfile;
     riskOverrides?: RiskOverrides | null;

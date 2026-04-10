@@ -184,6 +184,12 @@ function runContextServiceTests() {
   if (!afterInputChange || createSnapshotCalls !== 2) {
     throw new Error(`context should rebuild once the effective input window changes: ${createSnapshotCalls}`);
   }
+  spyService.pruneSymbols([symbol]);
+  if (spyService.readyLoggedBySymbol.has(symbol)
+    || spyService.lastWindowModeBySymbol.has(symbol)
+    || spyService.lastRebuildSignatureBySymbol.has(symbol)) {
+    throw new Error("context service should drop symbol-scoped memoization when state store cleanup evicts a symbol");
+  }
   if (spyService.resolveDataMode([
     { price: 100, source: "ws", symbol, timestamp: start },
     { price: 101, source: "rest", symbol, timestamp: start + 1_000 }

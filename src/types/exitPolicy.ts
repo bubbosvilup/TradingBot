@@ -37,6 +37,7 @@ export interface ExitPolicy {
   recovery: {
     targetSource: RecoveryTargetSource;
     targetOffsetPct: number;
+    maxConsecutiveEntries?: number;
     timeoutTicks?: number;
     timeoutMs?: number;
   };

@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 
 const { compareStrategyModes } = require("../legacy/backtest");
+const { BacktestEngine } = require("../src/engines/backtestEngine.ts");
 
 function makeCandle(timestamp, open, high, low, close, volume) {
   return [timestamp, open, high, low, close, volume];
@@ -84,7 +85,7 @@ function buildReplayEligibleHistories(symbol, startPrice, hourlyDrift) {
   };
 }
 
-function runBacktestTests() {
+async function runBacktestTests() {
   const config = {
     AGGRESSIVE_EDGE_MULT: 0.72,
     AGGRESSIVE_ENTRY_MIN_SCORE_DELTA: 1,
@@ -178,6 +179,46 @@ function runBacktestTests() {
     symbolHistories: histories
   });
   assert.equal(aggressiveReport.strategyProfile, "aggressive");
+
+  const engine = new BacktestEngine();
+  const engineReport = engine.compareStrategyModes({
+    baseConfig: config,
+    symbolHistories: histories
+  });
+  assert.equal(engineReport.symbolCount, report.symbolCount);
+  assert.equal(engineReport.modes.length, report.modes.length);
+  assert.equal(engineReport.strategyProfile, "normal");
+
+  const readiness = await engine.run();
+  assert.equal(readiness.ok, true);
+  assert.equal(readiness.capabilities.source, "legacy_adapter");
+  assert.equal(readiness.capabilities.runBacktestJob, true);
+
+  const delegatedCalls = [];
+  const delegatedEngine = new BacktestEngine({
+    compareStrategyModes(params) {
+      delegatedCalls.push({ type: "compare", params });
+      return { ok: true, type: "compare" };
+    },
+    async runBacktestJob(params) {
+      delegatedCalls.push({ type: "job", params });
+      return { ok: true, type: "job" };
+    }
+  });
+  const delegatedCompare = await delegatedEngine.run({
+    baseConfig: config,
+    symbolHistories: histories
+  });
+  assert.equal(delegatedCompare.type, "compare");
+  const delegatedJob = await delegatedEngine.runJob({
+    activeSymbols: ["BTC/USDT"],
+    baseConfig: config,
+    request: { days: 2 }
+  });
+  assert.equal(delegatedJob.type, "job");
+  assert.equal(delegatedCalls.length, 2);
+  assert.equal(delegatedCalls[0].type, "compare");
+  assert.equal(delegatedCalls[1].type, "job");
 }
 
 module.exports = {

@@ -1,360 +1,304 @@
 # TradingBot
 
-Runtime multi-bot modulare per **paper trading** e **osservabilità realtime** su mercati Spot.
+Runtime multi-bot per paper trading, osservabilita realtime e refactor progressivo del motore decisionale.
 
-## Architettura
+Il progetto mantiene nel repository alcune fondamenta per lavori futuri come live readiness, backtest moderno e short support, ma il runtime attivo resta intenzionalmente limitato e difensivo.
 
-Il sistema segue un flusso decisionale stratificato:
+## Stato attuale
 
-```
-Binance/mock feed
+| Aspetto | Stato attuale |
+|---|---|
+| Execution | Solo `paper` |
+| Market feed runtime attivo | Solo `live` market data |
+| Live order routing | Disabilitato dal runtime attivo |
+| Dashboard | Frontend statico servito da `public/` con asset JS browser-ready |
+| Backtest | Adapter moderno sopra il legacy, non ancora parita completa |
+| Short support | Preparazione avviata, non abilitato |
+
+Nota importante:
+- `execution-mode=live` fallisce esplicitamente in bootstrap.
+- Il runtime attivo non deve inizializzare o percorrere accidentalmente il path live.
+- La presenza di codice live nel repository non implica live readiness.
+
+## Flusso architetturale
+
+```text
+Binance market data
   -> streams
-  -> stateStore (fonte unica di verità in memoria)
-  -> ContextService     (feature engineering rolling)
-  -> ArchitectService   (regime classification e family routing)
-  -> TradingBot         (orchestrazione entry/exit/execution)
-  -> executionEngine    (paper execution)
-  -> UI/API             (dashboard e observability)
+  -> StateStore
+  -> ContextService
+  -> ArchitectService
+  -> TradingBot
+  -> ExecutionEngine
+  -> SystemServer / dashboard
 ```
 
-Principi chiave:
-- **Context informa** — costruisce indicatori e feature rolling per simbolo
-- **Architect decide** — classifica il regime e pubblica la famiglia strategica consigliata
-- **TradingBot orchestra** — coordina entry, exit e execution entro il perimetro Architect
-- **Coordinatori dedicati** — gestiscono flussi locali (entry gate, open attempt, exit outcome, latch post-loss, telemetry)
+Responsabilita chiave:
+- `StateStore` e la fonte unica di verita in memoria.
+- `ContextService` costruisce il contesto rolling per simbolo.
+- `ArchitectService` pubblica regime e family consigliata.
+- `TradingBot` orchestra entry, exit e execution entro il perimetro Architect.
+- I coordinatori in `src/roles/` possiedono i flussi locali: entry gating, open attempt, exit decision, exit outcome, latch post-loss, telemetry.
 
-Vincoli preservati:
-- I bot non leggono direttamente Binance
-- La UI non legge direttamente gli stream
-- Il market regime non è deciso dentro il bot esecutivo
-- Le decisioni Architect sono separate dal rumore per-tick
-- Il routing strategico dipende dal family state pubblicato, non da switch hardcoded
+Vincoli architetturali preservati:
+- Il bot non decide il regime di mercato da solo.
+- Il routing strategico non torna a essere hardcoded dentro `TradingBot`.
+- La dashboard legge solo le API del runtime, non i sorgenti TypeScript UI.
+- Il path live futuro resta preservato ma segregato dal runtime attivo.
 
-## Stato operativo
+## Aggiornamenti del 2026-04-10
 
-| Aspetto            | Stato                |
-|--------------------|----------------------|
-| Architettura       | Multi-bot attiva     |
-| Feed market        | `mock` o `live` (Binance WebSocket) |
-| Execution mode     | Solo `paper` (nessun ordine reale) |
-| State store        | In-memory, fonte unica di verità |
-| UI / API           | Dashboard locale con dati bot, prezzi, posizioni, eventi, trade history |
-| Backtest           | Legacy engine disponibile |
+Questi sono i lavori principali completati oggi e allineati al repository corrente.
 
-## Cosa fa oggi
+### Sicurezza runtime
 
-- Avvia **più bot indipendenti** in parallelo
-- Riceve prezzi realtime via Binance Spot WebSocket in modalità `live`
-- Usa un feed simulato in modalità `mock`
-- Mantiene prezzi, posizioni, ordini, performance ed eventi nello `stateStore`
-- Classifica il mercato in `trend`, `range`, `volatile`, `unclear`
-- Mappa il regime a una famiglia strategica:
-  - `trend` → `trend_following`
-  - `range` → `mean_reversion`
-  - `volatile` → `no_trade`
-  - `unclear` → `no_trade`
-- Pubblica una decisione Architect stabile ogni ~30 secondi
-- Riallinea i bot alla famiglia pubblicata solo quando sono flat
-- Mantieni le posizioni aperte anche se il regime cambia
-- Gestisce exit policy strutturate con lifecycle esplicito per posizione
-- Supporta **managed recovery** per mean reversion dopo RSI exit deboli
-- Applica **post-loss Architect latch** basato sui publish fresh dell'Architect
-- Registra lifecycle, close classification, close reason e timing di uscita
-- Espone dashboard e API di osservabilità
+- Segregato il path live dal runtime attivo.
+- `execution-mode=live` ora fallisce fast con messaggio esplicito.
+- Il runtime attivo non avvia user stream live e non attraversa branch di execution live.
+- Quarantinato il profilo tossico `allow_small_loss_floor05`.
+- Aggiunto breaker per managed recovery con limite esplicito sui cicli consecutivi.
+- Aggiunto portfolio-wide kill switch con modalita iniziale `block_entries_only`.
+- Distinte in modo chiaro due semantiche diverse:
+  - pausa bot per `max_drawdown_reached`
+  - blocco condiviso per `portfolio_kill_switch_active`
 
-## Cosa NON fa ancora
+### Telemetry ed economics
 
-- ❌ Non esegue ordini reali su Binance
-- ❌ Non garantisce profittabilità
-- ❌ Non è un terminale professionale
-- ❌ La famiglia `breakout` non è ancora instradata nel flow Architect standard
+- `unrealizedPnl` e ora fee-aware nel runtime e nei payload server/dashboard.
+- `closedAt` usa il timestamp del tick/evento quando il runtime lo ha gia disponibile.
+- La reportistica managed recovery e stata resa piu conservativa e meno ambigua:
+  - closed outcomes distinti dagli eventi deferred ancora aperti
+  - breaker exits espliciti
+  - minore rischio di metriche fuorvianti
+- Corretto il vecchio bug di telemetry sul max drawdown:
+  - la pausa con resume manuale emette sempre metadata espliciti e machine-readable
+  - questo vale anche in `LOG_TYPE=verbose`
+- Corretto il mismatch sui diagnostici Architect:
+  - `warmupRemainingMs` usa il vero `architectWarmupMs`
+  - non un valore hardcoded obsoleto
+- `/api/system` e `/api/bots` espongono ora in modo esplicito:
+  - `portfolioKillSwitch`
+  - `pausedReason`
+  - `manualResumeRequired`
+  - conteggio bot in pausa e bot che richiedono resume manuale
 
-> **Nota di sicurezza:** anche con `MARKET_MODE=live`, il sistema esegue solo paper trading. Se viene richiesto `EXECUTION_MODE=live`, il runtime forza `paper` e lo dichiara nei log.
+### Runtime hygiene e costo operativo
 
-## Exit Architecture
+- Aggiunta retention conservativa dello stato per simbolo in `StateStore`.
+- Lo stato simbolo non cresce piu senza limite per simboli morti o inattivi.
+- I simboli protetti non vengono evitti se:
+  - appartengono a bot registrati
+  - hanno posizioni aperte
+- `ContextService` ripulisce la propria cache per simboli evitti.
+- Ridotto il costo del REST fallback:
+  - refresh ristretto ai simboli stale
+  - skip dei simboli ancora freschi
+  - batch `fetchTickers(...)` quando utile
 
-Le posizioni transitano attraverso stati runtime espliciti:
+### UI e serving
 
-```
-ACTIVE → MANAGED_RECOVERY → EXITING → CLOSED
-```
+- La dashboard non dipende piu da import browser di file TypeScript raw da `src/ui/*.ts`.
+- `public/index.html` carica asset JS servibili dal browser:
+  - `/ui/chartAdapter.js`
+  - `/ui/dashboardAdapter.js`
+- `SystemServer` serve la UI dal path statico `public/ui/`.
 
-Eventi lifecycle:
-| Evento                   | Descrizione                              |
-|--------------------------|------------------------------------------|
-| `RSI_EXIT_HIT`           | Segnale RSI di uscita attivato           |
-| `PRICE_TARGET_HIT`       | Target di prezzo raggiunto               |
-| `REGIME_INVALIDATION`    | Il contesto Architect invalida la tesi   |
-| `PROTECTIVE_STOP_HIT`    | Stop protettivo della posizione          |
-| `RECOVERY_TIMEOUT`       | Timeout del managed recovery             |
-| `FAILED_RSI_EXIT`        | RSI exit che chiude in negativo          |
+### Backtest e prep futura
 
-Meccanismi di uscita distinti:
-| Meccanismo        | Quando si attiva                                  |
-|-------------------|---------------------------------------------------|
-| `qualification`   | Uscita guidata dal segnale (es. RSI exit confermato) |
-| `recovery`        | Posizione in managed recovery, chiude su target/timeout |
-| `protection`      | Uscita difensiva su soglie rischio/posizione      |
-| `invalidation`    | Uscita per morte della tesi (Architect context)   |
+- `src/engines/backtestEngine.ts` non e piu uno scaffold vuoto:
+  - e un adapter moderno sopra i moduli legacy preservati
+  - lo stato reale e `bridged_not_fully_migrated`
+- Avviata la prep per short support:
+  - tipi e helper economici side-ready
+  - nessuna abilitazione reale degli short nel runtime
 
-Per `rsiReversion` il flow è:
-1. L'RSI exit viene qualificato economicamente
-2. Se il net PnL stimato non basta → entra in **managed recovery**
-3. In managed recovery l'RSI viene ignorato come trigger
-4. Chiusura solo tramite: target recovery, invalidation, protective stop, o timeout
+### Performance e tuning
 
-Target recovery supportati: `emaSlow`, `emaBaseline`, `sma20`, `entryPrice`
+- Ridotto spreco nel hot path di `ContextBuilder`.
+- Resi configurabili a runtime:
+  - `architectWarmupMs`
+  - `architectPublishIntervalMs`
+  - `postLossLatchMinFreshPublications`
+- Config attiva corrente:
+  - warmup Architect `20000ms`
+  - publish interval `15000ms`
+  - post-loss latch `1` fresh publication minima
 
-## PnL dei trade chiusi
+### Verifica
 
-Il PnL è calcolato nel layer di execution:
+- La failure storica in `tests/tradingBot.test.js` sul max drawdown e stata risolta.
+- `npm test` passa sullo stato corrente del repository.
 
-```
-entryNotionalUsdt = entryPrice × quantity
-exitNotionalUsdt  = exitPrice × quantity
-grossPnl          = (exitPrice - entryPrice) × quantity
-fees              = (entryNotionalUsdt + exitNotionalUsdt) × feeRate
-netPnl            = grossPnl - fees
-```
-
-Il `feeRate` ha una sola fonte di verità: risolto a monte e iniettato nell'`ExecutionEngine`.
-
-## Strategie
-
-Famiglie attive di default:
-| Famiglia             | Strategia        |
-|----------------------|------------------|
-| `trend_following`    | `emaCross`       |
-| `mean_reversion`     | `rsiReversion`   |
-
-Strategie presenti nel repo:
-| Strategia        | Famiglia             | Routing Architect |
-|------------------|----------------------|-------------------|
-| `emaCross`       | `trend_following`    | ✅                |
-| `rsiReversion`   | `mean_reversion`     | ✅                |
-| `breakout`       | (configurabile)      | ⚠️ non instradata |
-
-## Logging
-
-Variabile: `LOG_TYPE=verbose|minimal|only_trades|strategy_debug`
-
-| Modalità         | Contenuto                                    |
-|------------------|----------------------------------------------|
-| `verbose`        | Output completo                              |
-| `minimal`        | Solo eventi runtime essenziali               |
-| `only_trades`    | Solo open/close/PnL e warning/error          |
-| `strategy_debug` | Setup, Buy, Sell, Block/Risk/Architect change |
-
-## Configurazione
+## Config runtime attiva
 
 File: `src/data/bots.config.json`
 
 ```json
 {
   "executionMode": "paper",
-  "marketMode": "mock",
-  "market": {
-    "provider": "binance",
-    "streamType": "trade",
-    "wsBaseUrl": "wss://stream.binance.com:9443",
-    "klineIntervals": ["1m", "5m", "1h"],
-    "liveEmitIntervalMs": 1000,
-    "mockIntervalMs": 1000
+  "marketMode": "live",
+  "architectWarmupMs": 20000,
+  "architectPublishIntervalMs": 15000,
+  "postLossLatchMinFreshPublications": 1,
+  "symbolStateRetentionMs": 1800000,
+  "portfolioKillSwitch": {
+    "enabled": true,
+    "maxDrawdownPct": 8,
+    "mode": "block_entries_only"
   },
-  "bots": [
-    {
-      "id": "bot_btc_trend",
-      "symbol": "BTC/USDT",
-      "strategy": "emaCross",
-      "enabled": true,
-      "riskProfile": "medium",
-      "allowedStrategies": ["emaCross", "rsiReversion", "breakout"],
-      "initialBalanceUsdt": 1000
-    }
-  ]
+  "experimentMetrics": {
+    "enabled": false,
+    "label": "quarantined_allow_small_loss_floor05",
+    "summaryIntervalMs": 60000
+  }
 }
 ```
 
-Override via environment:
+Bot attivi di default:
+- `bot_btc_trend` su `BTC/USDT` con `emaCross`
+- `bot_eth_reversion` su `ETH/USDT` con `rsiReversion`
+
+## Cosa fa oggi
+
+- Avvia piu bot indipendenti in parallelo.
+- Riceve market data live da Binance Spot.
+- Mantiene in memoria prezzi, posizioni, eventi, performance, contesto e stato Architect.
+- Classifica il regime e pubblica una family consigliata.
+- Riallinea i bot alla family pubblicata quando possono farlo in sicurezza.
+- Esegue solo paper execution.
+- Gestisce lifecycle posizione esplicito:
+  - `ACTIVE`
+  - `MANAGED_RECOVERY`
+  - `EXITING`
+  - `CLOSED`
+- Applica guardrail locali e di portafoglio.
+- Espone dashboard e API di osservabilita locale.
+
+## Guardrail principali
+
+- Managed recovery breaker:
+  - limita recovery loops ripetuti
+  - puo forzare una safety exit esplicita
+- Max drawdown pause per bot:
+  - lascia il bot in `paused`
+  - richiede resume manuale
+- Portfolio kill switch:
+  - blocca nuovi ingressi a livello di sistema
+  - non forza ancora flatten globale
+- Post-loss Architect latch:
+  - impedisce re-entry troppo aggressivi dopo una loss
+  - ora e configurabile a runtime
+
+## UI / API
+
+La dashboard locale viene servita da `SystemServer` e usa asset statici browser-ready.
+
+Endpoint principali:
+- `GET /api/system`
+- `GET /api/bots`
+- `GET /api/prices`
+- `GET /api/positions`
+- `GET /api/events`
+- `GET /api/trades`
+- `GET /api/chart`
+- `GET /api/analytics`
+
+Campi diagnostici rilevanti ora esposti:
+- stato portfolio kill switch
+- retention/cleanup dello symbol state
+- `pausedReason` per bot
+- `manualResumeRequired` per bot
+- diagnostica Architect published/observed/synthetic
+- latency di pipeline
+
+## Logging
+
+Variabile supportata:
+
 ```bash
-MARKET_MODE=mock          # o live
-EXECUTION_MODE=paper      # sempre paper
+LOG_TYPE=verbose|minimal|only_trades|strategy_debug
 ```
 
-## Struttura
-
-```
-src/
-  core/                         # Moduli core del runtime
-    orchestrator.ts             # Bootstrap del sistema
-    botManager.ts               # Gestione ciclo di vita bot
-    configLoader.ts             # Caricamento configurazione
-    stateStore.ts               # Stato centrale in memoria
-    strategyRegistry.ts         # Registry delle strategie
-    systemServer.ts             # API HTTP e server dashboard
-    wsManager.ts                # Gestione WebSocket e reconnect
-    contextService.ts           # Costruisce contesto rolling per simbolo
-    architectService.ts         # Pubblica regime/famiglia consigliata
-  bots/                         # Implementazione bot
-    baseBot.ts                  # Classe base per tutti i bot
-    tradingBot.ts               # Bot esecutivo principale
-  roles/                        # Coordinatori e ruoli dedicati
-    contextBuilder.ts           # Feature engineering rolling
-    botArchitect.ts             # Classificatore di regime (non esecutivo)
-    performanceMonitor.ts       # PnL, drawdown, win rate, profit factor
-    regimeDetector.ts           # Rilevamento regime di mercato
-    riskManager.ts              # Sizing, cooldown, drawdown, guardrail
-    strategySwitcher.ts         # Resolver famiglia → strategia
-    architectCoordinator.ts     # Sync / usability / apply Architect
-    entryEconomicsEstimator.ts  # Edge formulas strategy-specific entry
-    entryCoordinator.ts         # Entry gating e signal state
-    openAttemptCoordinator.ts   # Open attempt e execution rejection
-    entryOutcomeCoordinator.ts  # Final entry outcome shaping
-    exitOutcomeCoordinator.ts   # Final close outcome shaping
-    exitDecisionCoordinator.ts  # Exit decision planning
-    postLossArchitectLatch.ts   # Post-loss re-entry defense
-    positionLifecycleManager.ts # Stati e transizioni posizioni
-    recoveryTargetResolver.ts   # Resolver target di recovery
-    exitPolicyRegistry.ts       # Nome exit policy strutturate
-    tradingBotTelemetry.ts      # Metadata shaping per log/diagnostica
-  engines/
-    indicatorEngine.ts          # Calcolo indicatori tecnici
-    executionEngine.ts          # Paper execution
-    backtestEngine.ts           # Backtest engine
-  streams/
-    marketStream.ts             # Feed unificato mock | live
-    userStream.ts               # Eventi ordini/account
-  strategies/
-    emaCross/                   # Trend following
-    rsiReversion/               # Mean reversion
-    breakout/                   # Breakout (presente, non instradata di default)
-  data/
-    bots.config.json            # Configurazione bot
-    strategies.config.json      # Configurazione strategie
-  types/                        # Definizione TypeScript types
-  ui/                           # Componenti UI
-  utils/                        # Utilities
-
-public/                         # Frontend statico (dashboard)
-legacy/                         # Codice precedente (non parte del runtime principale)
-tests/                          # Test suite
-```
-
-## Componenti principali
-
-### Core
-| Modulo                  | Responsabilità                              |
-|-------------------------|---------------------------------------------|
-| `orchestrator.ts`       | Bootstrap e avvio del sistema               |
-| `stateStore.ts`         | Stato centrale in-memory (Map-based)        |
-| `systemServer.ts`       | API HTTP + server dashboard                 |
-| `wsManager.ts`          | WebSocket, heartbeat, reconnect             |
-| `contextService.ts`     | Contesto rolling per simbolo                |
-| `architectService.ts`   | Publish Architect decision (30s cadence)    |
-
-### Bot & Coordinatori
-| Modulo                          | Responsabilità                           |
-|---------------------------------|------------------------------------------|
-| `tradingBot.ts`                 | Orchestratore entry/exit/execution       |
-| `architectCoordinator.ts`       | Sync e apply della decisione Architect   |
-| `entryCoordinator.ts`           | Entry gating, signal streak              |
-| `openAttemptCoordinator.ts`     | Sizing e open attempt                    |
-| `entryOutcomeCoordinator.ts`    | Final entry outcome shaping              |
-| `exitOutcomeCoordinator.ts`     | Close trade outcome shaping              |
-| `postLossArchitectLatch.ts`     | Latch post-loss basato su publish fresh  |
-| `positionLifecycleManager.ts`   | Stati e transizioni posizioni            |
-| `tradingBotTelemetry.ts`        | Metadata log strutturato                 |
-
-### Risk & Performance
-| Modulo                          | Responsabilità                           |
-|---------------------------------|------------------------------------------|
-| `riskManager.ts`                | Sizing, cooldown, drawdown, loss streak  |
-| `performanceMonitor.ts`         | PnL, drawdown, win rate, profit factor   |
-| `exitPolicyRegistry.ts`         | Exit policy nominate                     |
-| `recoveryTargetResolver.ts`     | Target simbolici recovery                |
+Nota:
+- gli eventi di rischio critici per max drawdown non vengono piu persi in `verbose`
+- il runtime continua a emettere metadata strutturati per stato, blocchi e chiusure
 
 ## Avvio
 
-Standard:
+Avvio standard:
+
 ```bash
 npm start
 ```
 
-Realtime + paper execution:
-```bash
-MARKET_MODE=live EXECUTION_MODE=paper npm start
-```
-
 Smoke test rapido:
+
 ```bash
 node --experimental-strip-types src/core/orchestrator.ts --duration-ms=5000 --summary-ms=1000
 ```
 
+Nota operativa:
+- il runtime attivo richiede market data `live`
+- `EXECUTION_MODE=paper` e l'unica execution supportata
+- richieste `execution-mode=live` vengono rifiutate
+
 ## Test
+
+Suite completa:
 
 ```bash
 npm test
 ```
 
-La suite copre:
-- orchestrator
-- market stream / ws manager
-- context / architect service
-- strategy switcher
-- trading bot
-- system server
-- exit policy / recovery target resolver
-- position lifecycle manager
-- entry / exit coordinators
-- state store
-- trade constraints
-- logging runtime
-- runtime
+Verifica TypeScript:
 
-## UI / API
+```bash
+npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false
+```
 
-Avviando il bot, la dashboard è accessibile su `http://localhost:<port>` (porta stampata in console).
+## Limiti attuali
 
-Endpoint principali:
-| Endpoint              | Contenuto                        |
-|-----------------------|----------------------------------|
-| `GET /api/system`     | Snapshot completo del sistema    |
-| `GET /api/bots`       | Stato di tutti i bot             |
-| `GET /api/prices`     | Ultimi prezzi                    |
-| `GET /api/positions`  | Posizioni aperte                 |
-| `GET /api/events`     | Eventi recenti                   |
-| `GET /api/trades`     | Storico trade                    |
-| `GET /api/analytics`  | Metriche analitiche              |
+- Nessun ordine reale su exchange.
+- Nessuna live readiness end-to-end.
+- Nessuna parita completa del backtest moderno con il runtime attivo.
+- Nessun supporto short completo.
+- Nessun comando/API dedicato per resume manuale del bot dopo max drawdown.
 
-La dashboard mostra: bot attivi, market mode, stato stream, latenza pipeline, focus symbol, posizioni aperte, trade history, eventi recenti.
+## Struttura repository
 
-## Pipeline Latency
+```text
+src/
+  bots/
+  core/
+  engines/
+  roles/
+  streams/
+  strategies/
+  data/
+  types/
+  ui/
+  utils/
+public/
+legacy/
+tests/
+docs/
+```
 
-Il sistema traccia la latenza end-to-end del tick pipeline, scomposta in fasi:
-- **exchangeToReceive**: tempo network Binance → client
-- **receiveToState**: tempo ingresso WebSocket → stateStore update
-- **stateToBot**: tempo stateStore → bot evaluation
-- **botToExecution**: tempo decisione → execution attempt
+Hotspot da trattare con cautela:
+- `src/bots/tradingBot.ts`
+- `src/core/stateStore.ts`
+- `src/core/orchestrator.ts`
+- `src/core/systemServer.ts`
+- `src/roles/exitDecisionCoordinator.ts`
+- `src/streams/marketStream.ts`
+- `tests/tradingBot.test.js`
 
-Ogni fase ha metriche `average`, `last`, `max` e `recentWorstTotalMs` (peggiore ultimi 20 tick).
+## Legacy e futuro
 
-## Warm-up e Architect
-
-| Parametro           | Valore       |
-|---------------------|--------------|
-| Warm-up context     | 30 secondi   |
-| Publish Architect   | ~30 secondi  |
-| Hysteresis          | Sì (previene flap) |
-| Challenger persist. | Sì           |
-
-Il bot esecutivo:
-- Legge solo lo stato **published** dell'Architect
-- Non cambia famiglia con una posizione aperta
-- Si riallinea quando torna flat
-- Non chiude posizioni per cambio regime
-
-## Legacy
-
-Il codice precedente è isolato in `legacy/` e non fa parte del nuovo runtime principale.
-
-Per i test di backtest storici, è disponibile `scripts/backtest.js` (basato sul legacy engine).
+- Il codice in `legacy/` resta preservato per audit e migrazione graduale.
+- `BacktestEngine` oggi e un ponte verso il legacy, non il runtime finale di replay.
+- Il path live futuro resta nel repository ma non deve essere riattivato accidentalmente dal runtime attivo.
+- Il prossimo lavoro utile resta:
+  - backtest moderno piu integrato
+  - audit short support
+  - miglioramenti incrementali di performance e architettura

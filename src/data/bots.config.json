@@ -1,9 +1,18 @@
 {
   "executionMode": "paper",
   "marketMode": "live",
-  "experimentMetrics": {
+  "architectWarmupMs": 20000,
+  "architectPublishIntervalMs": 15000,
+  "postLossLatchMinFreshPublications": 1,
+  "symbolStateRetentionMs": 1800000,
+  "portfolioKillSwitch": {
     "enabled": true,
-    "label": "allow_small_loss_floor05",
+    "maxDrawdownPct": 8,
+    "mode": "block_entries_only"
+  },
+  "experimentMetrics": {
+    "enabled": false,
+    "label": "quarantined_allow_small_loss_floor05",
     "summaryIntervalMs": 60000
   },
   "market": {

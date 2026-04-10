@@ -237,7 +237,111 @@ function runMarketStreamLiveEmitIntervalTests() {
   })();
 }
 
+async function runMarketStreamRestFallbackTests() {
+  const originalDateNow = Date.now;
+  try {
+    Date.now = () => 1_000;
+    const store = new StateStore();
+    const logs = [];
+    const stream = new MarketStream({
+      logger: {
+        info(event, metadata) {
+          logs.push({ event, metadata });
+        },
+        warn(event, metadata) {
+          logs.push({ event, metadata });
+        },
+        error() {}
+      },
+      mode: "live",
+      store,
+      wsManager: new WSManager({
+        logger: { info() {}, warn() {}, error() {} },
+        websocketFactory(url) {
+          return new FakeWebSocket(url);
+        }
+      })
+    });
+    stream.symbols = ["BTC/USDT", "ETH/USDT"];
+
+    store.updatePrice({
+      price: 50000,
+      receivedAt: 1_000,
+      source: "ws",
+      symbol: "BTC/USDT",
+      timestamp: 1_000
+    });
+    store.updatePrice({
+      price: 3000,
+      receivedAt: 1_000,
+      source: "ws",
+      symbol: "ETH/USDT",
+      timestamp: 1_000
+    });
+
+    let fetchTickerCalls = 0;
+    let fetchTickersCalls = 0;
+    stream.fallbackExchange = {
+      async fetchTicker(symbol) {
+        fetchTickerCalls += 1;
+        return {
+          last: symbol === "BTC/USDT" ? 50100 : 3010,
+          timestamp: 7_000
+        };
+      },
+      async fetchTickers(symbols) {
+        fetchTickersCalls += 1;
+        return symbols.reduce((result, symbol) => {
+          result[symbol] = {
+            last: symbol === "BTC/USDT" ? 50100 : 3010,
+            timestamp: 7_000
+          };
+          return result;
+        }, {});
+      }
+    };
+
+    const skippedFresh = await stream.fetchRestSnapshot({ observedAt: 4_000 });
+    if (skippedFresh.method !== "skipped_fresh_symbols" || fetchTickerCalls !== 0 || fetchTickersCalls !== 0) {
+      throw new Error(`rest fallback should skip fresh symbols without touching the exchange: ${JSON.stringify({ skippedFresh, fetchTickerCalls, fetchTickersCalls })}`);
+    }
+
+    Date.now = () => 7_000;
+    const staleBatch = await stream.fetchRestSnapshot({ observedAt: 7_000 });
+    if (staleBatch.method !== "fetchTickers" || fetchTickersCalls !== 1 || fetchTickerCalls !== 0) {
+      throw new Error(`rest fallback should use a single batch fetch when multiple stale symbols need refresh: ${JSON.stringify({ staleBatch, fetchTickerCalls, fetchTickersCalls })}`);
+    }
+    if (store.getLatestPrice("BTC/USDT") !== 50100 || store.getLatestPrice("ETH/USDT") !== 3010) {
+      throw new Error("rest fallback batch refresh should update latest prices for all stale symbols");
+    }
+
+    Date.now = () => 9_000;
+    store.updatePrice({
+      price: 3015,
+      receivedAt: 9_000,
+      source: "ws",
+      symbol: "ETH/USDT",
+      timestamp: 9_000
+    });
+    const narrowed = await stream.fetchRestSnapshot({ observedAt: 12_000 });
+    if (narrowed.method !== "fetchTicker" || fetchTickerCalls !== 1) {
+      throw new Error(`rest fallback should narrow to only stale symbols when others are still fresh: ${JSON.stringify({ narrowed, fetchTickerCalls, fetchTickersCalls })}`);
+    }
+    if (!Array.isArray(narrowed.requestedSymbols) || narrowed.requestedSymbols.length !== 1 || narrowed.requestedSymbols[0] !== "BTC/USDT") {
+      throw new Error(`rest fallback should request only the stale symbol: ${JSON.stringify(narrowed)}`);
+    }
+
+    const snapshotLog = logs.find((entry) => entry.event === "market_rest_snapshot" && entry.metadata.method === "fetchTickers");
+    if (!snapshotLog || snapshotLog.metadata.skippedFreshSymbols !== 0 || snapshotLog.metadata.totalSymbols !== 2) {
+      throw new Error(`rest fallback diagnostics should report request scope and method clearly: ${JSON.stringify(logs)}`);
+    }
+  } finally {
+    Date.now = originalDateNow;
+  }
+}
+
 module.exports = {
   runMarketStreamTests,
-  runMarketStreamLiveEmitIntervalTests
+  runMarketStreamLiveEmitIntervalTests,
+  runMarketStreamRestFallbackTests
 };

@@ -55,6 +55,7 @@ const {
 } = require("../roles/positionLifecycleManager.ts");
 const { resolveExitPolicy } = require("../roles/exitPolicyRegistry.ts");
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../roles/recoveryTargetResolver.ts");
+const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
 const { ExitDecisionCoordinator } = require("../roles/exitDecisionCoordinator.ts") as {
   ExitDecisionCoordinator: new () => { resolve: (params: any) => ExitPlan; };
 };
@@ -252,6 +253,9 @@ class TradingBot extends BaseBot {
     // Local regime remains informational for strategy-local diagnostics only.
     // System-level family routing comes from the published Architect decision.
     const regime = this.deps.regimeDetector.detect(priceSeries);
+    const unrealizedPnl = position
+      ? this.estimateUnrealizedEconomics(position, tick.price).netPnl
+      : 0;
 
     return {
       botId: this.config.id,
@@ -274,7 +278,39 @@ class TradingBot extends BaseBot {
       strategyId: this.strategy.id,
       symbol: this.config.symbol,
       timestamp: tick.timestamp,
-      unrealizedPnl: position ? (tick.price - position.entryPrice) * position.quantity : 0
+      unrealizedPnl
+    };
+  }
+
+  estimateUnrealizedEconomics(position: PositionRecord, price: number) {
+    if (typeof this.deps.executionEngine?.calculateUnrealizedEconomics === "function") {
+      return this.deps.executionEngine.calculateUnrealizedEconomics(position, price);
+    }
+
+    const entryPrice = Math.max(Number(position?.entryPrice) || 0, 0);
+    const markPrice = Math.max(Number(price) || 0, 0);
+    const quantity = Math.max(Number(position?.quantity) || 0, 0);
+    const feeRate = Math.max(Number(this.deps.executionEngine?.feeRate) || 0, 0);
+    const side = normalizeTradeSide(position?.side);
+    const entryNotionalUsdt = entryPrice * quantity;
+    const markNotionalUsdt = markPrice * quantity;
+    const grossPnl = calculateDirectionalGrossPnl({
+      entryPrice,
+      exitPrice: markPrice,
+      quantity,
+      side
+    }).grossPnl;
+    const fees = (entryNotionalUsdt + markNotionalUsdt) * feeRate;
+    return {
+      entryNotionalUsdt,
+      entryPrice,
+      fees,
+      grossPnl,
+      markNotionalUsdt,
+      markPrice,
+      netPnl: grossPnl - fees,
+      quantity,
+      side
     };
   }
 
@@ -317,7 +353,15 @@ class TradingBot extends BaseBot {
   }
 
   logCompactRiskChange(metadata: Record<string, unknown>) {
-    this.emitCompactDescriptor(this.telemetry.buildCompactRiskDescriptor(this.strategy.id, metadata));
+    const descriptor = this.telemetry.buildCompactRiskDescriptor(this.strategy.id, metadata);
+    // Manual-resume-required drawdown pauses are critical runtime state changes.
+    // Emit them even in verbose mode so operators and tests do not lose the
+    // machine-readable pause semantics behind compact-log suppression.
+    if (this.getLogType() === "verbose" && metadata.manualResumeRequired === true) {
+      this.deps.logger.bot(this.config, descriptor.message, descriptor.metadata);
+      return;
+    }
+    this.emitCompactDescriptor(descriptor);
   }
 
   logCompactArchitectChange(metadata: Record<string, unknown>) {
@@ -648,9 +692,15 @@ class TradingBot extends BaseBot {
     const exitPrice = Math.max(Number(price) || 0, 0);
     const quantity = Math.max(Number(position?.quantity) || 0, 0);
     const feeRate = Math.max(Number(this.deps.executionEngine?.feeRate) || 0, 0);
+    const side = normalizeTradeSide(position?.side);
     const entryNotionalUsdt = entryPrice * quantity;
     const exitNotionalUsdt = exitPrice * quantity;
-    const grossPnl = (exitPrice - entryPrice) * quantity;
+    const grossPnl = calculateDirectionalGrossPnl({
+      entryPrice,
+      exitPrice,
+      quantity,
+      side
+    }).grossPnl;
     const fees = (entryNotionalUsdt + exitNotionalUsdt) * feeRate;
     return {
       entryNotionalUsdt,
@@ -660,7 +710,8 @@ class TradingBot extends BaseBot {
       fees,
       grossPnl,
       netPnl: grossPnl - fees,
-      quantity
+      quantity,
+      side
     };
   }
 
@@ -690,8 +741,10 @@ class TradingBot extends BaseBot {
 
   persistManagedRecoveryPosition(position: PositionRecord, metadata: Record<string, unknown>) {
     this.deps.store.setPosition(this.config.id, position);
+    const currentState = this.deps.store.getBotState(this.config.id);
     this.deps.store.updateBotState(this.config.id, {
-      exitSignalStreak: 0
+      exitSignalStreak: 0,
+      managedRecoveryConsecutiveCount: Math.max(Number(currentState?.managedRecoveryConsecutiveCount || 0), 0) + 1
     });
     this.deps.logger.bot(this.config, "rsi_exit_deferred", metadata);
     this.logCompactRiskChange({
@@ -1222,9 +1275,16 @@ class TradingBot extends BaseBot {
 
   handleEntryTick(snapshot: TradingTickDecisionContext) {
     const currentArchitectState = snapshot.architectState || this.evaluateArchitectStateForTick(snapshot, snapshot.tick.timestamp);
+    const portfolioKillSwitch = typeof this.deps.store.getPortfolioKillSwitchState === "function"
+      ? this.deps.store.getPortfolioKillSwitchState({
+          feeRate: Number(this.deps.executionEngine?.feeRate || 0),
+          now: snapshot.tick.timestamp
+        })
+      : null;
     const riskGate = this.deps.riskManager.canOpenTrade({
       now: snapshot.tick.timestamp,
       performance: snapshot.performance,
+      portfolioKillSwitch,
       positionOpen: false,
       riskProfile: this.config.riskProfile,
       riskOverrides: this.config.riskOverrides || null,
@@ -1487,7 +1547,8 @@ class TradingBot extends BaseBot {
       lifecycleEvent: exitPlan.lifecycleEvent || null,
       lifecycleState: "EXITING",
       price: snapshot.tick.price,
-      reason: exitPlan.reason
+      reason: exitPlan.reason,
+      timestamp: snapshot.tick.timestamp
     });
 
     if (!closedTrade) return;

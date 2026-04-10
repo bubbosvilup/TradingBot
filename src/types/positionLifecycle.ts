@@ -12,10 +12,12 @@ export type PositionLifecycleEvent =
   | "REGIME_INVALIDATION"
   | "PROTECTIVE_STOP_HIT"
   | "RECOVERY_TIMEOUT"
+  | "MANAGED_RECOVERY_BREAKER_HIT"
   | "FAILED_RSI_EXIT";
 
 export type PositionExitMechanism =
   | "qualification"
   | "recovery"
+  | "breaker"
   | "protection"
   | "invalidation";

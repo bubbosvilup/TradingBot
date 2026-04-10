@@ -7,6 +7,11 @@ import type { SystemEvent } from "../types/event.ts";
 import type { MarketKline, MarketTick, PriceSnapshot } from "../types/market.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
+import type {
+  PortfolioKillSwitchConfig,
+  PortfolioKillSwitchState,
+  SymbolStateRetentionSnapshot
+} from "../types/runtime.ts";
 
 interface PerformanceHistoryPoint {
   time: number;
@@ -101,6 +106,15 @@ interface WsConnectionSnapshot {
   mode: "live";
 }
 
+interface SymbolStateCleanupState {
+  lastCleanupAt: number | null;
+  lastEvictedAt: number | null;
+  lastEvictedSymbols: string[];
+  totalEvictedSymbols: number;
+}
+
+const DEFAULT_SYMBOL_STATE_RETENTION_MS = 30 * 60 * 1000;
+
 class StateStore {
   botConfigs: Map<string, BotConfig>;
   botStates: Map<string, BotRuntimeState>;
@@ -119,7 +133,12 @@ class StateStore {
   architectObservedBySymbol: Map<string, ArchitectAssessment>;
   architectPublishedBySymbol: Map<string, ArchitectAssessment>;
   architectPublisherBySymbol: Map<string, ArchitectPublisherState>;
+  symbolLastTouchedAtBySymbol: Map<string, number>;
+  symbolStateCleanupState: SymbolStateCleanupState;
+  symbolStateRetentionMs: number;
   events: SystemEvent[];
+  portfolioKillSwitchConfig: PortfolioKillSwitchConfig;
+  portfolioKillSwitchState: PortfolioKillSwitchState;
   maxEvents: number;
   maxPriceHistory: number;
   maxKlineHistory: number;
@@ -134,6 +153,7 @@ class StateStore {
     maxPerformanceHistory?: number;
     maxOrdersHistory?: number;
     maxClosedTradesHistory?: number;
+    symbolStateRetentionMs?: number;
   } = {}) {
     this.botConfigs = new Map();
     this.botStates = new Map();
@@ -152,7 +172,39 @@ class StateStore {
     this.architectObservedBySymbol = new Map();
     this.architectPublishedBySymbol = new Map();
     this.architectPublisherBySymbol = new Map();
+    this.symbolLastTouchedAtBySymbol = new Map();
+    this.symbolStateCleanupState = {
+      lastCleanupAt: null,
+      lastEvictedAt: null,
+      lastEvictedSymbols: [],
+      totalEvictedSymbols: 0
+    };
+    this.symbolStateRetentionMs = this.normalizeSymbolStateRetentionMs(options.symbolStateRetentionMs);
     this.events = [];
+    this.portfolioKillSwitchConfig = {
+      enabled: false,
+      maxDrawdownPct: 0,
+      mode: "block_entries_only"
+    };
+    this.portfolioKillSwitchState = {
+      availableBalanceUsdt: 0,
+      blockingEntries: false,
+      currentEquityUsdt: 0,
+      drawdownPct: 0,
+      enabled: false,
+      initialEquityUsdt: 0,
+      maxDrawdownPct: 0,
+      mode: "block_entries_only",
+      openPositionCount: 0,
+      openPositionMarkNotionalUsdt: 0,
+      peakEquityUsdt: 0,
+      reason: null,
+      realizedPnl: 0,
+      triggered: false,
+      triggeredAt: null,
+      unrealizedPnl: 0,
+      updatedAt: null
+    };
     this.maxEvents = Math.max(options.maxEvents || 250, 50);
     this.maxPriceHistory = Math.max(options.maxPriceHistory || 300, 50);
     this.maxKlineHistory = Math.max(options.maxKlineHistory || 300, 50);
@@ -177,6 +229,7 @@ class StateStore {
       entryBlockedCount: 0,
       entrySkippedCount: 0,
       entryOpenedCount: 0,
+      managedRecoveryConsecutiveCount: existingState?.managedRecoveryConsecutiveCount ?? 0,
       lastDecision: "hold",
       lastDecisionConfidence: 0,
       lastDecisionReasons: [],
@@ -252,6 +305,7 @@ class StateStore {
         totalPipelineMs: null
       });
     }
+    this.touchSymbol(config.symbol);
   }
 
   unregisterBot(botId: string) {
@@ -273,15 +327,7 @@ class StateStore {
       return;
     }
 
-    this.prices.delete(symbol);
-    this.priceHistoryRevisionBySymbol.delete(symbol);
-    this.klines.delete(symbol);
-    this.pipelineBySymbol.delete(symbol);
-    this.tickLatencyBySymbol.delete(symbol);
-    this.contextBySymbol.delete(symbol);
-    this.architectObservedBySymbol.delete(symbol);
-    this.architectPublishedBySymbol.delete(symbol);
-    this.architectPublisherBySymbol.delete(symbol);
+    this.deleteSymbolState(symbol);
   }
 
   updatePrice(tick: MarketTick) {
@@ -300,6 +346,7 @@ class StateStore {
       symbol: normalizedTick.symbol,
       updatedAt: normalizedTick.timestamp
     });
+    this.touchSymbol(tick.symbol, stateUpdatedAt);
     this.priceHistoryRevisionBySymbol.set(
       tick.symbol,
       (this.priceHistoryRevisionBySymbol.get(tick.symbol) || 0) + 1
@@ -317,6 +364,7 @@ class StateStore {
     const nextHistory = [...existing, normalizedKline];
     symbolMap.set(kline.interval, nextHistory.slice(-this.maxKlineHistory));
     this.klines.set(kline.symbol, symbolMap);
+    this.touchSymbol(kline.symbol, normalizedKline.receivedAt || Date.now());
   }
 
   getLatestPrice(symbol: string): number | null {
@@ -369,6 +417,9 @@ class StateStore {
 
   setPosition(botId: string, position: PositionRecord | null) {
     this.positions.set(botId, position);
+    if (position?.symbol) {
+      this.touchSymbol(position.symbol, position.openedAt || Date.now());
+    }
   }
 
   appendOrder(botId: string, order: OrderRecord) {
@@ -451,6 +502,7 @@ class StateStore {
     };
     next.totalPipelineMs = this.computeTotalPipelineMs(next);
     this.pipelineBySymbol.set(symbol, next);
+    this.touchSymbol(symbol, evaluatedAt);
   }
 
   recordExecution(
@@ -472,6 +524,7 @@ class StateStore {
     };
     next.totalPipelineMs = this.computeTotalPipelineMs(next);
     this.pipelineBySymbol.set(symbol, next);
+    this.touchSymbol(symbol, executedAt);
   }
 
   getPipelineSnapshot(symbol: string): PipelineSnapshot | null {
@@ -527,10 +580,12 @@ class StateStore {
       ...current,
       tickLatency: this.buildTickLatencySummary(accumulator)
     });
+    this.touchSymbol(symbol, recordedAt);
   }
 
   setContextSnapshot(symbol: string, snapshot: ContextSnapshot) {
     this.contextBySymbol.set(symbol, snapshot);
+    this.touchSymbol(symbol, snapshot?.observedAt || Date.now());
   }
 
   getContextSnapshot(symbol: string): ContextSnapshot | null {
@@ -543,6 +598,7 @@ class StateStore {
 
   setArchitectObservedAssessment(symbol: string, assessment: ArchitectAssessment) {
     this.architectObservedBySymbol.set(symbol, assessment);
+    this.touchSymbol(symbol, assessment?.updatedAt || Date.now());
   }
 
   getArchitectObservedAssessment(symbol: string): ArchitectAssessment | null {
@@ -551,6 +607,7 @@ class StateStore {
 
   setArchitectPublishedAssessment(symbol: string, assessment: ArchitectAssessment) {
     this.architectPublishedBySymbol.set(symbol, assessment);
+    this.touchSymbol(symbol, assessment?.updatedAt || Date.now());
   }
 
   getArchitectPublishedAssessment(symbol: string): ArchitectAssessment | null {
@@ -563,6 +620,7 @@ class StateStore {
 
   setArchitectPublisherState(symbol: string, state: ArchitectPublisherState) {
     this.architectPublisherBySymbol.set(symbol, state);
+    this.touchSymbol(symbol, this.resolvePublisherTouchedAt(state) || Date.now());
   }
 
   getArchitectPublisherState(symbol: string): ArchitectPublisherState | null {
@@ -610,6 +668,172 @@ class StateStore {
       architectPublisher: this.getAllArchitectPublisherStates(),
       wsConnections: this.getWsConnections()
     };
+  }
+
+  setSymbolStateRetentionMs(symbolStateRetentionMs: number | null | undefined) {
+    this.symbolStateRetentionMs = this.normalizeSymbolStateRetentionMs(symbolStateRetentionMs);
+  }
+
+  getSymbolStateSnapshot(options: { now?: number } = {}): SymbolStateRetentionSnapshot {
+    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+    const trackedSymbols = Array.from(this.collectTrackedSymbols()).sort();
+    const protectedSymbols = Array.from(this.getProtectedSymbols()).sort();
+    const protectedSet = new Set(protectedSymbols);
+    const staleCandidateSymbols = trackedSymbols.filter((symbol) => {
+      if (protectedSet.has(symbol)) {
+        return false;
+      }
+      const lastTouchedAt = this.resolveSymbolLastTouchedAt(symbol);
+      if (lastTouchedAt === null) {
+        return true;
+      }
+      return Math.max(0, observedAt - lastTouchedAt) >= this.symbolStateRetentionMs;
+    });
+
+    return {
+      lastCleanupAt: this.symbolStateCleanupState.lastCleanupAt,
+      lastEvictedAt: this.symbolStateCleanupState.lastEvictedAt,
+      lastEvictedSymbols: [...this.symbolStateCleanupState.lastEvictedSymbols],
+      protectedSymbols,
+      staleAfterMs: this.symbolStateRetentionMs,
+      staleCandidateSymbols,
+      totalEvictedSymbols: this.symbolStateCleanupState.totalEvictedSymbols,
+      trackedSymbols
+    };
+  }
+
+  evictStaleSymbolState(options: { now?: number } = {}) {
+    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+    const snapshot = this.getSymbolStateSnapshot({ now: observedAt });
+    const evictedSymbols: string[] = [];
+
+    for (const symbol of snapshot.staleCandidateSymbols) {
+      this.deleteSymbolState(symbol);
+      evictedSymbols.push(symbol);
+    }
+
+    this.symbolStateCleanupState = {
+      lastCleanupAt: observedAt,
+      lastEvictedAt: evictedSymbols.length > 0 ? observedAt : this.symbolStateCleanupState.lastEvictedAt,
+      lastEvictedSymbols: evictedSymbols.length > 0 ? evictedSymbols : this.symbolStateCleanupState.lastEvictedSymbols,
+      totalEvictedSymbols: this.symbolStateCleanupState.totalEvictedSymbols + evictedSymbols.length
+    };
+
+    return {
+      ...this.getSymbolStateSnapshot({ now: observedAt }),
+      evictedSymbols
+    };
+  }
+
+  setPortfolioKillSwitchConfig(config: Partial<PortfolioKillSwitchConfig> | null | undefined) {
+    const nextConfig: PortfolioKillSwitchConfig = {
+      enabled: Boolean(config?.enabled),
+      maxDrawdownPct: Number.isFinite(Number(config?.maxDrawdownPct))
+        ? Math.max(Number(config?.maxDrawdownPct), 0)
+        : 0,
+      mode: config?.mode === "block_entries_only" ? "block_entries_only" : "block_entries_only"
+    };
+    const initialEquityUsdt = this.getPortfolioInitialEquityUsdt();
+    this.portfolioKillSwitchConfig = nextConfig;
+    this.portfolioKillSwitchState = {
+      ...this.portfolioKillSwitchState,
+      blockingEntries: false,
+      enabled: nextConfig.enabled,
+      initialEquityUsdt,
+      maxDrawdownPct: nextConfig.maxDrawdownPct,
+      mode: nextConfig.mode,
+      peakEquityUsdt: Math.max(initialEquityUsdt, this.portfolioKillSwitchState.peakEquityUsdt || 0),
+      reason: null,
+      triggered: false,
+      triggeredAt: null,
+      updatedAt: null
+    };
+  }
+
+  getPortfolioKillSwitchState(options: { feeRate?: number; now?: number } = {}) {
+    const feeRate = Math.max(Number(options.feeRate) || 0, 0);
+    const updatedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+    const initialEquityUsdt = this.getPortfolioInitialEquityUsdt();
+    let availableBalanceUsdt = 0;
+    let openPositionCount = 0;
+    let openPositionMarkNotionalUsdt = 0;
+    let realizedPnl = 0;
+    let unrealizedPnl = 0;
+
+    for (const config of this.botConfigs.values()) {
+      const state = this.botStates.get(config.id) || null;
+      availableBalanceUsdt += Number(state?.availableBalanceUsdt ?? config.initialBalanceUsdt ?? 1000) || 0;
+      realizedPnl += Number(state?.realizedPnl || 0) || 0;
+
+      const position = this.positions.get(config.id) || null;
+      if (!position) {
+        continue;
+      }
+
+      openPositionCount += 1;
+      const latestPrice = this.getLatestPrice(position.symbol);
+      const markPrice = Number.isFinite(Number(latestPrice))
+        ? Number(latestPrice)
+        : Number(position.entryPrice || 0);
+      const quantity = Math.max(Number(position.quantity) || 0, 0);
+      const entryPrice = Math.max(Number(position.entryPrice) || 0, 0);
+      const entryNotionalUsdt = entryPrice * quantity;
+      const markNotionalUsdt = markPrice * quantity;
+      const grossPnl = (markPrice - entryPrice) * quantity;
+      const fees = (entryNotionalUsdt + markNotionalUsdt) * feeRate;
+
+      openPositionMarkNotionalUsdt += markNotionalUsdt;
+      unrealizedPnl += grossPnl - fees;
+    }
+
+    const currentEquityUsdt = initialEquityUsdt + realizedPnl + unrealizedPnl;
+    const previousPeakEquityUsdt = Math.max(
+      Number(this.portfolioKillSwitchState.peakEquityUsdt) || 0,
+      initialEquityUsdt
+    );
+    const peakEquityUsdt = this.portfolioKillSwitchState.triggered
+      ? previousPeakEquityUsdt
+      : Math.max(previousPeakEquityUsdt, currentEquityUsdt);
+    const drawdownPct = peakEquityUsdt > 0
+      ? Number((((peakEquityUsdt - currentEquityUsdt) / peakEquityUsdt) * 100).toFixed(4))
+      : 0;
+    const enabled = Boolean(this.portfolioKillSwitchConfig.enabled);
+    let triggered = enabled ? Boolean(this.portfolioKillSwitchState.triggered) : false;
+    let triggeredAt = enabled ? this.portfolioKillSwitchState.triggeredAt : null;
+    let reason = enabled && triggered ? this.portfolioKillSwitchState.reason : null;
+
+    if (
+      enabled
+      && !triggered
+      && this.portfolioKillSwitchConfig.maxDrawdownPct > 0
+      && drawdownPct >= this.portfolioKillSwitchConfig.maxDrawdownPct
+    ) {
+      triggered = true;
+      triggeredAt = updatedAt;
+      reason = "portfolio_max_drawdown_reached";
+    }
+
+    const nextState: PortfolioKillSwitchState = {
+      availableBalanceUsdt: Number(availableBalanceUsdt.toFixed(4)),
+      blockingEntries: enabled && triggered && this.portfolioKillSwitchConfig.mode === "block_entries_only",
+      currentEquityUsdt: Number(currentEquityUsdt.toFixed(4)),
+      drawdownPct,
+      enabled,
+      initialEquityUsdt: Number(initialEquityUsdt.toFixed(4)),
+      maxDrawdownPct: this.portfolioKillSwitchConfig.maxDrawdownPct,
+      mode: this.portfolioKillSwitchConfig.mode,
+      openPositionCount,
+      openPositionMarkNotionalUsdt: Number(openPositionMarkNotionalUsdt.toFixed(4)),
+      peakEquityUsdt: Number(peakEquityUsdt.toFixed(4)),
+      reason,
+      realizedPnl: Number(realizedPnl.toFixed(4)),
+      triggered,
+      triggeredAt,
+      unrealizedPnl: Number(unrealizedPnl.toFixed(4)),
+      updatedAt
+    };
+    this.portfolioKillSwitchState = nextState;
+    return nextState;
   }
 
   createPipelineSnapshot(symbol: string): PipelineSnapshot {
@@ -702,6 +926,131 @@ class StateStore {
 
   hasRegisteredBotForSymbol(symbol: string) {
     return Array.from(this.botConfigs.values()).some((config) => config.symbol === symbol);
+  }
+
+  getPortfolioInitialEquityUsdt() {
+    return Array.from(this.botConfigs.values()).reduce((sum, config) => {
+      return sum + (Number(config.initialBalanceUsdt) || 1000);
+    }, 0);
+  }
+
+  normalizeSymbolStateRetentionMs(symbolStateRetentionMs: number | null | undefined) {
+    const normalized = Number(symbolStateRetentionMs);
+    if (!Number.isFinite(normalized) || normalized < 60_000) {
+      return DEFAULT_SYMBOL_STATE_RETENTION_MS;
+    }
+    return Math.floor(normalized);
+  }
+
+  touchSymbol(symbol: string, touchedAt: number = Date.now()) {
+    const normalizedSymbol = String(symbol || "").trim();
+    if (!normalizedSymbol) {
+      return;
+    }
+    const normalizedTouchedAt = Number.isFinite(Number(touchedAt))
+      ? Number(touchedAt)
+      : Date.now();
+    const previousTouchedAt = this.symbolLastTouchedAtBySymbol.get(normalizedSymbol) || 0;
+    this.symbolLastTouchedAtBySymbol.set(
+      normalizedSymbol,
+      Math.max(previousTouchedAt, normalizedTouchedAt)
+    );
+  }
+
+  resolvePublisherTouchedAt(state: ArchitectPublisherState | null | undefined) {
+    const candidates = [
+      state?.lastObservedAt,
+      state?.lastPublishedAt,
+      state?.warmupStartedAt
+    ]
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+    return candidates.length > 0 ? Math.max(...candidates) : null;
+  }
+
+  collectTrackedSymbols() {
+    const trackedSymbols = new Set<string>();
+    const symbolMaps = [
+      this.prices,
+      this.priceHistoryRevisionBySymbol,
+      this.klines,
+      this.pipelineBySymbol,
+      this.tickLatencyBySymbol,
+      this.contextBySymbol,
+      this.architectObservedBySymbol,
+      this.architectPublishedBySymbol,
+      this.architectPublisherBySymbol,
+      this.symbolLastTouchedAtBySymbol
+    ];
+
+    for (const map of symbolMaps) {
+      for (const symbol of map.keys()) {
+        trackedSymbols.add(symbol);
+      }
+    }
+
+    for (const config of this.botConfigs.values()) {
+      if (config?.symbol) {
+        trackedSymbols.add(config.symbol);
+      }
+    }
+
+    for (const position of this.positions.values()) {
+      if (position?.symbol) {
+        trackedSymbols.add(position.symbol);
+      }
+    }
+
+    return trackedSymbols;
+  }
+
+  getProtectedSymbols() {
+    const protectedSymbols = new Set<string>();
+    for (const config of this.botConfigs.values()) {
+      if (config?.symbol) {
+        protectedSymbols.add(config.symbol);
+      }
+    }
+    for (const position of this.positions.values()) {
+      if (position?.symbol) {
+        protectedSymbols.add(position.symbol);
+      }
+    }
+    return protectedSymbols;
+  }
+
+  resolveSymbolLastTouchedAt(symbol: string) {
+    const pipeline = this.pipelineBySymbol.get(symbol) || null;
+    const publisher = this.architectPublisherBySymbol.get(symbol) || null;
+    const candidates = [
+      this.symbolLastTouchedAtBySymbol.get(symbol),
+      this.prices.get(symbol)?.updatedAt,
+      this.contextBySymbol.get(symbol)?.observedAt,
+      this.architectObservedBySymbol.get(symbol)?.updatedAt,
+      this.architectPublishedBySymbol.get(symbol)?.updatedAt,
+      pipeline?.lastExchangeTimestamp,
+      pipeline?.lastWsReceivedAt,
+      pipeline?.lastStateUpdatedAt,
+      pipeline?.lastBotEvaluatedAt,
+      pipeline?.lastExecutionAt,
+      this.resolvePublisherTouchedAt(publisher)
+    ]
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+    return candidates.length > 0 ? Math.max(...candidates) : null;
+  }
+
+  deleteSymbolState(symbol: string) {
+    this.prices.delete(symbol);
+    this.priceHistoryRevisionBySymbol.delete(symbol);
+    this.klines.delete(symbol);
+    this.pipelineBySymbol.delete(symbol);
+    this.tickLatencyBySymbol.delete(symbol);
+    this.contextBySymbol.delete(symbol);
+    this.architectObservedBySymbol.delete(symbol);
+    this.architectPublishedBySymbol.delete(symbol);
+    this.architectPublisherBySymbol.delete(symbol);
+    this.symbolLastTouchedAtBySymbol.delete(symbol);
   }
 }
 

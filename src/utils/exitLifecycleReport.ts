@@ -33,6 +33,7 @@ interface CloseSnapshot {
 const PRIMARY_CLOSE_REASONS = [
   "rsi_exit_deferred",
   "rsi_exit_confirmed",
+  "managed_recovery_breaker_exit",
   "reversion_price_target_hit",
   "regime_invalidation_exit",
   "protective_stop_exit",
@@ -96,6 +97,9 @@ function deriveExitMechanism(reason: string | null, lifecycleEvent: PositionLife
   }
   if (reason === "regime_invalidation_exit" || lifecycleEvent === "REGIME_INVALIDATION") {
     return "invalidation";
+  }
+  if (reason === "managed_recovery_breaker_exit" || lifecycleEvent === "MANAGED_RECOVERY_BREAKER_HIT") {
+    return "breaker";
   }
   if (reason === "reversion_price_target_hit" || reason === "time_exhaustion_exit" || lifecycleEvent === "PRICE_TARGET_HIT" || lifecycleEvent === "RECOVERY_TIMEOUT") {
     return "recovery";
@@ -221,7 +225,9 @@ function pairManagedRecoveryDefers(closeSnapshots: CloseSnapshot[], events: Even
 
   return {
     deferredEnteredCount: events.filter((entry) => entry.message === "rsi_exit_deferred").length,
-    deferredOutcomes
+    deferredOutcomes,
+    pairedClosedOutcomeCount: deferredOutcomes.length,
+    unpairedDeferredCount: Math.max(events.filter((entry) => entry.message === "rsi_exit_deferred").length - deferredOutcomes.length, 0)
   };
 }
 
@@ -291,18 +297,23 @@ function buildLatencySummary(closeSnapshots: CloseSnapshot[], deferredOutcomes: 
   };
 }
 
-function buildManagedRecoverySummary(closeSnapshots: CloseSnapshot[]) {
+function buildManagedRecoverySummary(closeSnapshots: CloseSnapshot[], deferredPairing: { deferredEnteredCount: number; pairedClosedOutcomeCount: number; unpairedDeferredCount: number }) {
   const managedRecoveryCloses = closeSnapshots.filter((snapshot) => snapshot.wasManagedRecovery);
   const byReason = (reason: string) => managedRecoveryCloses.filter((snapshot) => snapshot.closeReason === reason);
   return {
     avgNetPnlByExitType: {
+      breaker: groupAverage(byReason("managed_recovery_breaker_exit"), (snapshot) => snapshot.netPnl),
       invalidation: groupAverage(byReason("regime_invalidation_exit"), (snapshot) => snapshot.netPnl),
       protection: groupAverage(byReason("protective_stop_exit"), (snapshot) => snapshot.netPnl),
       target: groupAverage(byReason("reversion_price_target_hit"), (snapshot) => snapshot.netPnl),
       timeout: groupAverage(byReason("time_exhaustion_exit"), (snapshot) => snapshot.netPnl)
     },
+    deferredEventCount: deferredPairing.deferredEnteredCount,
+    pairedClosedOutcomeCount: deferredPairing.pairedClosedOutcomeCount,
+    unpairedDeferredCount: deferredPairing.unpairedDeferredCount,
     enteredCount: closeSnapshots.filter((snapshot) => snapshot.wasManagedRecovery).length,
     exitedBy: {
+      breaker: byReason("managed_recovery_breaker_exit").length,
       invalidation: byReason("regime_invalidation_exit").length,
       protection: byReason("protective_stop_exit").length,
       target: byReason("reversion_price_target_hit").length,
@@ -343,7 +354,7 @@ function buildExitLifecycleReport(params: {
   const closeSnapshots = buildCloseSnapshots({ closedTrades, events });
   const deferredPairing = pairManagedRecoveryDefers(closeSnapshots, events);
   const summary = buildReportSummary(closeSnapshots);
-  const managedRecovery = buildManagedRecoverySummary(closeSnapshots);
+  const managedRecovery = buildManagedRecoverySummary(closeSnapshots, deferredPairing);
   const rsi = buildRsiSummary(closeSnapshots, deferredPairing.deferredOutcomes, deferredPairing.deferredEnteredCount);
   const latch = analyzeLatch(events);
   const timing = buildLatencySummary(closeSnapshots, deferredPairing.deferredOutcomes);
@@ -391,8 +402,8 @@ function renderExitLifecycleReport(report: ReturnType<typeof buildExitLifecycleR
     "",
     renderMetricMap("By Exit Mechanism", report.summary.byExitMechanism),
     "",
-    `Managed recovery: entered=${report.rsi.deferredEnteredCount}, target=${report.managedRecovery.exitedBy.target}, timeout=${report.managedRecovery.exitedBy.timeout}, invalidation=${report.managedRecovery.exitedBy.invalidation}, protection=${report.managedRecovery.exitedBy.protection}`,
-    `Managed recovery avg netPnL: target=${report.managedRecovery.avgNetPnlByExitType.target ?? "n/a"}, timeout=${report.managedRecovery.avgNetPnlByExitType.timeout ?? "n/a"}, invalidation=${report.managedRecovery.avgNetPnlByExitType.invalidation ?? "n/a"}, protection=${report.managedRecovery.avgNetPnlByExitType.protection ?? "n/a"}`,
+    `Managed recovery: deferred=${report.managedRecovery.deferredEventCount}, pairedClosed=${report.managedRecovery.pairedClosedOutcomeCount}, openDeferred=${report.managedRecovery.unpairedDeferredCount}, breaker=${report.managedRecovery.exitedBy.breaker}, target=${report.managedRecovery.exitedBy.target}, timeout=${report.managedRecovery.exitedBy.timeout}, invalidation=${report.managedRecovery.exitedBy.invalidation}, protection=${report.managedRecovery.exitedBy.protection}`,
+    `Managed recovery avg netPnL: breaker=${report.managedRecovery.avgNetPnlByExitType.breaker ?? "n/a"}, target=${report.managedRecovery.avgNetPnlByExitType.target ?? "n/a"}, timeout=${report.managedRecovery.avgNetPnlByExitType.timeout ?? "n/a"}, invalidation=${report.managedRecovery.avgNetPnlByExitType.invalidation ?? "n/a"}, protection=${report.managedRecovery.avgNetPnlByExitType.protection ?? "n/a"}`,
     `RSI exits: confirmedProfitable=${report.rsi.confirmedProfitableCount}, failed=${report.rsi.failedCount}, deferredRecovered=${report.rsi.deferredRecoveredProfitableCount}, deferredNegative=${report.rsi.deferredEndedNegativeCount}`,
     `Post-loss latch: activations=${report.latch.activations}, blockedEntries=${report.latch.blockedEntries}, avgFreshPublishesBeforeRelease=${report.latch.avgFreshPublishesBeforeRelease ?? "n/a"}, releasedWithLaterEntry=${report.latch.releasedWithLaterEntryCount}`,
     `Timing: failedRsiAvgSignalToExecutionMs=${report.timing.failedRsiAvgSignalToExecutionMs ?? "n/a"}, recoveredDeferredAvgSignalToExecutionMs=${report.timing.recoveredDeferredAvgSignalToExecutionMs ?? "n/a"}, latencyToNetPnlCorrelation=${report.timing.latencyToNetPnlCorrelation ?? "n/a"}`

@@ -55,6 +55,7 @@ function runExitDecisionCoordinatorTests() {
       pnlExitFloorMode: "strict_net_positive"
     },
     recovery: {
+      maxConsecutiveEntries: 2,
       targetOffsetPct: 0.015,
       targetSource: "emaSlow",
       timeoutMs: 60_000
@@ -272,6 +273,41 @@ function runExitDecisionCoordinatorTests() {
   });
   if (deferredRsiPlan.exitNow || deferredRsiPlan.transition !== "managed_recovery" || !deferredRsiPlan.nextPosition || deferredRsiPlan.lifecycleEvent !== "RSI_EXIT_HIT" || !deferredRsiPlan.reason.includes("rsi_exit_deferred")) {
     throw new Error(`rsi deferred exit planning regressed: ${JSON.stringify(deferredRsiPlan)}`);
+  }
+
+  const breakerPlan = coordinator.resolve({
+    decision: {
+      action: "sell",
+      confidence: 0.9,
+      reason: ["rsi_exit_threshold_hit"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics() {
+      return { netPnl: 0.01 };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy,
+    managedRecoveryTarget: null,
+    minHoldMs: 15_000,
+    position: createPosition({
+      openedAt: 1_000,
+      quantity: 1,
+      strategyId: "rsiReversion"
+    }),
+    resolveInvalidationLevel() {
+      return null;
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 2,
+      managedRecoveryConsecutiveCount: 2
+    }),
+    tick: createTick({
+      price: 100.2,
+      timestamp: 20_000
+    })
+  });
+  if (!breakerPlan.exitNow || breakerPlan.exitMechanism !== "breaker" || breakerPlan.lifecycleEvent !== "MANAGED_RECOVERY_BREAKER_HIT" || breakerPlan.transition !== undefined || !breakerPlan.reason.includes("managed_recovery_breaker_exit")) {
+    throw new Error(`managed recovery breaker planning regressed: ${JSON.stringify(breakerPlan)}`);
   }
 
   const confirmedRsiPlan = coordinator.resolve({

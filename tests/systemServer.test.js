@@ -1,5 +1,9 @@
 "use strict";
 
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
 const { StateStore } = require("../src/core/stateStore.ts");
 const { SystemServer } = require("../src/core/systemServer.ts");
 
@@ -139,6 +143,18 @@ function runSystemServerTests() {
   store.updateBotState("bot_a", {
     architectSyncStatus: "synced"
   });
+  store.setPosition("bot_a", {
+    botId: "bot_a",
+    confidence: 0.7,
+    entryPrice: 66800,
+    id: "position-1",
+    notes: ["ema_cross_confirmed"],
+    openedAt: now - 60_000,
+    quantity: 0.02,
+    side: "long",
+    strategyId: "emaCross",
+    symbol: "BTC/USDT"
+  });
   store.appendClosedTrade("bot_a", {
     botId: "bot_a",
     closedAt: now,
@@ -157,9 +173,17 @@ function runSystemServerTests() {
     strategyId: "emaCross",
     symbol: "BTC/USDT"
   });
+  store.setPortfolioKillSwitchConfig({
+    enabled: true,
+    maxDrawdownPct: 8,
+    mode: "block_entries_only"
+  });
+  store.setSymbolStateRetentionMs(90_000);
 
   const server = new SystemServer({
+    architectWarmupMs: 20_000,
     executionMode: "paper",
+    feeRate: 0.001,
     feedMode: "live",
     logger: { info() {} },
     port: 3101,
@@ -178,11 +202,29 @@ function runSystemServerTests() {
   if (system.feedMode !== "live") {
     throw new Error("system payload missing feed mode");
   }
+  if (system.botsPaused !== 0 || system.botsManualResumeRequired !== 0) {
+    throw new Error(`system payload should distinguish paused/manual-resume counts even when zero: ${JSON.stringify(system)}`);
+  }
   if (system.executionMode !== "paper" || system.executionSafety !== "simulated_only") {
     throw new Error("system payload missing execution safety mode");
   }
+  if (!system.portfolioKillSwitch || system.portfolioKillSwitch.enabled !== true || system.portfolioKillSwitch.mode !== "block_entries_only") {
+    throw new Error(`system payload should expose portfolio kill switch state clearly: ${JSON.stringify(system)}`);
+  }
+  if (!system.symbolState
+    || system.symbolState.staleAfterMs !== 90_000
+    || !Array.isArray(system.symbolState.trackedSymbols)
+    || !system.symbolState.trackedSymbols.includes("BTC/USDT")) {
+    throw new Error(`system payload should expose symbol-state retention diagnostics clearly: ${JSON.stringify(system)}`);
+  }
   if (!Array.isArray(bots) || bots.length !== 1 || bots[0].botId !== "bot_a") {
     throw new Error("bots payload invalid");
+  }
+  if (!bots[0].portfolioKillSwitch || bots[0].portfolioKillSwitch.enabled !== true || bots[0].portfolioKillSwitch.triggered !== false) {
+    throw new Error(`bots payload should include the shared portfolio kill switch snapshot: ${JSON.stringify(bots[0])}`);
+  }
+  if (bots[0].pausedReason !== null || bots[0].manualResumeRequired !== false) {
+    throw new Error(`bots payload should keep bot-level pause semantics explicit and separate from portfolio kill switch state: ${JSON.stringify(bots[0])}`);
   }
   if (bots[0].architect?.recommendedFamily !== "trend_following" || bots[0].architect?.authoritative !== true) {
     throw new Error("bots payload missing published architect assessment");
@@ -220,6 +262,10 @@ function runSystemServerTests() {
   if (bots[0].performance?.avgTradePnlUsdt !== 0) {
     throw new Error("bots payload should expose avgTradePnlUsdt on performance");
   }
+  const expectedUnrealizedPnl = ((67000 - 66800) * 0.02) - ((66800 * 0.02) + (67000 * 0.02)) * 0.001;
+  if (Math.abs(Number(bots[0].openPosition?.unrealizedPnl) - expectedUnrealizedPnl) > 1e-9) {
+    throw new Error(`bots payload unrealizedPnl should be fee-aware net economics: ${JSON.stringify(bots[0].openPosition)}`);
+  }
   if (!Array.isArray(prices) || prices.length !== 1 || prices[0].symbol !== "BTC/USDT") {
     throw new Error("prices payload invalid");
   }
@@ -232,7 +278,7 @@ function runSystemServerTests() {
   if (!Array.isArray(chart.candles["1m"]) || chart.candles["1m"].length !== 1) {
     throw new Error("chart candle payload invalid");
   }
-  if (!Array.isArray(chart.markers) || chart.markers.length !== 2) {
+  if (!Array.isArray(chart.markers) || chart.markers.length !== 3) {
     throw new Error("chart marker payload invalid");
   }
   if (!Array.isArray(analytics.comparison) || analytics.comparison.length !== 1) {
@@ -240,6 +286,10 @@ function runSystemServerTests() {
   }
   if (!Array.isArray(trades) || trades.length !== 1 || trades[0].entryReason[0] !== "ema_cross_confirmed") {
     throw new Error("trades payload invalid");
+  }
+  const positions = server.buildPositionsPayload();
+  if (!Array.isArray(positions) || positions.length !== 1 || Math.abs(Number(positions[0].unrealizedPnl) - expectedUnrealizedPnl) > 1e-9) {
+    throw new Error(`positions payload unrealizedPnl should stay aligned with fee-aware server economics: ${JSON.stringify(positions)}`);
   }
 
   const observedOnlyStore = new StateStore();
@@ -300,6 +350,7 @@ function runSystemServerTests() {
     warmupStartedAt: now - 15_000
   });
   const observedOnlyBots = new SystemServer({
+    architectWarmupMs: 20_000,
     executionMode: "paper",
     feedMode: "live",
     logger: { info() {} },
@@ -368,6 +419,7 @@ function runSystemServerTests() {
     warmupStartedAt: now - 12_000
   });
   const syntheticBots = new SystemServer({
+    architectWarmupMs: 20_000,
     executionMode: "paper",
     feedMode: "live",
     logger: { info() {} },
@@ -380,6 +432,106 @@ function runSystemServerTests() {
   }
   if (syntheticBots[0].syntheticArchitect !== true || syntheticBots[0].architectFallback?.source !== "synthetic") {
     throw new Error("synthetic warm-up payload missing explicit synthetic architect marker");
+  }
+  if (syntheticBots[0].architectFallback?.warmupRemainingMs !== 8_000) {
+    throw new Error(`synthetic warm-up payload should respect configured architect warmup: ${JSON.stringify(syntheticBots[0].architectFallback)}`);
+  }
+
+  const pausedStore = new StateStore();
+  pausedStore.registerBot({
+    allowedStrategies: ["emaCross"],
+    enabled: true,
+    id: "bot_paused",
+    riskProfile: "medium",
+    strategy: "emaCross",
+    symbol: "XRP/USDT"
+  });
+  pausedStore.updateBotState("bot_paused", {
+    pausedReason: "max_drawdown_reached",
+    status: "paused"
+  });
+  pausedStore.setPortfolioKillSwitchConfig({
+    enabled: true,
+    maxDrawdownPct: 8,
+    mode: "block_entries_only"
+  });
+  const pausedServer = new SystemServer({
+    architectWarmupMs: 20_000,
+    executionMode: "paper",
+    feedMode: "live",
+    logger: { info() {} },
+    port: 3105,
+    startedAt: now - 1000,
+    store: pausedStore
+  });
+  const pausedSystem = pausedServer.buildSystemPayload();
+  const pausedBots = pausedServer.buildBotsPayload();
+  if (pausedSystem.botsPaused !== 1 || pausedSystem.botsManualResumeRequired !== 1) {
+    throw new Error(`system payload should count drawdown-paused bots requiring manual resume explicitly: ${JSON.stringify(pausedSystem)}`);
+  }
+  if (pausedBots[0].status !== "paused" || pausedBots[0].pausedReason !== "max_drawdown_reached" || pausedBots[0].manualResumeRequired !== true) {
+    throw new Error(`bots payload should expose drawdown pause semantics explicitly: ${JSON.stringify(pausedBots[0])}`);
+  }
+  if (pausedBots[0].portfolioKillSwitch.triggered !== false) {
+    throw new Error(`bot payload should keep bot-level drawdown pause distinct from portfolio kill switch state: ${JSON.stringify(pausedBots[0])}`);
+  }
+
+  const publicDir = fs.mkdtempSync(path.join(os.tmpdir(), "tradingbot-public-"));
+  try {
+    fs.mkdirSync(path.join(publicDir, "ui"), { recursive: true });
+    fs.writeFileSync(path.join(publicDir, "index.html"), "<!doctype html><title>dashboard</title>");
+    fs.writeFileSync(path.join(publicDir, "app.js"), "window.__appLoaded = true;");
+    fs.writeFileSync(path.join(publicDir, "styles.css"), "body{background:#000;}");
+    fs.writeFileSync(path.join(publicDir, "ui", "chartAdapter.js"), "window.ChartAdapter = { create() {} };");
+
+    const assetServer = new SystemServer({
+      architectWarmupMs: 20_000,
+      executionMode: "paper",
+      feedMode: "live",
+      logger: { info() {} },
+      port: 3104,
+      publicDir,
+      startedAt: now - 1000,
+      store
+    });
+
+    function createResponseRecorder() {
+      return {
+        body: null,
+        headers: null,
+        statusCode: null,
+        end(payload) {
+          this.body = payload;
+        },
+        writeHead(statusCode, headers) {
+          this.statusCode = statusCode;
+          this.headers = headers;
+        }
+      };
+    }
+
+    const jsResponse = createResponseRecorder();
+    assetServer.handleRequest({
+      headers: { host: "127.0.0.1:3104" },
+      url: "/ui/chartAdapter.js"
+    }, jsResponse);
+    if (jsResponse.statusCode !== 200 || !String(jsResponse.headers?.["Content-Type"] || "").includes("application/javascript")) {
+      throw new Error(`system server should serve dashboard JS assets from public/ui: ${JSON.stringify(jsResponse)}`);
+    }
+    if (!String(jsResponse.body).includes("ChartAdapter")) {
+      throw new Error("system server did not return the public JS dashboard asset body");
+    }
+
+    const tsResponse = createResponseRecorder();
+    assetServer.handleRequest({
+      headers: { host: "127.0.0.1:3104" },
+      url: "/ui/chartAdapter.ts"
+    }, tsResponse);
+    if (tsResponse.statusCode !== 404) {
+      throw new Error(`system server should not serve raw TypeScript dashboard assets anymore: ${JSON.stringify(tsResponse)}`);
+    }
+  } finally {
+    fs.rmSync(publicDir, { force: true, recursive: true });
   }
 }
 

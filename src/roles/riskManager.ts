@@ -2,7 +2,7 @@
 
 import type { RiskOverrides, RiskProfile, BotRuntimeState } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
-import type { RiskProfileSettings } from "../types/runtime.ts";
+import type { PortfolioKillSwitchState, RiskProfileSettings } from "../types/runtime.ts";
 
 const { clamp } = require("../utils/math.ts");
 
@@ -63,6 +63,7 @@ class RiskManager {
   canOpenTrade(params: {
     now: number;
     performance: PerformanceSnapshot;
+    portfolioKillSwitch?: PortfolioKillSwitchState | null;
     positionOpen: boolean;
     riskProfile: RiskProfile;
     riskOverrides?: RiskOverrides | null;
@@ -74,6 +75,9 @@ class RiskManager {
     }
     if (params.state.cooldownUntil && params.state.cooldownUntil > params.now) {
       return { allowed: false, reason: params.state.cooldownReason || "cooldown_active" };
+    }
+    if (params.portfolioKillSwitch?.blockingEntries) {
+      return { allowed: false, reason: "portfolio_kill_switch_active" };
     }
     if (params.performance.drawdown >= profile.maxDrawdownPct) {
       return { allowed: false, reason: "max_drawdown_reached" };

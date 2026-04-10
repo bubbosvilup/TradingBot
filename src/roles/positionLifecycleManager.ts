@@ -5,6 +5,7 @@ import type { ExitPolicy } from "../types/exitPolicy.ts";
 import type { PositionLifecycleEvent, PositionLifecycleState } from "../types/positionLifecycle.ts";
 
 const DEFAULT_MANAGED_RECOVERY_EXIT_FLOOR_NET_PNL_USDT = 0.05;
+const DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES = 2;
 const DEFAULT_MANAGED_RECOVERY_TIMEOUT_MS = 120_000;
 const POSITION_LIFECYCLE_STATES = {
   ACTIVE: "ACTIVE" as const,
@@ -18,6 +19,7 @@ const POSITION_LIFECYCLE_EVENTS = {
   PROTECTIVE_STOP_HIT: "PROTECTIVE_STOP_HIT" as const,
   RECOVERY_TIMEOUT: "RECOVERY_TIMEOUT" as const,
   REGIME_INVALIDATION: "REGIME_INVALIDATION" as const,
+  MANAGED_RECOVERY_BREAKER_HIT: "MANAGED_RECOVERY_BREAKER_HIT" as const,
   RSI_EXIT_HIT: "RSI_EXIT_HIT" as const
 };
 
@@ -122,6 +124,9 @@ function resolveLifecycleEventFromReasons(reasons: string[], closeClassification
   if (reasons.includes("protective_stop_exit")) {
     return POSITION_LIFECYCLE_EVENTS.PROTECTIVE_STOP_HIT;
   }
+  if (reasons.includes("managed_recovery_breaker_exit")) {
+    return POSITION_LIFECYCLE_EVENTS.MANAGED_RECOVERY_BREAKER_HIT;
+  }
   if (reasons.includes("time_exhaustion_exit")) {
     return POSITION_LIFECYCLE_EVENTS.RECOVERY_TIMEOUT;
   }
@@ -137,6 +142,12 @@ function getManagedRecoveryPolicy(exitPolicy: ExitPolicy | null | undefined) {
         ? exitFloorNetPnlUsdt
         : DEFAULT_MANAGED_RECOVERY_EXIT_FLOOR_NET_PNL_USDT,
       0
+    ),
+    maxConsecutiveEntries: Math.max(
+      Number.isFinite(Number(exitPolicy?.recovery?.maxConsecutiveEntries))
+        ? Number(exitPolicy?.recovery?.maxConsecutiveEntries)
+        : DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES,
+      1
     ),
     timeoutMs: Math.max(
       Number.isFinite(timeoutMs)
@@ -181,6 +192,7 @@ function resetManagedRecovery(position: PositionRecord) {
 
 module.exports = {
   DEFAULT_MANAGED_RECOVERY_EXIT_FLOOR_NET_PNL_USDT,
+  DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES,
   DEFAULT_MANAGED_RECOVERY_TIMEOUT_MS,
   POSITION_LIFECYCLE_EVENTS,
   POSITION_LIFECYCLE_STATES,

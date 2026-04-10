@@ -88,6 +88,14 @@ function runExitLifecycleReportTests() {
       id: "trade_6",
       lifecycleEvent: "REGIME_INVALIDATION",
       netPnl: 0.05
+    }),
+    createClosedTrade({
+      botId: "bot_7",
+      closedAt: 7_000,
+      exitReason: ["managed_recovery_breaker_exit"],
+      id: "trade_7",
+      lifecycleEvent: "MANAGED_RECOVERY_BREAKER_HIT",
+      netPnl: -0.22
     })
   ];
 
@@ -214,6 +222,31 @@ function runExitLifecycleReportTests() {
       policyId: "RSI_REVERSION_PRO",
       signalToExecutionMs: 300
     }),
+    createEvent("rsi_exit_deferred", 6_500, {
+      botId: "bot_7",
+      policyId: "RSI_REVERSION_PRO",
+      strategy: "rsiReversion"
+    }),
+    createEvent("managed_recovery_exited", 7_000, {
+      botId: "bot_7",
+      closeReason: "managed_recovery_breaker_exit",
+      executionTimestamp: 7_000,
+      exitEvent: "managed_recovery_breaker_exit",
+      exitMechanism: "breaker",
+      lifecycleEvent: "MANAGED_RECOVERY_BREAKER_HIT",
+      policyId: "RSI_REVERSION_PRO",
+      signalToExecutionMs: 210
+    }),
+    createEvent("SELL", 7_000, {
+      botId: "bot_7",
+      closeClassification: "confirmed_exit",
+      executionTimestamp: 7_000,
+      exitEvent: "managed_recovery_breaker_exit",
+      exitMechanism: "breaker",
+      lifecycleEvent: "MANAGED_RECOVERY_BREAKER_HIT",
+      policyId: "RSI_REVERSION_PRO",
+      signalToExecutionMs: 210
+    }),
     createEvent("post_loss_architect_latch_activated", 7_000, {
       activatedAt: 7_000,
       botId: "bot_2",
@@ -240,23 +273,23 @@ function runExitLifecycleReportTests() {
     events
   });
 
-  if (report.summary.byExitMechanism.qualification.count !== 2 || report.summary.byExitMechanism.recovery.count !== 2 || report.summary.byExitMechanism.protection.count !== 1 || report.summary.byExitMechanism.invalidation.count !== 1) {
+  if (report.summary.byExitMechanism.qualification.count !== 2 || report.summary.byExitMechanism.recovery.count !== 2 || report.summary.byExitMechanism.protection.count !== 1 || report.summary.byExitMechanism.invalidation.count !== 1 || report.summary.byExitMechanism.breaker.count !== 1) {
     throw new Error(`exitMechanism aggregation should split qualification/recovery/protection/invalidation correctly: ${JSON.stringify(report.summary.byExitMechanism)}`);
   }
 
-  if (report.summary.byCloseClassification.confirmed_exit.count !== 5 || report.summary.byCloseClassification.failed_rsi_exit.count !== 1) {
+  if (report.summary.byCloseClassification.confirmed_exit.count !== 6 || report.summary.byCloseClassification.failed_rsi_exit.count !== 1) {
     throw new Error(`closeClassification aggregation should separate failed RSI exits: ${JSON.stringify(report.summary.byCloseClassification)}`);
   }
 
-  if (report.managedRecovery.enteredCount !== 4 || report.managedRecovery.exitedBy.target !== 1 || report.managedRecovery.exitedBy.timeout !== 1 || report.managedRecovery.exitedBy.protection !== 1 || report.managedRecovery.exitedBy.invalidation !== 1) {
+  if (report.managedRecovery.deferredEventCount !== 5 || report.managedRecovery.pairedClosedOutcomeCount !== 5 || report.managedRecovery.unpairedDeferredCount !== 0 || report.managedRecovery.enteredCount !== 5 || report.managedRecovery.exitedBy.breaker !== 1 || report.managedRecovery.exitedBy.target !== 1 || report.managedRecovery.exitedBy.timeout !== 1 || report.managedRecovery.exitedBy.protection !== 1 || report.managedRecovery.exitedBy.invalidation !== 1) {
     throw new Error(`managed recovery outcome counting should distinguish target/timeout/protection/invalidation exits: ${JSON.stringify(report.managedRecovery)}`);
   }
 
-  if (report.managedRecovery.avgNetPnlByExitType.target !== 0.45 || report.managedRecovery.avgNetPnlByExitType.timeout !== -0.15 || report.managedRecovery.avgNetPnlByExitType.protection !== -0.35 || report.managedRecovery.avgNetPnlByExitType.invalidation !== 0.05) {
+  if (report.managedRecovery.avgNetPnlByExitType.breaker !== -0.22 || report.managedRecovery.avgNetPnlByExitType.target !== 0.45 || report.managedRecovery.avgNetPnlByExitType.timeout !== -0.15 || report.managedRecovery.avgNetPnlByExitType.protection !== -0.35 || report.managedRecovery.avgNetPnlByExitType.invalidation !== 0.05) {
     throw new Error(`managed recovery averages should be grouped by exit type: ${JSON.stringify(report.managedRecovery.avgNetPnlByExitType)}`);
   }
 
-  if (report.rsi.confirmedProfitableCount !== 1 || report.rsi.failedCount !== 1 || report.rsi.deferredRecoveredProfitableCount !== 2 || report.rsi.deferredEndedNegativeCount !== 2) {
+  if (report.rsi.confirmedProfitableCount !== 1 || report.rsi.failedCount !== 1 || report.rsi.deferredRecoveredProfitableCount !== 2 || report.rsi.deferredEndedNegativeCount !== 3) {
     throw new Error(`RSI exit analysis should compare immediate confirmed vs failed vs deferred outcomes: ${JSON.stringify(report.rsi)}`);
   }
 
@@ -269,7 +302,7 @@ function runExitLifecycleReportTests() {
   }
 
   const rendered = renderExitLifecycleReport(report);
-  if (!rendered.includes("Exit Lifecycle Report") || !rendered.includes("Managed recovery") || !rendered.includes("Post-loss latch")) {
+  if (!rendered.includes("Exit Lifecycle Report") || !rendered.includes("Managed recovery") || !rendered.includes("pairedClosed") || !rendered.includes("Post-loss latch")) {
     throw new Error(`rendered report should stay human-readable and compact: ${rendered}`);
   }
 }

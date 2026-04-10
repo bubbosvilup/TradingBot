@@ -176,6 +176,15 @@ function resolveManagedRecoveryPosition(position: PositionRecord, tick: MarketTi
   return transition.allowed ? transition.position : null;
 }
 
+function resolveManagedRecoveryBreaker(decisionReasons: string[], confirmationTicks: number) {
+  return {
+    exitMechanism: "breaker" as const,
+    exitNow: true,
+    lifecycleEvent: POSITION_LIFECYCLE_EVENTS.MANAGED_RECOVERY_BREAKER_HIT,
+    reason: buildExitReason(decisionReasons, "managed_recovery_breaker_exit", confirmationTicks)
+  };
+}
+
 class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
   resolve(params: {
     architectState?: any;
@@ -252,6 +261,12 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
         const estimatedExitEconomics = params.estimateExitEconomics(params.position, params.tick.price);
         const exitFloorNetPnlUsdt = getRsiExitFloorNetPnlUsdt(params.exitPolicy);
         if (estimatedExitEconomics.netPnl < exitFloorNetPnlUsdt) {
+          if (Number(params.signalState?.managedRecoveryConsecutiveCount || 0) >= managedRecoveryPolicy.maxConsecutiveEntries) {
+            return {
+              estimatedExitEconomics,
+              ...resolveManagedRecoveryBreaker(decisionReasons, params.exitConfirmationTicks)
+            };
+          }
           return {
             estimatedExitEconomics,
             exitMechanism: "qualification" as const,

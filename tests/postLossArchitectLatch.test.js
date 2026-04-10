@@ -98,6 +98,46 @@ function runPostLossArchitectLatchTests() {
   if (latchState.blocking) {
     throw new Error("released latch should no longer block entries");
   }
+
+  const singlePublishStore = new StateStore();
+  singlePublishStore.registerBot(botConfig);
+  singlePublishStore.setArchitectPublisherState("BTC/USDT", {
+    challengerCount: 0,
+    challengerRegime: null,
+    challengerRequired: 2,
+    hysteresisActive: false,
+    lastObservedAt: 2_000,
+    lastPublishedAt: 2_000,
+    lastPublishedRegime: "range",
+    nextPublishAt: 17_000,
+    publishIntervalMs: 15_000,
+    ready: true,
+    symbol: "BTC/USDT",
+    warmupStartedAt: 0
+  });
+  const singlePublishLatch = new PostLossArchitectLatch({
+    botId: "bot_test",
+    requiredPublishes: 1,
+    store: singlePublishStore,
+    symbol: "BTC/USDT"
+  });
+  singlePublishLatch.activateOnLoss({
+    closedAt: 12_000,
+    netPnl: -0.5,
+    strategyId: "rsiReversion"
+  });
+  singlePublishStore.setArchitectPublisherState("BTC/USDT", {
+    ...singlePublishStore.getArchitectPublisherState("BTC/USDT"),
+    lastPublishedAt: 18_000,
+    ready: true
+  });
+  const singlePublishRefresh = singlePublishLatch.refresh();
+  if (!singlePublishRefresh.transition || singlePublishRefresh.transition.message !== "post_loss_architect_latch_released") {
+    throw new Error(`a single required fresh publish should release the latch immediately when configured: ${JSON.stringify(singlePublishRefresh)}`);
+  }
+  if (singlePublishStore.getBotState("bot_test").postLossArchitectLatchFreshPublishCount !== 1 || singlePublishStore.getBotState("bot_test").postLossArchitectLatchActive) {
+    throw new Error(`single fresh publication configuration should release the latch after the first fresh publish: ${JSON.stringify(singlePublishStore.getBotState("bot_test"))}`);
+  }
 }
 
 module.exports = {

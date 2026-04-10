@@ -3,6 +3,7 @@
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 
 const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
+const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
 
 class ExecutionEngine {
   store: any;
@@ -30,7 +31,10 @@ class ExecutionEngine {
     this.userStream = deps.userStream;
     this.logger = deps.logger;
     this.feeRate = resolvedFeeRate;
-    this.executionMode = deps.executionMode || "paper";
+    this.executionMode = String(deps.executionMode || "paper").toLowerCase();
+    if (this.executionMode !== "paper") {
+      throw new Error(`ExecutionEngine does not support executionMode=${this.executionMode}; active runtime is paper-only until future live-readiness work is completed`);
+    }
     this.minTradeNotionalUsdt = Math.max(Number(deps.minTradeNotionalUsdt) || 25, 0);
     this.minTradeQuantity = Math.max(Number(deps.minTradeQuantity) || 1e-6, 0);
   }
@@ -47,12 +51,18 @@ class ExecutionEngine {
   }
 
   calculateCloseEconomics(position: PositionRecord, exitPriceInput: number) {
+    const side = normalizeTradeSide(position?.side);
     const entryPrice = Math.max(Number(position?.entryPrice) || 0, 0);
     const exitPrice = Math.max(Number(exitPriceInput) || 0, 0);
     const quantity = Math.max(Number(position?.quantity) || 0, 0);
     const entryNotionalUsdt = entryPrice * quantity;
     const exitNotionalUsdt = exitPrice * quantity;
-    const grossPnl = (exitPrice - entryPrice) * quantity;
+    const grossPnl = calculateDirectionalGrossPnl({
+      entryPrice,
+      exitPrice,
+      quantity,
+      side
+    }).grossPnl;
     const fees = (entryNotionalUsdt + exitNotionalUsdt) * this.feeRate;
     const netPnl = grossPnl - fees;
 
@@ -64,7 +74,37 @@ class ExecutionEngine {
       fees,
       grossPnl,
       netPnl,
-      quantity
+      quantity,
+      side
+    };
+  }
+
+  calculateUnrealizedEconomics(position: PositionRecord, markPriceInput: number) {
+    const side = normalizeTradeSide(position?.side);
+    const entryPrice = Math.max(Number(position?.entryPrice) || 0, 0);
+    const markPrice = Math.max(Number(markPriceInput) || 0, 0);
+    const quantity = Math.max(Number(position?.quantity) || 0, 0);
+    const entryNotionalUsdt = entryPrice * quantity;
+    const markNotionalUsdt = markPrice * quantity;
+    const grossPnl = calculateDirectionalGrossPnl({
+      entryPrice,
+      exitPrice: markPrice,
+      quantity,
+      side
+    }).grossPnl;
+    const fees = (entryNotionalUsdt + markNotionalUsdt) * this.feeRate;
+    const netPnl = grossPnl - fees;
+
+    return {
+      entryNotionalUsdt,
+      entryPrice,
+      fees,
+      grossPnl,
+      markNotionalUsdt,
+      markPrice,
+      netPnl,
+      quantity,
+      side
     };
   }
 
@@ -132,6 +172,7 @@ class ExecutionEngine {
       notes: params.reason,
       openedAt: order.timestamp,
       quantity: constraints.quantity,
+      side: "long",
       strategyId: params.strategyId,
       symbol: params.symbol
     };
@@ -155,14 +196,18 @@ class ExecutionEngine {
     lifecycleState?: any;
     price: number;
     reason: string[];
+    timestamp?: number;
   }): ClosedTradeRecord | null {
     const position = this.store.getPosition(params.botId);
     if (!position) return null;
 
     const economics = this.calculateCloseEconomics(position, params.price);
+    const closedAt = Number.isFinite(Number(params.timestamp))
+      ? Number(params.timestamp)
+      : Date.now();
     const closedTrade: ClosedTradeRecord = {
       botId: params.botId,
-      closedAt: Date.now(),
+      closedAt,
       entryReason: Array.isArray(position.notes) ? [...position.notes] : [],
       entryPrice: economics.entryPrice,
       exitReason: [...params.reason],
@@ -176,7 +221,7 @@ class ExecutionEngine {
       pnl: economics.grossPnl,
       quantity: economics.quantity,
       reason: params.reason,
-      side: "long",
+      side: economics.side,
       strategyId: position.strategyId,
       symbol: position.symbol
     };
@@ -190,7 +235,7 @@ class ExecutionEngine {
       side: "sell",
       strategyId: position.strategyId,
       symbol: position.symbol,
-      timestamp: closedTrade.closedAt
+      timestamp: closedAt
     };
 
     this.userStream.publishOrderUpdate({ order, position: null, trade: closedTrade, type: "closed" });

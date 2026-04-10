@@ -53,6 +53,7 @@ export interface BotRuntimeState {
   entryBlockedCount: number;
   entrySkippedCount: number;
   entryOpenedCount: number;
+  managedRecoveryConsecutiveCount: number;
   lossStreak: number;
   postLossArchitectLatchActive: boolean;
   postLossArchitectLatchActivatedAt: number | null;

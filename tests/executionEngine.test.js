@@ -72,6 +72,24 @@ function runExecutionEngineTests() {
     throw new Error(`execution engine should fail loudly when feeRate is missing: ${missingFeeRateError}`);
   }
 
+  let liveModeError = null;
+  try {
+    new ExecutionEngine({
+      executionMode: "live",
+      feeRate: 0.001,
+      logger: {
+        info() {}
+      },
+      store: new StateStore(),
+      userStream: createUserStream(new StateStore())
+    });
+  } catch (error) {
+    liveModeError = error;
+  }
+  if (!liveModeError || !String(liveModeError.message || liveModeError).includes("paper-only")) {
+    throw new Error(`execution engine should reject live mode construction explicitly: ${liveModeError}`);
+  }
+
   try {
     const rejectedByQuantity = engine.openLong({
       botId: "bot_qty",
@@ -129,11 +147,31 @@ function runExecutionEngineTests() {
     if (!logs.find((entry) => entry.event === "position_opened" && entry.metadata.botId === "bot_valid")) {
       throw new Error("missing position_opened log for valid order");
     }
+    const unrealized = engine.calculateUnrealizedEconomics(opened, 102);
+    if (!approxEqual(unrealized.grossPnl, 1) || !approxEqual(unrealized.fees, 0.101, 1e-6) || !approxEqual(unrealized.netPnl, 0.899, 1e-6) || unrealized.side !== "long") {
+      throw new Error(`execution engine should expose fee-aware unrealized economics for long positions: ${JSON.stringify(unrealized)}`);
+    }
+    const shortEconomics = engine.calculateUnrealizedEconomics({
+      botId: "bot_short_probe",
+      confidence: 0.8,
+      entryPrice: 100,
+      id: "position_short_probe",
+      notes: ["probe"],
+      openedAt: 1_000,
+      quantity: 1,
+      side: "short",
+      strategyId: "emaCross",
+      symbol: "BTC/USDT"
+    }, 98);
+    if (!approxEqual(shortEconomics.grossPnl, 2) || !approxEqual(shortEconomics.fees, 0.198, 1e-6) || !approxEqual(shortEconomics.netPnl, 1.802, 1e-6) || shortEconomics.side !== "short") {
+      throw new Error(`execution engine should stay directionally correct for future short-shaped positions without enabling short execution: ${JSON.stringify(shortEconomics)}`);
+    }
 
     const closed = engine.closePosition({
       botId: "bot_valid",
       price: 102,
-      reason: ["take_profit"]
+      reason: ["take_profit"],
+      timestamp: 12_345
     });
     if (!closed) {
       throw new Error("execution engine rejected a valid close");
@@ -146,6 +184,9 @@ function runExecutionEngineTests() {
     }
     if (!logs.find((entry) => entry.event === "position_closed" && entry.metadata.botId === "bot_valid")) {
       throw new Error("missing position_closed log for valid close");
+    }
+    if (closed.closedAt !== 12_345) {
+      throw new Error(`execution engine should prefer the provided close timestamp over Date.now(): ${JSON.stringify(closed)}`);
     }
     const validCloseLog = logs.find((entry) => entry.event === "position_closed" && entry.metadata.botId === "bot_valid");
     if (!validCloseLog || validCloseLog.metadata.entryPrice !== 100 || validCloseLog.metadata.exitPrice !== 102 || validCloseLog.metadata.grossPnl !== 1 || validCloseLog.metadata.fees !== 0.101 || validCloseLog.metadata.netPnl !== 0.899) {

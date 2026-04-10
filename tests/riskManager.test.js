@@ -100,6 +100,51 @@ function runRiskManagerTests() {
   if (overriddenLossResult.cooldownUntil !== 1_090_000) {
     throw new Error(`loss cooldown should use overridden cooldownMs when provided: ${overriddenLossResult.cooldownUntil}`);
   }
+
+  const portfolioBlocked = riskManager.canOpenTrade({
+    now: 1_000_000,
+    performance: {
+      drawdown: 0
+    },
+    portfolioKillSwitch: {
+      availableBalanceUsdt: 940,
+      blockingEntries: true,
+      currentEquityUsdt: 940,
+      drawdownPct: 6,
+      enabled: true,
+      initialEquityUsdt: 1000,
+      maxDrawdownPct: 5,
+      mode: "block_entries_only",
+      openPositionCount: 0,
+      openPositionMarkNotionalUsdt: 0,
+      peakEquityUsdt: 1000,
+      reason: "portfolio_max_drawdown_reached",
+      realizedPnl: -60,
+      triggered: true,
+      triggeredAt: 999_000,
+      unrealizedPnl: 0,
+      updatedAt: 1_000_000
+    },
+    positionOpen: false,
+    riskProfile: "medium",
+    state: baseState
+  });
+  if (portfolioBlocked.allowed || portfolioBlocked.reason !== "portfolio_kill_switch_active") {
+    throw new Error(`portfolio kill switch should override per-bot entry readiness: ${JSON.stringify(portfolioBlocked)}`);
+  }
+
+  const drawdownBlocked = riskManager.canOpenTrade({
+    now: 1_000_000,
+    performance: {
+      drawdown: 6
+    },
+    positionOpen: false,
+    riskProfile: "medium",
+    state: baseState
+  });
+  if (drawdownBlocked.allowed || drawdownBlocked.reason !== "max_drawdown_reached") {
+    throw new Error(`per-bot drawdown gating should stay distinguishable from the shared portfolio kill switch: ${JSON.stringify(drawdownBlocked)}`);
+  }
 }
 
 module.exports = {

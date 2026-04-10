@@ -7,7 +7,7 @@ function runExitPolicyRegistryTests() {
   if (!rsiReversionPro || rsiReversionPro.id !== "RSI_REVERSION_PRO") {
     throw new Error(`named RSI reversion exit policy should resolve explicitly: ${JSON.stringify(rsiReversionPro)}`);
   }
-  if (rsiReversionPro.qualification.minTickProfit !== 0.05 || rsiReversionPro.recovery.targetSource !== "emaSlow" || rsiReversionPro.recovery.timeoutMs !== 30_000) {
+  if (rsiReversionPro.qualification.minTickProfit !== 0.05 || rsiReversionPro.recovery.targetSource !== "emaSlow" || rsiReversionPro.recovery.timeoutMs !== 30_000 || rsiReversionPro.recovery.maxConsecutiveEntries !== 2) {
     throw new Error(`resolved RSI_REVERSION_PRO shape mismatch: ${JSON.stringify(rsiReversionPro)}`);
   }
 

@@ -5,10 +5,18 @@ async function runOrchestratorTests() {
   const originalWebSocket = global.WebSocket;
   global.WebSocket = FakeWebSocket;
   const { parseArgs, startOrchestrator } = require("../src/core/orchestrator.ts");
+  const { UserStream } = require("../src/streams/userStream.ts");
   const originalMarketMode = process.env.MARKET_MODE;
   const originalExecutionMode = process.env.EXECUTION_MODE;
   const originalFeeBps = process.env.FEE_BPS;
   const originalLogType = process.env.LOG_TYPE;
+  const originalPaperTrading = process.env.PAPER_TRADING;
+  const originalUserStreamStart = UserStream.prototype.start;
+  let userStreamStartCalls = 0;
+  UserStream.prototype.start = async function startSpy(...args) {
+    userStreamStartCalls += 1;
+    return originalUserStreamStart.apply(this, args);
+  };
 
   const kebabArgs = parseArgs(["--market-mode=live", "--execution-mode=paper", "--duration-ms=2200", "--summary-ms=1000"]);
   if (kebabArgs.marketMode !== "live" || kebabArgs.executionMode !== "paper") {
@@ -81,6 +89,27 @@ async function runOrchestratorTests() {
   if ((transcript.match(/system_stopped/g) || []).length !== 1) {
     throw new Error(`orchestrator shutdown should be idempotent and log system_stopped once\n${transcript}`);
   }
+  if (userStreamStartCalls !== 0) {
+    throw new Error(`paper-only orchestrator should not start the live user stream path; observed ${userStreamStartCalls} start calls`);
+  }
+  if (!transcript.includes("userStreamRuntime=paper_simulated_events_only")) {
+    throw new Error(`orchestrator did not surface paper-only user stream segregation clearly\n${transcript}`);
+  }
+  if (!transcript.includes("portfolioKillSwitchEnabled=true")
+    || !transcript.includes("portfolioKillSwitchMode=block_entries_only")
+    || !transcript.includes("portfolioKillSwitchMaxDrawdownPct=8")) {
+    throw new Error(`orchestrator did not log portfolio kill switch readiness clearly\n${transcript}`);
+  }
+  if (!transcript.includes("architectWarmupMs=20000")
+    || !transcript.includes("architectPublishIntervalMs=15000")
+    || !transcript.includes("postLossLatchMinFreshPublications=1")) {
+    throw new Error(`orchestrator did not log architect/latch runtime tuning clearly\n${transcript}`);
+  }
+  if (!transcript.includes("symbolStateRetentionMs=1800000")
+    || !transcript.includes("symbolStateTracked=")
+    || !transcript.includes("symbolStateStaleCandidates=")) {
+    throw new Error(`orchestrator did not log symbol-state retention diagnostics clearly\n${transcript}`);
+  }
 
   process.env.MARKET_MODE = "mock";
   try {
@@ -112,6 +141,23 @@ async function runOrchestratorTests() {
     } else {
       process.env.EXECUTION_MODE = originalExecutionMode;
     }
+  }
+
+  process.env.PAPER_TRADING = "false";
+  try {
+    await startOrchestrator({ durationMs: 2200, serverEnabled: false, summaryEveryMs: 1000 });
+    throw new Error("orchestrator should fail fast when legacy PAPER_TRADING=false implies non-paper execution");
+  } catch (error) {
+    if (!String(error && error.message).includes("PAPER_TRADING=false is not supported")) {
+      throw new Error(`orchestrator did not fail with a clear legacy paper-trading error\n${error && error.stack ? error.stack : error}`);
+    }
+  } finally {
+    if (originalPaperTrading === undefined) {
+      delete process.env.PAPER_TRADING;
+    } else {
+      process.env.PAPER_TRADING = originalPaperTrading;
+    }
+    UserStream.prototype.start = originalUserStreamStart;
     global.WebSocket = originalWebSocket;
   }
 }

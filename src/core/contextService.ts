@@ -56,6 +56,14 @@ class ContextService {
     }
   }
 
+  pruneSymbols(symbols: string[]) {
+    for (const symbol of [...new Set(symbols || [])]) {
+      this.readyLoggedBySymbol.delete(symbol);
+      this.lastWindowModeBySymbol.delete(symbol);
+      this.lastRebuildSignatureBySymbol.delete(symbol);
+    }
+  }
+
   buildRebuildSignature(params: {
     effectiveTicks: MarketTick[];
     hasPublishedRegimeSwitch: boolean;

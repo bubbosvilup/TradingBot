@@ -116,6 +116,9 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
       lastExecutionAt: params.closedTrade.closedAt,
       lastTradeAt: params.closedTrade.closedAt,
       lossStreak: balancePatch.lossStreak,
+      managedRecoveryConsecutiveCount: params.positionWasManagedRecovery
+        ? Number(params.signalState.managedRecoveryConsecutiveCount || 0)
+        : 0,
       realizedPnl: params.signalState.realizedPnl + params.closedTrade.netPnl,
       status: pausedForDrawdown ? "paused" : params.lifecycleStatus,
       pausedReason: pausedForDrawdown ? "max_drawdown_reached" : null

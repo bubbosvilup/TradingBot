@@ -23,6 +23,8 @@ class MarketStream {
   fallbackTimer: NodeJS.Timeout | null;
   fallbackExchange: any;
   fallbackRestUrl: string;
+  fallbackIntervalMs: number;
+  fallbackStaleAfterMs: number;
   highLatencyWarnMs: number;
   latencyLogIntervalMs: number;
   lastLatencyLogAtBySymbol: Map<string, number>;
@@ -57,6 +59,8 @@ class MarketStream {
     this.fallbackTimer = null;
     this.fallbackExchange = null;
     this.fallbackRestUrl = deps.restExchangeId || "binance";
+    this.fallbackIntervalMs = 5_000;
+    this.fallbackStaleAfterMs = Math.max(this.fallbackIntervalMs, this.liveEmitIntervalMs * 4);
     this.highLatencyWarnMs = 1000;
     this.latencyLogIntervalMs = 30_000;
     this.lastLatencyLogAtBySymbol = new Map();
@@ -243,34 +247,112 @@ class MarketStream {
     this.wsManager.publish(`market:kline:${kline.symbol}:${kline.interval}`, kline);
   }
 
-  async fetchRestSnapshot() {
+  getFallbackTargetSymbols(observedAt: number) {
+    return this.symbols.filter((symbol) => {
+      const pipeline = typeof this.store.getPipelineSnapshot === "function"
+        ? this.store.getPipelineSnapshot(symbol)
+        : null;
+      const priceSnapshot = typeof this.store.getPriceSnapshot === "function"
+        ? this.store.getPriceSnapshot(symbol)
+        : null;
+      const lastUpdatedAt = Number(
+        pipeline?.lastStateUpdatedAt
+        || priceSnapshot?.updatedAt
+        || 0
+      );
+      if (!Number.isFinite(lastUpdatedAt) || lastUpdatedAt <= 0) {
+        return true;
+      }
+      return Math.max(0, observedAt - lastUpdatedAt) >= this.fallbackStaleAfterMs;
+    });
+  }
+
+  normalizeFallbackTick(symbol: string, ticker: any, receivedAt: number) {
+    const price = Number(ticker?.last || ticker?.close || 0);
+    if (!(price > 0)) {
+      return null;
+    }
+    return {
+      price,
+      receivedAt,
+      source: "rest" as const,
+      symbol,
+      timestamp: Number(ticker?.timestamp || receivedAt)
+    };
+  }
+
+  async fetchFallbackTicks(exchange: any, targetSymbols: string[], observedAt: number) {
+    if (targetSymbols.length > 1 && typeof exchange.fetchTickers === "function") {
+      const batchTickers = await exchange.fetchTickers(targetSymbols);
+      return {
+        method: "fetchTickers",
+        ticks: targetSymbols
+          .map((symbol) => this.normalizeFallbackTick(symbol, batchTickers?.[symbol], observedAt))
+          .filter(Boolean)
+      };
+    }
+
+    const ticks = [];
+    for (const symbol of targetSymbols) {
+      const ticker = await exchange.fetchTicker(symbol);
+      const tick = this.normalizeFallbackTick(symbol, ticker, observedAt);
+      if (tick) {
+        ticks.push(tick);
+      }
+    }
+    return {
+      method: "fetchTicker",
+      ticks
+    };
+  }
+
+  async fetchRestSnapshot(options: { observedAt?: number } = {}) {
+    const observedAt = Number.isFinite(Number(options.observedAt)) ? Number(options.observedAt) : now();
+    const targetSymbols = this.getFallbackTargetSymbols(observedAt);
+    if (targetSymbols.length <= 0) {
+      return {
+        method: "skipped_fresh_symbols",
+        requestedSymbols: [],
+        skippedFreshSymbols: this.symbols.length,
+        tickCount: 0
+      };
+    }
+
     try {
       const exchange = this.getFallbackExchange();
-      const tickers = await Promise.all(this.symbols.map(async (symbol) => {
-        const ticker = await exchange.fetchTicker(symbol);
-        return {
-          price: Number(ticker.last || ticker.close || 0),
-          receivedAt: now(),
-          source: "rest" as const,
-          symbol,
-          timestamp: Number(ticker.timestamp || now())
-        };
-      }));
+      const { method, ticks } = await this.fetchFallbackTicks(exchange, targetSymbols, observedAt);
 
-      for (const tick of tickers) {
-        if (tick.price > 0) {
-          this.handleTick(tick);
-        }
+      for (const tick of ticks) {
+        this.handleTick(tick);
       }
 
       this.logger.info("market_rest_snapshot", {
-        symbols: this.symbols.join(","),
-        tickers: tickers.length
+        method,
+        requestedSymbols: targetSymbols.join(","),
+        skippedFreshSymbols: Math.max(this.symbols.length - targetSymbols.length, 0),
+        staleAfterMs: this.fallbackStaleAfterMs,
+        tickers: ticks.length,
+        totalSymbols: this.symbols.length
       });
+      return {
+        method,
+        requestedSymbols: targetSymbols,
+        skippedFreshSymbols: Math.max(this.symbols.length - targetSymbols.length, 0),
+        tickCount: ticks.length
+      };
     } catch (error: any) {
       this.logger.warn("market_rest_snapshot_failed", {
-        error: error?.message || String(error)
+        error: error?.message || String(error),
+        requestedSymbols: targetSymbols.join(","),
+        totalSymbols: this.symbols.length
       });
+      return {
+        error: error?.message || String(error),
+        method: "failed",
+        requestedSymbols: targetSymbols,
+        skippedFreshSymbols: Math.max(this.symbols.length - targetSymbols.length, 0),
+        tickCount: 0
+      };
     }
   }
 
@@ -296,11 +378,12 @@ class MarketStream {
     this.fetchRestSnapshot();
     this.fallbackTimer = setInterval(() => {
       this.fetchRestSnapshot();
-    }, 5000);
+    }, this.fallbackIntervalMs);
     if (typeof this.fallbackTimer.unref === "function") {
       this.fallbackTimer.unref();
     }
     this.logger.warn("market_rest_fallback_started", {
+      staleAfterMs: this.fallbackStaleAfterMs,
       symbols: this.symbols.join(",")
     });
   }

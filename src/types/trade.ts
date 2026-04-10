@@ -2,6 +2,8 @@
 
 import type { PositionLifecycleEvent, PositionLifecycleState } from "./positionLifecycle.ts";
 
+export type TradeDirection = "long" | "short";
+
 export interface OrderRecord {
   id: string;
   botId: string;
@@ -19,6 +21,7 @@ export interface PositionRecord {
   botId: string;
   symbol: string;
   strategyId: string;
+  side?: TradeDirection;
   quantity: number;
   entryPrice: number;
   openedAt: number;
@@ -37,7 +40,7 @@ export interface ClosedTradeRecord {
   id: string;
   botId: string;
   symbol: string;
-  side: "long";
+  side: TradeDirection;
   strategyId: string;
   quantity: number;
   entryPrice: number;
