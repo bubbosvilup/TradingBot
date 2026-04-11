@@ -9,6 +9,11 @@ Checklist:
 3. Check config, runtime, telemetry, and reports for hidden coupling.
 4. Verify whether the experiment changes entry qualification, exit timing, or recovery behavior.
 5. Require a rollback path.
+6. Verify whether the experiment bypasses the baseline consistency guards:
+   - `architect_challenger_pending`
+   - managed-recovery invalidation grace/confirmation
+   - confirmed recovery target precedence over invalidation
+   - RSI short-horizon target-distance gate
 
 Current standing:
 

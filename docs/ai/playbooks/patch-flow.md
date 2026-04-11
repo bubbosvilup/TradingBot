@@ -13,6 +13,7 @@ Checklist:
    - bug fix
    - risk control
    - UI/dashboard-only
+   - UI/API observability-only
 6. If `TradingBot` is touched, justify why the change cannot live in an existing or new role.
 7. If config or runtime mode is touched, state the startup and safety effect explicitly.
 8. Define the exact tests to run.
@@ -24,3 +25,6 @@ Patch acceptance gate:
 - no unsupported live path made easier to enter
 - no experiment logic normalized without quarantine
 - no dashboard patch coupled to execution/risk changes without a reason
+- no compact monitor patch adds operator controls or trading-side decisions
+- no managed-recovery patch restores single early `family_mismatch` invalidation
+- no entry patch bypasses pending Architect challenger hysteresis

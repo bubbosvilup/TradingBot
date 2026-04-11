@@ -129,6 +129,57 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
 - La failure storica in `tests/tradingBot.test.js` sul max drawdown e stata risolta.
 - `npm test` passa sullo stato corrente del repository.
 
+## Aggiornamenti del 2026-04-11
+
+### Monitor compatto locale
+
+- Aggiunta una pagina dedicata `/compact` per osservabilita locale ad alta densita.
+- Il monitor compatto resta separato dalla dashboard completa e non introduce una seconda architettura frontend.
+- Il monitor compatto mostra solo stato runtime, portfolio, safety, righe bot dense, ultimo trade e ultimo evento rischio.
+- Aggiunto filtro locale `abnormal only` per restringere la vista a posizioni aperte, pause, resume manuali, recovery, kill switch o reason di blocco.
+- Aggiunta apertura automatica opt-in:
+  - `AUTO_OPEN_COMPACT_UI=true`
+  - `COMPACT_UI=true`
+  - `COMPACT_UI_ROUTE=/compact`
+- Il backend apre la route nel browser predefinito quando possibile; non forza dimensione finestra perche il controllo affidabile cross-platform richiederebbe un launcher/browser-specifico.
+
+### Coerenza Architect / entry / exit
+
+- L'ingresso ora blocca quando l'Architect ha `hysteresisActive=true` e il `challengerRegime` mappa a una family diversa dalla strategia corrente.
+- Il blocco usa `architect_challenger_pending` e impedisce entry in una transizione di regime gia pendente.
+- L'invalidazione `family_mismatch` in managed recovery non scatta piu su una singola mismatch immediata.
+- Le invalidazioni non-protettive sensibili a regime (`family_mismatch`, low maturity, stale, not ready) rispettano una grace post-entry derivata dal publish interval Architect.
+- Le uscite protettive restano prioritarie e non sono state indebolite.
+- In managed recovery la priorita e ora:
+  - protective stop
+  - timeout recovery
+  - target recovery confermato
+  - invalidazione
+- Un target recovery gia confermato non viene piu convertito in uscita per invalidazione.
+- Le RSI exit sotto il floor netto non entrano piu in managed recovery: chiudono subito con `rsi_exit_floor_failed`.
+
+### Edge temporale RSI
+
+- `rsiReversion` ora usa un floor minimo piu conservativo:
+  - `minExpectedNetEdgePct: 0.0015`
+- Aggiunto vincolo di distanza target short-horizon:
+  - `maxTargetDistancePctForShortHorizon: 0.01`
+- L'economics di entry espone ora:
+  - `targetDistancePct`
+  - `maxTargetDistancePctForShortHorizon`
+- Il gate finale blocca con `target_distance_exceeds_short_horizon` se il target statico richiede una distanza incompatibile con l'orizzonte corto.
+- Questo non introduce modelli predittivi: e solo un sanity gate deterministico sul target statico.
+
+### Verifica
+
+- Aggiornati test mirati per:
+  - challenger Architect pendente in entry
+  - grace contro invalidazione precoce
+  - target recovery che batte invalidazione
+  - RSI exit sotto floor che salta managed recovery
+  - blocco su target distance short-horizon
+- `npm test` passa sullo stato corrente del repository.
+
 ## Config runtime attiva
 
 File: `src/data/bots.config.json`
@@ -158,6 +209,16 @@ Bot attivi di default:
 - `bot_btc_trend` su `BTC/USDT` con `emaCross`
 - `bot_eth_reversion` su `ETH/USDT` con `rsiReversion`
 
+Config rilevante per `rsiReversion`:
+
+```json
+{
+  "exitPolicyId": "RSI_REVERSION_PRO",
+  "maxTargetDistancePctForShortHorizon": 0.01,
+  "minExpectedNetEdgePct": 0.0015
+}
+```
+
 ## Cosa fa oggi
 
 - Avvia piu bot indipendenti in parallelo.
@@ -172,6 +233,7 @@ Bot attivi di default:
   - `EXITING`
   - `CLOSED`
 - Applica guardrail locali e di portafoglio.
+- Blocca entry durante hysteresis Architect se il challenger punta a una family diversa.
 - Espone dashboard e API di osservabilita locale.
 
 ## Guardrail principali
@@ -179,6 +241,14 @@ Bot attivi di default:
 - Managed recovery breaker:
   - limita recovery loops ripetuti
   - puo forzare una safety exit esplicita
+- Managed recovery invalidation:
+  - non chiude piu su una singola mismatch precoce
+  - applica una grace post-entry per invalidazioni non protettive sensibili a regime
+  - lascia le uscite protettive prioritarie
+  - lascia il target recovery confermato battere l'invalidazione
+- RSI floor exit:
+  - se la RSI exit stimata resta sotto il floor netto, non apre un nuovo ciclo di managed recovery
+  - chiude con `rsi_exit_floor_failed`
 - Max drawdown pause per bot:
   - lascia il bot in `paused`
   - richiede resume manuale
@@ -214,6 +284,7 @@ Campi diagnostici rilevanti ora esposti:
 - `manualResumeRequired` per bot
 - stato compatto latch post-loss e managed recovery per bot
 - diagnostica Architect published/observed/synthetic
+- diagnostica short-horizon edge: `targetDistancePct` e `maxTargetDistancePctForShortHorizon`
 - latency di pipeline
 
 Il monitor compatto su `/compact` resta separato dalla dashboard completa: mostra strip globali/portfolio/safety, una tabella bot densa e due sole righe footer per ultimo trade e ultimo evento rischio. Include un filtro locale `abnormal only`; non espone controlli operativi e non mostra feed log.
@@ -308,7 +379,11 @@ Hotspot da trattare con cautela:
 - `src/core/stateStore.ts`
 - `src/core/orchestrator.ts`
 - `src/core/systemServer.ts`
+- `src/roles/architectCoordinator.ts`
+- `src/roles/entryCoordinator.ts`
+- `src/roles/entryEconomicsEstimator.ts`
 - `src/roles/exitDecisionCoordinator.ts`
+- `src/roles/managedRecoveryExitResolver.ts`
 - `src/streams/marketStream.ts`
 - `tests/tradingBot.test.js`
 

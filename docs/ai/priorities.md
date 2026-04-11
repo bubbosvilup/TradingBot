@@ -4,16 +4,19 @@ Work top-down unless a task explicitly says otherwise.
 
 ## P0
 
-- Segregate or remove the live-path assumptions from the current runtime.
-- Quarantine `allow_small_loss_floor05`; do not normalize it into the default runtime path.
-- Add a strong managed recovery breaker.
-- Fix the UI dashboard.
+- Completed: segregate the live execution path from the active paper runtime.
+- Completed: quarantine `allow_small_loss_floor05`; do not normalize it into the default runtime path.
+- Completed: add a strong managed recovery breaker.
+- Completed: fix the UI dashboard serving model and add the compact monitor.
+- Completed: harden managed-recovery invalidation so a single early `family_mismatch` is not enough.
+- Completed: block entry during pending Architect challenger hysteresis.
 
 ## P1
 
-- Realign telemetry and economics.
-- Add a portfolio-wide kill switch.
-- Reduce architect/latch/publish cadence rigidity.
+- Completed: realign runtime telemetry and fee-aware economics.
+- Completed: add a portfolio-wide kill switch.
+- Completed: add deterministic short-horizon entry sanity for RSI target distance.
+- Continue: reduce architect/latch/publish cadence rigidity where evidence shows churn remains.
 
 ## P2
 
@@ -31,5 +34,6 @@ Priority notes:
 
 - P0 safety and quarantine work outranks convenience refactors.
 - Dashboard work should stay decoupled from core trading logic where possible.
+- Compact monitor work should stay read-only and separate from operator controls.
 - Avoid broad rewrites while the runtime is under active refactor.
 - Treat short support as an audit-and-prep area until entry/exit/risk/UI semantics are explicitly upgraded end-to-end.

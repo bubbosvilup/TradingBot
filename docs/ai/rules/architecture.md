@@ -14,6 +14,9 @@ Do not do these regressions:
 - Do not move latch state handling back into `TradingBot`.
 - Do not move telemetry payload shaping back into `TradingBot`.
 - Do not collapse dashboard concerns into runtime decision modules.
+- Do not move compact monitor shaping into trading decision modules.
+- Do not put managed-recovery invalidation confirmation policy into strategy modules.
+- Do not put short-horizon target-distance gating into individual signal formulas.
 
 Expected ownership:
 
@@ -22,6 +25,15 @@ Expected ownership:
 - `src/bots/`: orchestration and execution sequencing
 - `src/ui/` and `public/`: dashboard rendering/adapters only
 - `tests/`: behavior locks for every non-trivial extraction
+
+Current ownership notes:
+
+- `architectCoordinator` owns published Architect usability, including entry blocking during pending challenger hysteresis.
+- `entryEconomicsEstimator` owns fee-aware edge estimates and target-distance diagnostics.
+- `entryCoordinator` owns final entry gates, including `target_distance_exceeds_short_horizon`.
+- `exitDecisionCoordinator` owns managed-recovery invalidation confirmation/grace policy.
+- `managedRecoveryExitResolver` owns managed-recovery exit precedence.
+- `SystemServer` and `public/compact.*` own compact monitor presentation only.
 
 When planning a refactor:
 

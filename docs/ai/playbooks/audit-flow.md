@@ -13,6 +13,9 @@ Checklist:
    - coordinator logic pulled back into `TradingBot`
    - runtime/UI coupling
    - silent risk behavior drift
+   - compact monitor concerns leaking into trading decisions
+   - managed-recovery invalidation becoming easier than entry
+   - entry ignoring active Architect challenger hysteresis
 6. Identify the smallest safe patch set.
 7. Name required tests before editing.
 
