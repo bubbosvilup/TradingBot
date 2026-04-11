@@ -9,6 +9,7 @@ const { runConfigLoaderTests } = require("./configLoader.test");
 const { runContextBuilderTests } = require("./contextBuilder.test");
 const { runContextServiceTests } = require("./contextService.test");
 const { runEntryCoordinatorTests } = require("./entryCoordinator.test");
+const { runEntryEconomicsEstimatorTests } = require("./entryEconomicsEstimator.test");
 const { runEntryOutcomeCoordinatorTests } = require("./entryOutcomeCoordinator.test");
 const { runExitDecisionCoordinatorTests } = require("./exitDecisionCoordinator.test");
 const { runExecutionEngineTests } = require("./executionEngine.test");
@@ -49,6 +50,7 @@ async function main() {
     { name: "contextBuilder", run: async () => runContextBuilderTests() },
     { name: "contextService", run: async () => runContextServiceTests() },
     { name: "entryCoordinator", run: async () => runEntryCoordinatorTests() },
+    { name: "entryEconomicsEstimator", run: async () => runEntryEconomicsEstimatorTests() },
     { name: "entryOutcomeCoordinator", run: async () => runEntryOutcomeCoordinatorTests() },
     { name: "exitDecisionCoordinator", run: async () => runExitDecisionCoordinatorTests() },
     { name: "executionEngine", run: async () => runExecutionEngineTests() },

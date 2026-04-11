@@ -6,6 +6,7 @@ import type { ExitPolicy } from "../types/exitPolicy.ts";
 import type { IndicatorSnapshot } from "../types/strategy.ts";
 
 const { mean } = require("../utils/math.ts");
+const { applyDirectionalOffset, normalizeTradeSide } = require("../utils/tradeSide.ts");
 
 const DEFAULT_RECOVERY_TARGET_SOURCE = "emaSlow";
 const DEFAULT_RECOVERY_TARGET_OFFSET_PCT = 0.015;
@@ -89,8 +90,9 @@ function resolveRecoveryTarget(params: {
   return {
     basePrice,
     source: baseTarget.source,
+    side: normalizeTradeSide(params.position?.side),
     targetOffsetPct: normalizedOffsetPct,
-    targetPrice: basePrice * (1 + normalizedOffsetPct)
+    targetPrice: applyDirectionalOffset(basePrice, normalizedOffsetPct, params.position?.side)
   };
 }
 

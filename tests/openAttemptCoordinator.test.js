@@ -156,6 +156,43 @@ async function runOpenAttemptCoordinatorTests() {
   if (openedResult.statePatch.availableBalanceUsdt !== 800 || openedResult.statePatch.entrySignalStreak !== 0 || openedResult.statePatch.lastExecutionAt !== 3_000 || openedResult.statePatch.lastTradeAt !== 3_500) {
     throw new Error(`successful execution should preserve the existing post-open state reset/update: ${JSON.stringify(openedResult.statePatch)}`);
   }
+
+  let openedShortParams = null;
+  const openedShortCoordinator = createCoordinator({
+    executionEngine: {
+      openPosition(params) {
+        openedShortParams = params;
+        return {
+          botId: params.botId,
+          confidence: params.confidence,
+          entryPrice: params.price,
+          id: "pos-short-1",
+          notes: ["entry"],
+          openedAt: 4_000,
+          quantity: params.quantity,
+          side: params.side,
+          strategyId: params.strategyId,
+          symbol: params.symbol
+        };
+      }
+    }
+  });
+  const openedShortResult = openedShortCoordinator.execute({
+    availableBalanceUsdt: 1000,
+    botId: "bot_test",
+    confidence: 0.91,
+    entryDebounceTicks: 2,
+    price: 100,
+    quantity: 2,
+    reason: ["bearish_cross_confirmed"],
+    recordedAt: 4_500,
+    side: "short",
+    strategyId: "emaCross",
+    symbol: "BTC/USDT"
+  });
+  if (openedShortResult.kind !== "opened" || openedShortResult.opened.side !== "short" || openedShortParams.side !== "short") {
+    throw new Error(`open attempt coordinator should pass short side into execution: ${JSON.stringify({ openedShortParams, openedShortResult })}`);
+  }
 }
 
 module.exports = {

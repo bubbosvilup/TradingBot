@@ -1,12 +1,21 @@
 // Module responsibility: strategy-aware entry economics estimation with shared cost normalization.
 
 import type { EntryEconomicsEstimate, IndicatorSnapshot, MarketContext, Strategy, StrategyEntryEdgeInputs } from "../types/strategy.ts";
+import type { TradeDirection } from "../types/trade.ts";
+
+const {
+  applyDirectionalOffset,
+  calculateTargetDistancePct,
+  normalizeTradeSide
+} = require("../utils/tradeSide.ts");
 
 function deriveEntryEdgeInputs(params: {
   context?: Partial<MarketContext> | null;
   price: number;
+  side?: TradeDirection | null;
 }): StrategyEntryEdgeInputs {
   const latestPrice = Math.max(Number(params.price) || 0, 1e-8);
+  const side = normalizeTradeSide(params.side);
   const indicators: Partial<IndicatorSnapshot> = params.context?.indicators || {};
   const emaFast = Number(indicators.emaFast);
   const emaSlow = Number(indicators.emaSlow);
@@ -17,6 +26,11 @@ function deriveEntryEdgeInputs(params: {
   const downsideMeanReversionGapPct = Number.isFinite(emaSlow)
     ? Math.max(0, emaSlow - latestPrice) / latestPrice
     : 0;
+  const favorableMeanReversionGapPct = Number.isFinite(emaSlow)
+    ? side === "short"
+      ? Math.max(0, latestPrice - emaSlow) / latestPrice
+      : Math.max(0, emaSlow - latestPrice) / latestPrice
+    : 0;
   const emaGapPct = Number.isFinite(emaFast) && Number.isFinite(emaSlow)
     ? Math.abs(emaFast - emaSlow) / latestPrice
     : 0;
@@ -24,10 +38,10 @@ function deriveEntryEdgeInputs(params: {
     ? Math.abs(momentum) / latestPrice
     : 0;
   const exitTarget = Number.isFinite(emaSlow)
-    ? emaSlow * 1.015
+    ? applyDirectionalOffset(emaSlow, 0.015, side)
     : latestPrice;
   const captureGapPct = Number.isFinite(emaSlow)
-    ? Math.min(0.03, Math.max(0, exitTarget - latestPrice) / latestPrice)
+    ? Math.min(0.03, calculateTargetDistancePct({ latestPrice, targetPrice: exitTarget, side }))
     : 0;
 
   return {
@@ -37,10 +51,12 @@ function deriveEntryEdgeInputs(params: {
     emaGapPct,
     emaSlow,
     exitTarget,
+    favorableMeanReversionGapPct,
     latestPrice,
     meanReversionGapPct,
     momentum,
-    momentumEdgePct
+    momentumEdgePct,
+    side
   };
 }
 
@@ -66,11 +82,13 @@ function estimateEntryEconomics(params: {
   price: number;
   profitSafetyBufferPct: number;
   quantity: number | null;
+  side?: TradeDirection | null;
   strategy?: Strategy | null;
 }): EntryEconomicsEstimate {
   const inputs = deriveEntryEdgeInputs({
     context: params.context,
-    price: params.price
+    price: params.price,
+    side: params.side
   });
   const expectedGrossEdgePct = params.strategy?.estimateExpectedGrossEdgePct
     ? normalizeExpectedGrossEdgePct(params.strategy.estimateExpectedGrossEdgePct(inputs))
@@ -110,6 +128,7 @@ function estimateEntryEconomics(params: {
     notionalUsdt,
     profitSafetyBufferPct: params.profitSafetyBufferPct,
     requiredEdgePct,
+    side: inputs.side,
     targetDistancePct: inputs.captureGapPct
   };
 }

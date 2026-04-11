@@ -21,7 +21,7 @@ export interface PositionRecord {
   botId: string;
   symbol: string;
   strategyId: string;
-  side?: TradeDirection;
+  side: TradeDirection;
   quantity: number;
   entryPrice: number;
   openedAt: number;

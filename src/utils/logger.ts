@@ -33,8 +33,8 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
   if (level === "ERROR") return "error";
   if (level === "WARN") return "warning";
 
-  if (message === "BUY") return "trade_open";
-  if (message === "SELL") return "trade_close";
+  if (message === "BUY" || message === "SHORT") return "trade_open";
+  if (message === "SELL" || message === "COVER") return "trade_close";
   if (message === "SETUP") return "setup";
   if (message === "BLOCK_CHANGE") return "blocked";
   if (message === "RISK_CHANGE") return "risk_change";

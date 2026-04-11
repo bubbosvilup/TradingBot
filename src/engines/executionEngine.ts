@@ -3,7 +3,12 @@
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 
 const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
-const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
+const {
+  calculateDirectionalGrossPnl,
+  getCloseOrderSide,
+  getEntryOrderSide,
+  normalizeTradeSide
+} = require("../utils/tradeSide.ts");
 
 class ExecutionEngine {
   store: any;
@@ -108,7 +113,7 @@ class ExecutionEngine {
     };
   }
 
-  openLong(params: {
+  openPosition(params: {
     botId: string;
     symbol: string;
     strategyId: string;
@@ -116,7 +121,9 @@ class ExecutionEngine {
     quantity: number;
     confidence: number;
     reason: string[];
+    side?: "long" | "short";
   }): PositionRecord | null {
+    const side = normalizeTradeSide(params.side);
     const constraints = validateTradeConstraints({
       minNotionalUsdt: this.minTradeNotionalUsdt,
       minQuantity: this.minTradeQuantity,
@@ -139,6 +146,7 @@ class ExecutionEngine {
         price: constraints.price.toFixed(4),
         quantity: constraints.quantity.toFixed(8),
         reason: rejectReason,
+        side,
         strategy: params.strategyId,
         symbol: params.symbol
       });
@@ -151,7 +159,7 @@ class ExecutionEngine {
       price: constraints.price,
       quantity: constraints.quantity,
       reason: params.reason,
-      side: "buy",
+      side: getEntryOrderSide(side),
       strategyId: params.strategyId,
       symbol: params.symbol,
       timestamp: Date.now()
@@ -172,7 +180,7 @@ class ExecutionEngine {
       notes: params.reason,
       openedAt: order.timestamp,
       quantity: constraints.quantity,
-      side: "long",
+      side,
       strategyId: params.strategyId,
       symbol: params.symbol
     };
@@ -182,12 +190,38 @@ class ExecutionEngine {
     this.logger.info("position_opened", {
       botId: params.botId,
       executionMode: this.executionMode,
+      orderSide: order.side,
       price: constraints.price.toFixed(4),
       quantity: constraints.quantity.toFixed(6),
+      side,
       strategy: params.strategyId,
       symbol: params.symbol
     });
     return position;
+  }
+
+  openLong(params: {
+    botId: string;
+    symbol: string;
+    strategyId: string;
+    price: number;
+    quantity: number;
+    confidence: number;
+    reason: string[];
+  }): PositionRecord | null {
+    return this.openPosition({ ...params, side: "long" });
+  }
+
+  openShort(params: {
+    botId: string;
+    symbol: string;
+    strategyId: string;
+    price: number;
+    quantity: number;
+    confidence: number;
+    reason: string[];
+  }): PositionRecord | null {
+    return this.openPosition({ ...params, side: "short" });
   }
 
   closePosition(params: {
@@ -232,7 +266,7 @@ class ExecutionEngine {
       price: economics.exitPrice,
       quantity: economics.quantity,
       reason: params.reason,
-      side: "sell",
+      side: getCloseOrderSide(economics.side),
       strategyId: position.strategyId,
       symbol: position.symbol,
       timestamp: closedAt
@@ -251,7 +285,9 @@ class ExecutionEngine {
       fees: Number(economics.fees.toFixed(4)),
       grossPnl: Number(economics.grossPnl.toFixed(4)),
       netPnl: Number(economics.netPnl.toFixed(4)),
+      orderSide: order.side,
       quantity: Number(economics.quantity.toFixed(8)),
+      side: economics.side,
       symbol: position.symbol
     });
     return closedTrade;

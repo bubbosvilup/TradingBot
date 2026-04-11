@@ -30,15 +30,35 @@ function createStrategy(config: { lookback?: number; breakoutPct?: number; minCo
         return {
           action: "buy",
           confidence: Math.min(0.96, 0.62 + ((context.latestPrice - rangeHigh) / Math.max(rangeHigh, 1)) * 40),
-          reason: [...reasons, `range_high=${rangeHigh.toFixed(4)}`, "upside_breakout_detected"]
+          reason: [...reasons, `range_high=${rangeHigh.toFixed(4)}`, "upside_breakout_detected"],
+          side: "long"
         };
       }
 
-      if (context.hasOpenPosition && context.latestPrice <= rangeLow) {
+      if (!context.hasOpenPosition && context.latestPrice <= rangeLow * (1 - breakoutPct)) {
+        return {
+          action: "sell",
+          confidence: Math.min(0.96, 0.62 + ((rangeLow - context.latestPrice) / Math.max(rangeLow, 1)) * 40),
+          reason: [...reasons, `range_low=${rangeLow.toFixed(4)}`, "downside_breakout_detected"],
+          side: "short"
+        };
+      }
+
+      if (context.hasOpenPosition && context.positionSide !== "short" && context.latestPrice <= rangeLow) {
         return {
           action: "sell",
           confidence: 0.76,
-          reason: [...reasons, `range_low=${rangeLow.toFixed(4)}`, "failed_breakout_or_range_loss"]
+          reason: [...reasons, `range_low=${rangeLow.toFixed(4)}`, "failed_breakout_or_range_loss"],
+          side: "long"
+        };
+      }
+
+      if (context.hasOpenPosition && context.positionSide === "short" && context.latestPrice >= rangeHigh) {
+        return {
+          action: "buy",
+          confidence: 0.76,
+          reason: [...reasons, `range_high=${rangeHigh.toFixed(4)}`, "failed_breakdown_or_range_reclaim"],
+          side: "short"
         };
       }
 

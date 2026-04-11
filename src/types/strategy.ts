@@ -1,9 +1,12 @@
 // Module responsibility: shared strategy contracts used by bots, registry and engines.
 
+import type { TradeDirection } from "./trade.ts";
+
 export interface StrategyDecision {
   action: "buy" | "sell" | "hold";
   confidence: number;
   reason: string[];
+  side?: TradeDirection | null;
 }
 
 export interface IndicatorSnapshot {
@@ -25,6 +28,7 @@ export interface MarketContext {
   indicators: IndicatorSnapshot;
   localRegimeHint: string;
   hasOpenPosition: boolean;
+  positionSide?: TradeDirection | null;
   unrealizedPnl: number;
   performance: {
     pnl: number;
@@ -44,10 +48,12 @@ export interface StrategyEntryEdgeInputs {
   emaGapPct: number;
   emaSlow: number;
   exitTarget: number;
+  favorableMeanReversionGapPct?: number;
   latestPrice: number;
   meanReversionGapPct: number;
   momentum: number;
   momentumEdgePct: number;
+  side?: TradeDirection;
 }
 
 export interface EntryEconomicsEstimate {
@@ -63,6 +69,7 @@ export interface EntryEconomicsEstimate {
   notionalUsdt: number;
   profitSafetyBufferPct: number;
   requiredEdgePct: number;
+  side?: TradeDirection;
   targetDistancePct?: number;
 }
 

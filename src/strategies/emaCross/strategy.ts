@@ -29,12 +29,13 @@ function estimateExpectedGrossEdgePct(inputs: StrategyEntryEdgeInputs) {
   );
 }
 
-function createStrategy(config: { emaFast?: number; emaSlow?: number; emaBaseline?: number; minConfidence?: number; rsiFloor?: number } = {}): Strategy {
+function createStrategy(config: { emaFast?: number; emaSlow?: number; emaBaseline?: number; minConfidence?: number; rsiFloor?: number; shortRsiCeiling?: number } = {}): Strategy {
   return {
     evaluate(context: MarketContext): StrategyDecision {
       const { emaFast, emaSlow, emaBaseline, rsi, momentum } = context.indicators;
       const priceScale = resolvePriceScale(context.latestPrice, emaBaseline, emaSlow, emaFast);
       const rsiFloor = config.rsiFloor ?? 51;
+      const shortRsiCeiling = config.shortRsiCeiling ?? 49;
       const positiveMomentumPct = Math.max(0, Number(momentum || 0)) / priceScale;
       const negativeMomentumPct = Math.max(0, Number(-(momentum || 0))) / priceScale;
       const bullishEmaGapPct = Math.max(0, Number(emaFast || 0) - Number(emaSlow || 0)) / priceScale;
@@ -55,6 +56,13 @@ function createStrategy(config: { emaFast?: number; emaSlow?: number; emaBaselin
         0.12,
         0.93
       );
+      const coverConfidence = clamp(
+        0.58
+        + (0.18 * boundedShare(positiveMomentumPct, 0.01))
+        + (0.16 * boundedShare(bullishEmaGapPct, 0.006)),
+        0.12,
+        0.93
+      );
       const reasons = [
         `emaFast=${emaFast?.toFixed(4) ?? "n/a"}`,
         `emaSlow=${emaSlow?.toFixed(4) ?? "n/a"}`,
@@ -65,12 +73,21 @@ function createStrategy(config: { emaFast?: number; emaSlow?: number; emaBaselin
         return { action: "hold", confidence: 0.15, reason: [...reasons, "insufficient_history"] };
       }
 
-      if (emaFast > emaSlow && context.latestPrice > emaBaseline && rsi >= rsiFloor && momentum > 0) {
-        return { action: "buy", confidence: buyConfidence, reason: [...reasons, "bullish_cross_confirmed"] };
+      const positionSide = context.positionSide || null;
+      if (!context.hasOpenPosition && emaFast > emaSlow && context.latestPrice > emaBaseline && rsi >= rsiFloor && momentum > 0) {
+        return { action: "buy", confidence: buyConfidence, reason: [...reasons, "bullish_cross_confirmed"], side: "long" };
       }
 
-      if (context.hasOpenPosition && (emaFast < emaSlow || momentum < 0)) {
-        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "cross_lost_or_momentum_down"] };
+      if (!context.hasOpenPosition && emaFast < emaSlow && context.latestPrice < emaBaseline && rsi <= shortRsiCeiling && momentum < 0) {
+        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "bearish_cross_confirmed"], side: "short" };
+      }
+
+      if (context.hasOpenPosition && positionSide !== "short" && (emaFast < emaSlow || momentum < 0)) {
+        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "cross_lost_or_momentum_down"], side: "long" };
+      }
+
+      if (context.hasOpenPosition && positionSide === "short" && (emaFast > emaSlow || momentum > 0)) {
+        return { action: "buy", confidence: coverConfidence, reason: [...reasons, "cross_recovered_or_momentum_up"], side: "short" };
       }
 
       return { action: "hold", confidence: config.minConfidence ?? 0.58, reason: [...reasons, "trend_not_ready"] };

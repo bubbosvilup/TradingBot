@@ -84,6 +84,15 @@ async function runEntryCoordinatorTests() {
   if (progressionState.entrySignalStreak !== 0) {
     throw new Error(`entrySignalStreak should reset when the buy signal disappears: ${progressionState.entrySignalStreak}`);
   }
+  progressionState = progressionHarness.coordinator.updateSignalState({
+    decisionAction: "sell",
+    hasPosition: false,
+    state: progressionState,
+    timestamp: 3_000
+  });
+  if (progressionState.entrySignalStreak !== 1) {
+    throw new Error(`entrySignalStreak should increment on a flat short-entry sell signal: ${progressionState.entrySignalStreak}`);
+  }
 
   const eligibleAttempt = progressionHarness.coordinator.resolveEntryAttempt({
     decisionAction: "buy",
@@ -94,6 +103,16 @@ async function runEntryCoordinatorTests() {
   });
   if (eligibleAttempt.kind !== "eligible") {
     throw new Error(`debounced buy signal should become eligible: ${JSON.stringify(eligibleAttempt)}`);
+  }
+  const eligibleShortAttempt = progressionHarness.coordinator.resolveEntryAttempt({
+    decisionAction: "sell",
+    entryDebounceTicks: 2,
+    entrySignalStreak: 2,
+    riskAllowed: true,
+    riskReason: null
+  });
+  if (eligibleShortAttempt.kind !== "eligible") {
+    throw new Error(`debounced short-entry sell signal should become eligible: ${JSON.stringify(eligibleShortAttempt)}`);
   }
 
   const blockedAttempt = progressionHarness.coordinator.resolveEntryAttempt({

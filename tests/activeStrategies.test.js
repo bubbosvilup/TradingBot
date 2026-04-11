@@ -1,6 +1,7 @@
 "use strict";
 
 const { createStrategy: createEmaCross } = require("../src/strategies/emaCross/strategy.ts");
+const { createStrategy: createBreakout } = require("../src/strategies/breakout/strategy.ts");
 const { createStrategy: createRsiReversion } = require("../src/strategies/rsiReversion/strategy.ts");
 
 function buildContext(overrides = {}) {
@@ -103,6 +104,23 @@ function runActiveStrategiesTests() {
     throw new Error(`emaCross weak buy confidence is still saturating too quickly: ${weakTrendBuy.confidence}`);
   }
 
+  const bearishTrendShort = emaCross.evaluate(buildContext({
+    latestPrice: 96,
+    localRegimeHint: "trend",
+    prices: [100, 99, 98, 97, 96],
+    strategyId: "emaCross",
+    indicators: {
+      emaBaseline: 98,
+      emaFast: 96.5,
+      emaSlow: 97.4,
+      momentum: -1.2,
+      rsi: 43
+    }
+  }));
+  if (bearishTrendShort.action !== "sell" || bearishTrendShort.side !== "short" || !bearishTrendShort.reason.includes("bearish_cross_confirmed")) {
+    throw new Error(`emaCross should open short on bearish trend confirmation: ${JSON.stringify(bearishTrendShort)}`);
+  }
+
   const mildTrendSell = emaCross.evaluate(buildContext({
     hasOpenPosition: true,
     latestPrice: 100.1,
@@ -135,6 +153,44 @@ function runActiveStrategiesTests() {
   }
   if (!(strongTrendSell.confidence > mildTrendSell.confidence)) {
     throw new Error(`emaCross stronger exit should have higher sell confidence (${mildTrendSell.confidence} vs ${strongTrendSell.confidence})`);
+  }
+
+  const shortCoverDecision = emaCross.evaluate(buildContext({
+    hasOpenPosition: true,
+    positionSide: "short",
+    latestPrice: 99.8,
+    localRegimeHint: "trend",
+    strategyId: "emaCross",
+    indicators: {
+      emaBaseline: 99,
+      emaFast: 100.2,
+      emaSlow: 99.5,
+      momentum: 0.6,
+      rsi: 55
+    }
+  }));
+  if (shortCoverDecision.action !== "buy" || shortCoverDecision.side !== "short") {
+    throw new Error(`emaCross should cover shorts on bullish recovery: ${JSON.stringify(shortCoverDecision)}`);
+  }
+
+  const breakout = createBreakout({ breakoutPct: 0.004, lookback: 5 });
+  const downsideBreakout = breakout.evaluate(buildContext({
+    latestPrice: 98.5,
+    prices: [101, 100.8, 100.4, 99.4, 98.5],
+    strategyId: "breakout"
+  }));
+  if (downsideBreakout.action !== "sell" || downsideBreakout.side !== "short" || !downsideBreakout.reason.includes("downside_breakout_detected")) {
+    throw new Error(`breakout should open short on downside break: ${JSON.stringify(downsideBreakout)}`);
+  }
+  const failedBreakdownCover = breakout.evaluate(buildContext({
+    hasOpenPosition: true,
+    positionSide: "short",
+    latestPrice: 101.2,
+    prices: [100, 100.4, 100.7, 101.0, 101.2],
+    strategyId: "breakout"
+  }));
+  if (failedBreakdownCover.action !== "buy" || failedBreakdownCover.side !== "short") {
+    throw new Error(`breakout should cover short when the breakdown range is reclaimed: ${JSON.stringify(failedBreakdownCover)}`);
   }
 
   const strategy = createRsiReversion({
@@ -202,6 +258,26 @@ function runActiveStrategiesTests() {
   }
   if (buyDecision.confidence >= 0.85) {
     throw new Error(`rsiReversion moderate buy confidence is still saturating too quickly: ${buyDecision.confidence}`);
+  }
+
+  const shortReversionDecision = strategy.evaluate(buildContext({
+    botId: "bot_eth_reversion",
+    indicators: {
+      emaBaseline: 100,
+      emaFast: 102,
+      emaSlow: 100,
+      momentum: 1.1,
+      rsi: 67,
+      volatility: 1.1
+    },
+    latestPrice: 102.5,
+    localRegimeHint: "range",
+    prices: [99.8, 100.4, 101.2, 102.0, 102.5],
+    strategyId: "rsiReversion",
+    symbol: "ETH/USDT"
+  }));
+  if (shortReversionDecision.action !== "sell" || shortReversionDecision.side !== "short" || !shortReversionDecision.reason.includes("overbought_mean_reversion")) {
+    throw new Error(`rsiReversion should short overbought mean-reversion setups: ${JSON.stringify(shortReversionDecision)}`);
   }
 
   const holdDecision = strategy.evaluate({
@@ -310,6 +386,31 @@ function runActiveStrategiesTests() {
   }
   if (!(bothExitSignalsDecision.confidence > rsiOnlySellDecision.confidence)) {
     throw new Error(`rsiReversion stronger exit should have higher sell confidence (${rsiOnlySellDecision.confidence} vs ${bothExitSignalsDecision.confidence})`);
+  }
+
+  const shortTargetCoverDecision = strategy.evaluate(buildContext({
+    botId: "bot_eth_reversion",
+    hasOpenPosition: true,
+    positionSide: "short",
+    metadata: {
+      positionEntryPrice: 103
+    },
+    indicators: {
+      emaBaseline: 101,
+      emaFast: 98,
+      emaSlow: 100,
+      momentum: -1.2,
+      rsi: 44,
+      volatility: 1.2
+    },
+    latestPrice: 98.4,
+    localRegimeHint: "range",
+    prices: [103, 102, 100.8, 99.2, 98.4],
+    strategyId: "rsiReversion",
+    symbol: "ETH/USDT"
+  }));
+  if (shortTargetCoverDecision.action !== "buy" || shortTargetCoverDecision.side !== "short" || !shortTargetCoverDecision.reason.includes("reversion_price_target_hit")) {
+    throw new Error(`rsiReversion should cover shorts on short-side target hits: ${JSON.stringify(shortTargetCoverDecision)}`);
   }
 }
 

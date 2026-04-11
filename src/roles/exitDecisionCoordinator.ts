@@ -11,6 +11,10 @@ const {
   POSITION_LIFECYCLE_EVENTS
 } = require("./positionLifecycleManager.ts");
 const { resolveManagedRecoveryExit } = require("./managedRecoveryExitResolver.ts");
+const {
+  calculateAdverseMovePct,
+  isExitActionForSide
+} = require("../utils/tradeSide.ts");
 
 export type ExitPlan = {
   estimatedExitEconomics?: any;
@@ -203,7 +207,11 @@ function resolveProtectiveExit(params: {
   if (getProtectionStopMode(params.exitPolicy) !== "fixed_pct") {
     return null;
   }
-  const drawdownPct = params.position.entryPrice > 0 ? ((params.position.entryPrice - params.price) / params.position.entryPrice) : 0;
+  const drawdownPct = calculateAdverseMovePct({
+    entryPrice: params.position.entryPrice,
+    markPrice: params.price,
+    side: params.position.side
+  });
   if (!(drawdownPct >= params.emergencyStopPct)) {
     return null;
   }
@@ -297,7 +305,7 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
       };
     }
 
-    if (params.decision.action === "sell" && params.signalState.exitSignalStreak >= params.exitConfirmationTicks) {
+    if (isExitActionForSide(params.position.side, params.decision.action) && params.signalState.exitSignalStreak >= params.exitConfirmationTicks) {
       if (meanReversionPosition && rsiExitThresholdHit) {
         const estimatedExitEconomics = params.estimateExitEconomics(params.position, params.tick.price);
         const exitFloorNetPnlUsdt = getRsiExitFloorNetPnlUsdt(params.exitPolicy);

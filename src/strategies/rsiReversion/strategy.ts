@@ -3,6 +3,7 @@
 import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
 const { resolveExitPolicy } = require("../../roles/exitPolicyRegistry.ts");
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../../roles/recoveryTargetResolver.ts");
+const { calculateTargetDistancePct, isTargetHit } = require("../../utils/tradeSide.ts");
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -25,7 +26,7 @@ function resolvePriceScale(...values: Array<number | null | undefined>) {
 function estimateExpectedGrossEdgePct(inputs: StrategyEntryEdgeInputs) {
   return Math.min(0.02, Math.max(0,
     (0.7 * inputs.captureGapPct) +
-    (0.2 * inputs.downsideMeanReversionGapPct) +
+    (0.2 * (inputs.favorableMeanReversionGapPct ?? inputs.downsideMeanReversionGapPct)) +
     (0.07 * inputs.emaGapPct) +
     (0.03 * inputs.momentumEdgePct)
   ));
@@ -68,7 +69,9 @@ function createStrategy(config: {
 
       const priceScale = resolvePriceScale(context.latestPrice, emaSlow);
       const oversoldDistance = Math.max(0, buyRsi - rsi);
+      const overboughtDistance = Math.max(0, rsi - sellRsi);
       const priceDiscountPct = Math.max(0, emaSlow - context.latestPrice) / priceScale;
+      const pricePremiumPct = Math.max(0, context.latestPrice - emaSlow) / priceScale;
       const buyConfidence = clamp(
         0.52
         + (0.24 * boundedShare(oversoldDistance, 8))
@@ -76,15 +79,33 @@ function createStrategy(config: {
         0.4,
         0.9
       );
+      const shortConfidence = clamp(
+        0.52
+        + (0.24 * boundedShare(overboughtDistance, 8))
+        + (0.12 * boundedShare(pricePremiumPct, 0.01)),
+        0.4,
+        0.9
+      );
+      const positionSide = context.positionSide || null;
       const reversionTargetPolicy = resolveRecoveryTargetPolicy(exitPolicy);
       const resolvedRecoveryTarget = resolveRecoveryTarget({
         context,
+        position: context.hasOpenPosition ? ({
+          side: positionSide || "long",
+          entryPrice: Number(context.metadata?.positionEntryPrice) || context.latestPrice
+        } as any) : null,
         targetOffsetPct: reversionTargetPolicy.targetOffsetPct,
         targetSource: reversionTargetPolicy.targetSource
       });
-      const exitPriceThreshold = resolvedRecoveryTarget.targetPrice ?? (emaSlow * 1.015);
-      const rsiExitDistance = Math.max(0, rsi - sellRsi);
-      const priceExtensionPct = Math.max(0, context.latestPrice - exitPriceThreshold) / priceScale;
+      const exitPriceThreshold = resolvedRecoveryTarget.targetPrice ?? (positionSide === "short" ? emaSlow * 0.985 : emaSlow * 1.015);
+      const rsiExitDistance = positionSide === "short"
+        ? Math.max(0, buyRsi - rsi)
+        : Math.max(0, rsi - sellRsi);
+      const priceExtensionPct = calculateTargetDistancePct({
+        latestPrice: context.latestPrice,
+        side: positionSide || "long",
+        targetPrice: exitPriceThreshold
+      });
       const sellConfidence = clamp(
         0.58
         + (0.22 * boundedShare(rsiExitDistance, 8))
@@ -96,18 +117,24 @@ function createStrategy(config: {
       // Architect family routing decides when mean reversion is allowed system-wide.
       // The strategy keeps only its local technical trigger checks.
       if (!context.hasOpenPosition && rsi <= buyRsi && context.latestPrice <= emaSlow) {
-        return { action: "buy", confidence: buyConfidence, reason: [...reasons, "oversold_mean_reversion"] };
+        return { action: "buy", confidence: buyConfidence, reason: [...reasons, "oversold_mean_reversion"], side: "long" };
       }
 
-      const priceTargetHit = context.latestPrice > exitPriceThreshold;
-      const rsiExitThresholdHit = rsi >= sellRsi;
+      if (!context.hasOpenPosition && rsi >= sellRsi && context.latestPrice >= emaSlow) {
+        return { action: "sell", confidence: shortConfidence, reason: [...reasons, "overbought_mean_reversion"], side: "short" };
+      }
+
+      const exitSide = positionSide || "long";
+      const priceTargetHit = isTargetHit(exitSide, context.latestPrice, exitPriceThreshold);
+      const rsiExitThresholdHit = exitSide === "short" ? rsi <= buyRsi : rsi >= sellRsi;
+      const exitAction = exitSide === "short" ? "buy" : "sell";
 
       if (context.hasOpenPosition && priceTargetHit) {
-        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "reversion_price_target_hit"] };
+        return { action: exitAction, confidence: sellConfidence, reason: [...reasons, "reversion_price_target_hit"], side: exitSide };
       }
 
       if (context.hasOpenPosition && rsiExitThresholdHit) {
-        return { action: "sell", confidence: sellConfidence, reason: [...reasons, "rsi_exit_threshold_hit"] };
+        return { action: exitAction, confidence: sellConfidence, reason: [...reasons, "rsi_exit_threshold_hit"], side: exitSide };
       }
 
       return { action: "hold", confidence: config.minConfidence ?? 0.55, reason: [...reasons, "mean_reversion_not_ready"] };

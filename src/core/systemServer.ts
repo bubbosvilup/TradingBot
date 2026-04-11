@@ -461,6 +461,7 @@ class SystemServer {
           managedRecoveryStartedAt: position.managedRecoveryStartedAt || null,
           openedAt: position.openedAt,
           quantity: position.quantity,
+          side: normalizeTradeSide(position.side),
           unrealizedPnl
         } : null,
         pausedReason: state?.pausedReason || null,
@@ -497,6 +498,7 @@ class SystemServer {
           entryPrice: position.entryPrice,
           holdMs: now - position.openedAt,
           quantity: position.quantity,
+          side: normalizeTradeSide(position.side),
           strategyId: position.strategyId,
           symbol: position.symbol,
           unrealizedPnl: this.calculateUnrealizedPnl(position, latestPrice)
@@ -568,33 +570,35 @@ class SystemServer {
     for (const trade of closedTrades) {
       const entryTimeSeconds = Math.floor(Number(trade.openedAt) / 1000);
       const exitTimeSeconds = Math.floor(Number(trade.closedAt) / 1000);
+      const tradeSide = normalizeTradeSide(trade.side);
       if (Number.isFinite(entryTimeSeconds) && entryTimeSeconds > 0) {
         markerMap.set(`entry:${trade.id}:${entryTimeSeconds}`, {
-          color: "#22c55e",
-          position: "belowBar",
-          shape: "arrowUp",
-          text: `BUY ${trade.botId} @ ${Number(trade.entryPrice).toFixed(4)} ${new Date(trade.openedAt).toLocaleTimeString()}`,
+          color: tradeSide === "short" ? "#f97316" : "#22c55e",
+          position: tradeSide === "short" ? "aboveBar" : "belowBar",
+          shape: tradeSide === "short" ? "arrowDown" : "arrowUp",
+          text: `${tradeSide === "short" ? "SHORT" : "BUY"} ${trade.botId} @ ${Number(trade.entryPrice).toFixed(4)} ${new Date(trade.openedAt).toLocaleTimeString()}`,
           time: entryTimeSeconds
         });
       }
       if (Number.isFinite(exitTimeSeconds) && exitTimeSeconds > 0) {
         markerMap.set(`exit:${trade.id}:${exitTimeSeconds}`, {
           color: trade.netPnl >= 0 ? "#22c55e" : "#ef4444",
-          position: "aboveBar",
-          shape: "arrowDown",
-          text: `SELL ${trade.botId} @ ${Number(trade.exitPrice).toFixed(4)} ${new Date(trade.closedAt).toLocaleTimeString()} PnL ${Number(trade.netPnl).toFixed(2)}`,
+          position: tradeSide === "short" ? "belowBar" : "aboveBar",
+          shape: tradeSide === "short" ? "arrowUp" : "arrowDown",
+          text: `${tradeSide === "short" ? "COVER" : "SELL"} ${trade.botId} @ ${Number(trade.exitPrice).toFixed(4)} ${new Date(trade.closedAt).toLocaleTimeString()} PnL ${Number(trade.netPnl).toFixed(2)}`,
           time: exitTimeSeconds
         });
       }
     }
     if (openPosition && Number.isFinite(Number(openPosition.openedAt))) {
+      const openPositionSide = normalizeTradeSide(openPosition.side);
       const openTimeSeconds = Math.floor(Number(openPosition.openedAt) / 1000);
       if (openTimeSeconds > 0) {
         markerMap.set(`open:${openPosition.id}:${openTimeSeconds}`, {
-          color: "#22c55e",
-          position: "belowBar",
-          shape: "arrowUp",
-          text: `BUY ${openPosition.botId} @ ${Number(openPosition.entryPrice).toFixed(4)} ${new Date(openPosition.openedAt).toLocaleTimeString()}`,
+          color: openPositionSide === "short" ? "#f97316" : "#22c55e",
+          position: openPositionSide === "short" ? "aboveBar" : "belowBar",
+          shape: openPositionSide === "short" ? "arrowDown" : "arrowUp",
+          text: `${openPositionSide === "short" ? "SHORT" : "BUY"} ${openPosition.botId} @ ${Number(openPosition.entryPrice).toFixed(4)} ${new Date(openPosition.openedAt).toLocaleTimeString()}`,
           time: openTimeSeconds
         });
       }
@@ -623,7 +627,8 @@ class SystemServer {
         currentPrice: latestPrice,
         entryPrice: openPosition.entryPrice,
         openedAt: openPosition.openedAt,
-        quantity: openPosition.quantity
+        quantity: openPosition.quantity,
+        side: normalizeTradeSide(openPosition.side)
       } : null,
       symbol: resolvedSymbol
     };

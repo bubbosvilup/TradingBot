@@ -72,6 +72,7 @@ function runRecoveryTargetResolverTests() {
       notes: ["entry"],
       openedAt: 1000,
       quantity: 1,
+      side: "long",
       strategyId: "rsiReversion",
       symbol: "BTC/USDT"
     },
@@ -80,6 +81,26 @@ function runRecoveryTargetResolverTests() {
   });
   if (entryRelativeTarget.source !== "entryPrice" || entryRelativeTarget.basePrice !== 98 || !approxEqual(entryRelativeTarget.targetPrice, 98.98)) {
     throw new Error(`entry-relative recovery target resolution mismatch: ${JSON.stringify(entryRelativeTarget)}`);
+  }
+
+  const shortEntryRelativeTarget = resolveRecoveryTarget({
+    position: {
+      botId: "bot_target_test",
+      confidence: 0.8,
+      entryPrice: 102,
+      id: "pos-short-entry-relative",
+      notes: ["entry"],
+      openedAt: 1000,
+      quantity: 1,
+      side: "short",
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    },
+    targetOffsetPct: 0.01,
+    targetSource: "entryPrice"
+  });
+  if (shortEntryRelativeTarget.source !== "entryPrice" || shortEntryRelativeTarget.basePrice !== 102 || !approxEqual(shortEntryRelativeTarget.targetPrice, 100.98) || shortEntryRelativeTarget.side !== "short") {
+    throw new Error(`short entry-relative recovery target should resolve below entry: ${JSON.stringify(shortEntryRelativeTarget)}`);
   }
 }
 

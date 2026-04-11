@@ -55,7 +55,12 @@ const {
 } = require("../roles/positionLifecycleManager.ts");
 const { resolveExitPolicy } = require("../roles/exitPolicyRegistry.ts");
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../roles/recoveryTargetResolver.ts");
-const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
+const {
+  calculateDirectionalGrossPnl,
+  isTargetHit,
+  normalizeEntrySide,
+  normalizeTradeSide
+} = require("../utils/tradeSide.ts");
 const { ExitDecisionCoordinator } = require("../roles/exitDecisionCoordinator.ts") as {
   ExitDecisionCoordinator: new () => { resolve: (params: any) => ExitPlan; };
 };
@@ -264,6 +269,8 @@ class TradingBot extends BaseBot {
       latestPrice: tick.price,
       localRegimeHint: regime,
       metadata: {
+        positionEntryPrice: position?.entryPrice ?? null,
+        positionSide: position ? normalizeTradeSide(position.side) : null,
         updatedAt: tick.timestamp
       },
       performance: {
@@ -275,6 +282,7 @@ class TradingBot extends BaseBot {
         winRate: performance?.winRate || 0
       },
       prices: priceSeries,
+      positionSide: position ? normalizeTradeSide(position.side) : null,
       strategyId: this.strategy.id,
       symbol: this.config.symbol,
       timestamp: tick.timestamp,
@@ -734,7 +742,7 @@ class TradingBot extends BaseBot {
       hit: Boolean(
         Number.isFinite(Number(latestPrice))
         && Number.isFinite(Number(resolvedTarget.targetPrice))
-        && Number(latestPrice) >= Number(resolvedTarget.targetPrice)
+        && isTargetHit(params.position.side, Number(latestPrice), Number(resolvedTarget.targetPrice))
       )
     };
   }
@@ -993,6 +1001,7 @@ class TradingBot extends BaseBot {
     context?: Partial<MarketContext> | null;
     price: number;
     quantity: number | null;
+    side?: "long" | "short" | null;
   }): EntryEconomicsEstimate {
     const resolvedFeeRate = Number(this.deps.executionEngine?.feeRate);
     const feeRate = Math.max(Number.isFinite(resolvedFeeRate) ? resolvedFeeRate : 0, 0);
@@ -1004,6 +1013,7 @@ class TradingBot extends BaseBot {
       price: params.price,
       profitSafetyBufferPct: this.entryProfitSafetyBufferPct,
       quantity: params.quantity,
+      side: params.side,
       strategy: this.resolveEntryEconomicsStrategy(params.context)
     });
   }
@@ -1054,6 +1064,7 @@ class TradingBot extends BaseBot {
     state?: any;
     tick: MarketTick;
   }): FinalEntryGateEvaluationResult {
+    const entrySide = normalizeEntrySide(params.decision?.side, params.decision?.action);
     const contextSnapshot = params.contextSnapshot !== undefined
       ? params.contextSnapshot
       : this.deps.store.getContextSnapshot(this.config.symbol);
@@ -1066,7 +1077,8 @@ class TradingBot extends BaseBot {
     const economics = this.estimateEntryEconomics({
       context: params.context,
       price: params.tick.price,
-      quantity: params.quantity
+      quantity: params.quantity,
+      side: entrySide
     });
     const tradeConstraints = this.deps.riskManager.getTradeConstraints();
     const tradeConstraintValidation = validateTradeConstraints({
@@ -1293,7 +1305,8 @@ class TradingBot extends BaseBot {
     const baseEconomics = this.estimateEntryEconomics({
       context: snapshot.context,
       price: snapshot.tick.price,
-      quantity: null
+      quantity: null,
+      side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action)
     });
     const evaluationState = snapshot.state;
     const entryAttempt = this.entryCoordinator.resolveEntryAttempt({
@@ -1318,7 +1331,8 @@ class TradingBot extends BaseBot {
         const sizingEconomics = this.estimateEntryEconomics({
           context: snapshot.context,
           price: snapshot.tick.price,
-          quantity: preparedOpenAttempt.quantity
+          quantity: preparedOpenAttempt.quantity,
+          side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action)
         });
         this.applyEntryOutcome(this.entryOutcomeCoordinator.buildSkippedOutcome({
           architectState: currentArchitectState,
@@ -1380,6 +1394,7 @@ class TradingBot extends BaseBot {
         quantity: sizing.quantity,
         reason: snapshot.decision.reason,
         recordedAt: now(),
+        side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action),
         strategyId: this.strategy.id,
         symbol: this.config.symbol
       });

@@ -7,6 +7,8 @@ import type { RiskProfileSettings } from "../types/runtime.ts";
 import type { EntryEconomicsEstimate, MarketContext, StrategyDecision } from "../types/strategy.ts";
 import type { ArchitectUsabilityState } from "./architectCoordinator.ts";
 
+const { normalizeEntrySide } = require("../utils/tradeSide.ts");
+
 export interface EntryOutcomeCoordinatorParams {
   symbol: string;
 }
@@ -143,6 +145,10 @@ class EntryOutcomeCoordinator implements EntryOutcomeCoordinatorInstance {
 
   toFixedNumber(value: unknown, digits: number) {
     return Number(Number(value || 0).toFixed(digits));
+  }
+
+  getDecisionSide(decision: StrategyDecision | null | undefined) {
+    return normalizeEntrySide(decision?.side, decision?.action);
   }
 
   buildSkippedOutcome(params: {
@@ -334,6 +340,7 @@ class EntryOutcomeCoordinator implements EntryOutcomeCoordinatorInstance {
         expectedNetEdgePct: this.toFixedNumber(params.diagnostics.expectedNetEdgePct || 0, 4),
         latestPrice: this.toFixedNumber(params.tick.price || 0, 4),
         quantity: this.toFixedNumber(params.openedQuantity || 0, 8),
+        side: this.getDecisionSide(params.decision),
         strategy: params.strategyId
       },
       entryEvaluated: {
@@ -359,6 +366,7 @@ class EntryOutcomeCoordinator implements EntryOutcomeCoordinatorInstance {
         publishedFamily: params.publishedArchitect?.recommendedFamily || null,
         publishedRegime: params.publishedArchitect?.marketRegime || null,
         signalAgreement: params.publishedArchitect ? this.toFixedNumber(params.publishedArchitect.signalAgreement, 4) : null,
+        side: this.getDecisionSide(params.decision),
         strategy: params.strategyId,
         symbol: this.symbol
       },

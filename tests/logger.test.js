@@ -33,9 +33,11 @@ function runLoggerTests() {
     const onlyTradesLogger = createLogger("test:trades", { logType: "only_trades" });
     onlyTradesLogger.info("system_ready", { bots: 2 });
     onlyTradesLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BUY", { latestPrice: 100 });
+    onlyTradesLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "SHORT", { latestPrice: 101 });
     onlyTradesLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "SELL", { netPnl: 1.2 });
+    onlyTradesLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "COVER", { netPnl: 1.1 });
     onlyTradesLogger.warn("ws_error", { channel: "ticker" });
-    if (lines.length !== 3 || lines.some((line) => line.includes("system_ready"))) {
+    if (lines.length !== 5 || lines.some((line) => line.includes("system_ready"))) {
       throw new Error(`only_trades mode should keep only trade and warning/error events: ${JSON.stringify(lines)}`);
     }
 

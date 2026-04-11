@@ -158,10 +158,11 @@ function getPositionState(bot) {
   if (bot.manualResumeRequired) return { className: "bad", text: "manual" };
   if (bot.status === "paused") return { className: "warn", text: "paused" };
   if (!bot.openPosition) return { className: "muted", text: "flat" };
+  const side = String(bot.openPosition.side || "long").toLowerCase() === "short" ? "short" : "long";
   if (bot.openPosition.lifecycleMode === "managed_recovery" || bot.openPosition.lifecycleState === "MANAGED_RECOVERY") {
-    return { className: "warn", text: "recovery" };
+    return { className: "warn", text: `${side[0]}/rec` };
   }
-  return { className: "good", text: "open" };
+  return { className: "good", text: side };
 }
 
 function getRiskFlags(bot) {
@@ -314,7 +315,7 @@ function isRiskEvent(event) {
 function renderLastRows() {
   const lastTrade = Array.isArray(state.trades) && state.trades.length > 0 ? state.trades[0] : null;
   const tradeText = lastTrade
-    ? `${lastTrade.botId} ${lastTrade.symbol} ${formatMoney(lastTrade.netPnl)} ${formatAge(lastTrade.exitTime)} ago`
+    ? `${lastTrade.botId} ${String(lastTrade.side || "long").toUpperCase()} ${lastTrade.symbol} ${formatMoney(lastTrade.netPnl)} ${formatAge(lastTrade.exitTime)} ago`
     : "none";
   const riskEvent = (state.events || []).find(isRiskEvent) || null;
   const riskText = riskEvent

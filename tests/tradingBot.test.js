@@ -587,6 +587,63 @@ function runTradingBotTests() {
     }
 
     clock += 10_000;
+    const shortAccountingHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "buy" : "sell",
+      confidence: 0.9,
+      reason: [context.hasOpenPosition ? "cover_signal" : "bearish_cross_confirmed"],
+      side: "short"
+    }), {
+      indicatorSnapshot: {
+        emaBaseline: 101,
+        emaFast: 98.5,
+        emaSlow: 100,
+        momentum: -1.5,
+        rsi: 42,
+        volatility: 1.2
+      },
+      strategy: "emaCross"
+    });
+    const shortInitialState = shortAccountingHarness.store.getBotState("bot_test");
+    const shortInitialBalance = shortInitialState.availableBalanceUsdt;
+    shortAccountingHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    shortAccountingHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const shortPosition = shortAccountingHarness.store.getPosition("bot_test");
+    if (!shortPosition || shortPosition.side !== "short") {
+      throw new Error(`short scenario should open a short position: ${JSON.stringify(shortPosition)}`);
+    }
+    const shortEntryNotional = shortPosition.entryPrice * shortPosition.quantity;
+    const shortOpenState = shortAccountingHarness.store.getBotState("bot_test");
+    assertClose(
+      shortOpenState.availableBalanceUsdt,
+      shortInitialBalance - shortEntryNotional,
+      "short open should reserve entry notional from available balance"
+    );
+    clock += 1_000;
+    shortAccountingHarness.bot.onMarketTick({ price: 99, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!shortAccountingHarness.store.getPosition("bot_test")) {
+      throw new Error("short scenario should still hold before minimum hold time");
+    }
+    clock += 16_000;
+    shortAccountingHarness.bot.onMarketTick({ price: 98, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const shortTrade = shortAccountingHarness.store.getClosedTrades("bot_test")[0];
+    const shortClosedState = shortAccountingHarness.store.getBotState("bot_test");
+    if (!shortTrade || shortTrade.side !== "short" || !(shortTrade.netPnl > 0)) {
+      throw new Error(`short scenario should close a profitable short trade: ${JSON.stringify(shortTrade)}`);
+    }
+    const expectedShortFees = ((shortTrade.entryPrice * shortTrade.quantity) + (shortTrade.exitPrice * shortTrade.quantity)) * 0.001;
+    const expectedShortGrossPnl = (shortTrade.entryPrice - shortTrade.exitPrice) * shortTrade.quantity;
+    const expectedShortNetPnl = expectedShortGrossPnl - expectedShortFees;
+    assertClose(shortTrade.fees, expectedShortFees, "short close should charge round-trip fees");
+    assertClose(shortTrade.pnl, expectedShortGrossPnl, "short close should store directional gross pnl");
+    assertClose(shortTrade.netPnl, expectedShortNetPnl, "short close should store directional net pnl after fees");
+    assertClose(
+      shortClosedState.availableBalanceUsdt,
+      shortInitialBalance + shortTrade.netPnl,
+      "short close should restore reserved capital plus directional net pnl"
+    );
+
+    clock += 10_000;
     const lossAccountingHarness = createHarness((context) => ({
       action: context.hasOpenPosition ? "sell" : "buy",
       confidence: 0.9,
@@ -2420,6 +2477,7 @@ function runTradingBotTests() {
       strategy: "emaCross"
     });
     executionRejectedEconomicsHarness.executionEngine.openLong = () => null;
+    executionRejectedEconomicsHarness.executionEngine.openPosition = () => null;
     let executionRejectedEconomicsCalls = 0;
     const originalExecutionRejectedEconomics = executionRejectedEconomicsHarness.bot.estimateEntryEconomics.bind(executionRejectedEconomicsHarness.bot);
     executionRejectedEconomicsHarness.bot.estimateEntryEconomics = (params) => {

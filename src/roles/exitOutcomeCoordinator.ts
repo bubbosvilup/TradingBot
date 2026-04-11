@@ -99,7 +99,8 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
       state: params.signalState
     });
     const maxDrawdownPct = this.riskManager.getProfile(params.riskProfile, params.riskOverrides || null).maxDrawdownPct;
-    const updatedBalance = params.signalState.availableBalanceUsdt + (params.closedTrade.quantity * params.closedTrade.exitPrice) - params.closedTrade.fees;
+    const releasedEntryNotionalUsdt = params.closedTrade.quantity * params.closedTrade.entryPrice;
+    const updatedBalance = params.signalState.availableBalanceUsdt + releasedEntryNotionalUsdt + params.closedTrade.netPnl;
     // Max drawdown is a hard runtime pause that must be cleared by an explicit external resume.
     // This coordinator only records the paused state; it does not auto-resume or soften the policy.
     const pausedForDrawdown = params.nextPerformance.drawdown >= maxDrawdownPct;
@@ -149,6 +150,7 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
         netPnl: this.toFixed(params.closedTrade.netPnl, 4),
         outcome: params.closedTrade.netPnl > 0 ? "profit" : params.closedTrade.netPnl < 0 ? "loss" : "flat",
         quantity: this.toFixed(params.closedTrade.quantity, 8),
+        side: params.closedTrade.side,
         strategy: params.strategyId
       },
       failedRsiExitLogMetadata: params.classification.failedRsiExit
@@ -162,6 +164,7 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
             fees: this.toFixed(params.closedTrade.fees, 4),
             grossPnl: this.toFixed(params.closedTrade.pnl, 4),
             netPnl: this.toFixed(params.closedTrade.netPnl, 4),
+            side: params.closedTrade.side,
             strategy: params.strategyId
           }
         : undefined,

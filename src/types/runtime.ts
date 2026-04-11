@@ -86,6 +86,10 @@ export interface ExecutionOpenParams {
   symbol: string;
 }
 
+export interface ExecutionOpenPositionParams extends ExecutionOpenParams {
+  side?: TradeDirection;
+}
+
 export interface ExecutionCloseParams {
   botId: string;
   lifecycleEvent?: unknown;
@@ -161,6 +165,8 @@ export interface ExecutionEngineLike {
   };
   getTradeConstraints?(): TradeConstraints;
   openLong(params: ExecutionOpenParams): PositionRecord | null;
+  openShort?(params: ExecutionOpenParams): PositionRecord | null;
+  openPosition?(params: ExecutionOpenPositionParams): PositionRecord | null;
   closePosition(params: ExecutionCloseParams): ClosedTradeRecord | null;
 }
 

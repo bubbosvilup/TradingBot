@@ -3,9 +3,10 @@
 import type { BotRuntimeState, RiskOverrides, RiskProfile } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ExecutionEngineLike, RiskManagerLike, TradeConstraints } from "../types/runtime.ts";
-import type { PositionRecord } from "../types/trade.ts";
+import type { PositionRecord, TradeDirection } from "../types/trade.ts";
 
 const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
+const { normalizeTradeSide } = require("../utils/tradeSide.ts");
 
 export interface OpenAttemptCoordinatorParams {
   executionEngine: ExecutionEngineLike;
@@ -58,6 +59,7 @@ export interface OpenAttemptCoordinatorInstance {
     recordedAt: number;
     strategyId: string;
     symbol: string;
+    side?: TradeDirection;
   }): ExecutedOpenAttempt;
   prepare(params: {
     balanceUsdt: number;
@@ -130,8 +132,10 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
     recordedAt: number;
     strategyId: string;
     symbol: string;
+    side?: TradeDirection;
   }): ExecutedOpenAttempt {
-    const opened = this.executionEngine.openLong({
+    const side = normalizeTradeSide(params.side);
+    const openParams = {
       botId: params.botId,
       confidence: params.confidence,
       price: params.price,
@@ -139,7 +143,12 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
       reason: [...params.reason, `entry_confirmed_${params.entryDebounceTicks}ticks`],
       strategyId: params.strategyId,
       symbol: params.symbol
-    });
+    };
+    const opened = typeof this.executionEngine.openPosition === "function"
+      ? this.executionEngine.openPosition({ ...openParams, side })
+      : side === "short" && typeof this.executionEngine.openShort === "function"
+        ? this.executionEngine.openShort(openParams)
+        : this.executionEngine.openLong(openParams);
 
     if (!opened) {
       const executionConstraints = this.getExecutionConstraints();

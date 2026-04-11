@@ -13,6 +13,8 @@ import type {
   SymbolStateRetentionSnapshot
 } from "../types/runtime.ts";
 
+const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
+
 interface PerformanceHistoryPoint {
   time: number;
   pnl: number;
@@ -779,7 +781,12 @@ class StateStore {
       const entryPrice = Math.max(Number(position.entryPrice) || 0, 0);
       const entryNotionalUsdt = entryPrice * quantity;
       const markNotionalUsdt = markPrice * quantity;
-      const grossPnl = (markPrice - entryPrice) * quantity;
+      const grossPnl = calculateDirectionalGrossPnl({
+        entryPrice,
+        exitPrice: markPrice,
+        quantity,
+        side: normalizeTradeSide(position.side)
+      }).grossPnl;
       const fees = (entryNotionalUsdt + markNotionalUsdt) * feeRate;
 
       openPositionMarkNotionalUsdt += markNotionalUsdt;

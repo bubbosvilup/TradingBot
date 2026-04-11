@@ -11,6 +11,7 @@ import type { EntryEconomicsEstimate, MarketContext, StrategyDecision } from "..
 import type { ClosedTradeRecord, PositionRecord } from "../types/trade.ts";
 
 const { getPositionLifecycleState, isManagedRecoveryPosition, POSITION_LIFECYCLE_EVENTS, resolveLifecycleEventFromReasons } = require("./positionLifecycleManager.ts");
+const { applyDirectionalOffset, isEntryAction, normalizeTradeSide } = require("../utils/tradeSide.ts");
 
 export interface CompactLogDescriptor {
   dedupeKey?: string;
@@ -206,6 +207,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       blockReason: metadata.blockReason || null,
       botId: this.botId,
       decisionAction: metadata.decisionAction || "not_evaluated",
+      decisionSide: metadata.decisionSide || null,
       decisionConfidence: metadata.decisionConfidence ?? 0,
       entryDebounceRequired: metadata.entryDebounceRequired ?? null,
       entrySignalStreak: metadata.entrySignalStreak ?? 0,
@@ -224,7 +226,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
   buildSetupStateSignature(metadata: Record<string, unknown>, strategyId: string) {
     const debounceRequired = Number(metadata.entryDebounceRequired || 0);
     const streak = Number(metadata.entrySignalStreak || 0);
-    const readinessState = metadata.decisionAction !== "buy"
+    const readinessState = !isEntryAction(metadata.decisionAction)
       ? "inactive"
       : debounceRequired <= 0
         ? "ready"
@@ -252,7 +254,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     const entryDebounceRequired = Number(metadata.entryDebounceRequired || 0);
     const entrySignalStreak = Number(metadata.entrySignalStreak || 0);
     const nearReady = entryDebounceRequired > 0 && entrySignalStreak >= Math.max(entryDebounceRequired - 1, 1);
-    const shouldLog = metadata.decisionAction === "buy"
+    const shouldLog = isEntryAction(metadata.decisionAction)
       || Boolean(metadata.allowReason)
       || Boolean(metadata.blockReason)
       || nearReady;
@@ -277,6 +279,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       blockReason: metadata.blockReason,
       botId: this.botId,
       decisionAction: metadata.decisionAction || "not_evaluated",
+      decisionSide: metadata.decisionSide || null,
       entryDebounceRequired: metadata.entryDebounceRequired ?? null,
       entrySignalStreak: metadata.entrySignalStreak ?? 0,
       expectedNetEdgePct: metadata.expectedNetEdgePct ?? null,
@@ -326,23 +329,27 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
   }
 
   buildCompactBuyDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor {
+    const side = normalizeTradeSide(metadata.side);
     return {
-      message: "BUY",
+      message: side === "short" ? "SHORT" : "BUY",
       metadata: {
         botId: this.botId,
         symbol: this.symbol,
-        ...metadata
+        ...metadata,
+        side
       }
     };
   }
 
   buildCompactSellDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor {
+    const side = normalizeTradeSide(metadata.side);
     return {
-      message: "SELL",
+      message: side === "short" ? "COVER" : "SELL",
       metadata: {
         botId: this.botId,
         symbol: this.symbol,
-        ...metadata
+        ...metadata,
+        side
       }
     };
   }
@@ -376,6 +383,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       blockReason: params.blockReason || null,
       decisionAction: params.decision?.action || "not_evaluated",
       decisionConfidence: params.decision ? Number(Number(params.decision.confidence || 0).toFixed(4)) : 0,
+      decisionSide: isEntryAction(params.decision?.action) ? (params.decision?.side || params.economics.side || null) : null,
       entryDebounceRequired: params.profile?.entryDebounceTicks ?? null,
       entrySignalStreak: signalState?.entrySignalStreak ?? state.entrySignalStreak ?? 0,
       estimatedCostPct: Number((params.economics.estimatedEntryFeePct + params.economics.estimatedExitFeePct + params.economics.estimatedSlippagePct).toFixed(4)),
@@ -491,6 +499,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       dataQuality,
       decisionAction: params.decision?.action || "not_evaluated",
       decisionConfidence: params.decision ? Number(Number(params.decision.confidence || 0).toFixed(4)) : 0,
+      decisionSide: isEntryAction(params.decision?.action) ? (params.decision?.side || params.economics.side || null) : null,
       effectiveWindowStartedAt,
       entryDebounceRequired: debounceRequired,
       entryMaturityThreshold,
@@ -568,7 +577,11 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
   getProtectiveStopLevel(position: PositionRecord | null | undefined, protectionStopPct: number) {
     if (!position) return null;
     if (!Number.isFinite(Number(position.entryPrice))) return null;
-    return Number((Number(position.entryPrice) * (1 - protectionStopPct)).toFixed(4));
+    const side = normalizeTradeSide(position.side);
+    const stopLevel = side === "short"
+      ? Number(position.entryPrice) * (1 + Number(protectionStopPct))
+      : applyDirectionalOffset(Number(position.entryPrice), -Math.abs(Number(protectionStopPct)), "long");
+    return Number(stopLevel.toFixed(4));
   }
 
   extractPrimaryExitEvent(exitReasons: string[]) {
@@ -642,6 +655,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       lifecycleEvent: params.lifecycleEvent || resolveLifecycleEventFromReasons(params.exitReasons),
       netPnl: params.closedTrade ? Number(Number(params.closedTrade.netPnl || 0).toFixed(4)) : null,
       policyId: params.exitPolicy?.id || null,
+      positionSide: normalizeTradeSide(params.position.side),
       positionStatus: this.getPositionStatus(params.position),
       protectionMode: params.protectionMode || null,
       signalTimestamp,

@@ -15,6 +15,7 @@ function createPosition(overrides = {}) {
     notes: ["test_position"],
     openedAt: 1_000,
     quantity: 0.5,
+    side: "long",
     strategyId: "emaCross",
     symbol: "BTC/USDT",
     ...overrides
@@ -91,6 +92,38 @@ function runExitDecisionCoordinatorTests() {
   });
   if (!protectivePlan.exitNow || protectivePlan.exitMechanism !== "protection" || protectivePlan.lifecycleEvent !== "PROTECTIVE_STOP_HIT" || !protectivePlan.reason.includes("protective_stop_exit")) {
     throw new Error(`protective exit planning regressed: ${JSON.stringify(protectivePlan)}`);
+  }
+
+  const shortProtectivePlan = coordinator.resolve({
+    decision: {
+      action: "hold",
+      confidence: 0.5,
+      reason: ["hold_short"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics(position, price) {
+      return { netPnl: (position.entryPrice - price) * position.quantity };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy,
+    managedRecoveryTarget: null,
+    minHoldMs: 15_000,
+    position: createPosition({
+      openedAt: 19_500,
+      side: "short"
+    }),
+    resolveInvalidationLevel() {
+      return null;
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 0
+    }),
+    tick: createTick({
+      price: 101.2
+    })
+  });
+  if (!shortProtectivePlan.exitNow || shortProtectivePlan.exitMechanism !== "protection" || !shortProtectivePlan.reason.includes("protective_stop_exit")) {
+    throw new Error(`short protective exit should trigger when price rises against the short: ${JSON.stringify(shortProtectivePlan)}`);
   }
 
   const invalidationPlan = coordinator.resolve({
@@ -295,6 +328,41 @@ function runExitDecisionCoordinatorTests() {
     throw new Error(`confirmation-tick-sensitive path regressed at threshold: ${JSON.stringify(confirmedPlan)}`);
   }
 
+  const confirmedShortCoverPlan = coordinator.resolve({
+    decision: {
+      action: "buy",
+      confidence: 0.9,
+      reason: ["cover_signal"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics(position, price) {
+      return { netPnl: (position.entryPrice - price) * position.quantity };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy,
+    managedRecoveryTarget: null,
+    minHoldMs: 15_000,
+    position: createPosition({
+      openedAt: 1_000,
+      quantity: 1,
+      side: "short",
+      strategyId: "emaCross"
+    }),
+    resolveInvalidationLevel() {
+      return null;
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 2
+    }),
+    tick: createTick({
+      price: 99.2,
+      timestamp: 20_000
+    })
+  });
+  if (!confirmedShortCoverPlan.exitNow || !confirmedShortCoverPlan.reason.includes("exit_confirmed_2ticks")) {
+    throw new Error(`short cover signal should use buy as the exit action: ${JSON.stringify(confirmedShortCoverPlan)}`);
+  }
+
   const deferredRsiPlan = coordinator.resolve({
     decision: {
       action: "sell",
@@ -396,6 +464,55 @@ function runExitDecisionCoordinatorTests() {
   });
   if (!confirmedRsiPlan.exitNow || confirmedRsiPlan.transition !== undefined || confirmedRsiPlan.lifecycleEvent !== "RSI_EXIT_HIT" || confirmedRsiPlan.exitMechanism !== "qualification" || !confirmedRsiPlan.reason.includes("rsi_exit_confirmed") || !confirmedRsiPlan.reason.includes("exit_confirmed_2ticks")) {
     throw new Error(`rsi confirmed exit planning regressed: ${JSON.stringify(confirmedRsiPlan)}`);
+  }
+
+  const shortManagedRecoveryTargetPlan = coordinator.resolve({
+    architectState: {
+      blockReason: null,
+      familyMatch: false,
+      publisher: {
+        challengerCount: 0,
+        challengerRequired: 2,
+        publishIntervalMs: 30_000
+      },
+      usable: true
+    },
+    decision: {
+      action: "hold",
+      confidence: 0.5,
+      reason: ["reversion_price_target_hit"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics(position, price) {
+      return { netPnl: (position.entryPrice - price) * position.quantity };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy,
+    managedRecoveryTarget: {
+      hit: true
+    },
+    minHoldMs: 15_000,
+    position: createPosition({
+      lifecycleMode: "managed_recovery",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryStartedAt: 10_000,
+      openedAt: -50_000,
+      side: "short",
+      strategyId: "rsiReversion"
+    }),
+    resolveInvalidationLevel() {
+      return "family_mismatch";
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 2
+    }),
+    tick: createTick({
+      price: 98,
+      timestamp: 20_000
+    })
+  });
+  if (!shortManagedRecoveryTargetPlan.exitNow || shortManagedRecoveryTargetPlan.exitMechanism !== "recovery" || shortManagedRecoveryTargetPlan.lifecycleEvent !== "PRICE_TARGET_HIT") {
+    throw new Error(`short managed recovery target should beat invalidation after confirmation: ${JSON.stringify(shortManagedRecoveryTargetPlan)}`);
   }
 
   const shapedReasons = buildExitReason(["rsi_exit_threshold_hit", "emergency_stop", "managed_recovery_rsi_ignored", "reversion_price_target_hit"], "rsi_exit_confirmed", 2);

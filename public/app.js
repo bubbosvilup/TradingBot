@@ -405,7 +405,7 @@ function renderBots() {
         ? `Warm-up / synthetic | ${formatDuration(fallbackArchitect.warmupRemainingMs || 0)}`
         : null;
     const positionSummary = bot.openPosition
-      ? `${formatPrice(bot.openPosition.entryPrice)} / ${formatSigned(bot.openPosition.unrealizedPnl)}`
+      ? `${String(bot.openPosition.side || "long").toUpperCase()} ${formatPrice(bot.openPosition.entryPrice)} / ${formatSigned(bot.openPosition.unrealizedPnl)}`
       : "Flat";
     const cooldown = bot.cooldownRemainingMs > 0
       ? `${formatDuration(bot.cooldownRemainingMs)}${bot.cooldownReason ? ` (${bot.cooldownReason})` : ""}`
@@ -455,7 +455,7 @@ function renderBots() {
 
 function renderPositions() {
   if (!state.positions.length) {
-    refs.positionsBody.innerHTML = '<tr><td colspan="7">No open positions.</td></tr>';
+    refs.positionsBody.innerHTML = '<tr><td colspan="8">No open positions.</td></tr>';
     return;
   }
 
@@ -463,6 +463,7 @@ function renderPositions() {
     <tr>
       <td>${escapeHtml(position.botId)}</td>
       <td>${escapeHtml(position.symbol)}</td>
+      <td>${escapeHtml(String(position.side || "long").toUpperCase())}</td>
       <td>${formatPrice(position.entryPrice)}</td>
       <td>${formatPrice(position.currentPrice)}</td>
       <td>${formatNumber(position.quantity, 6)}</td>

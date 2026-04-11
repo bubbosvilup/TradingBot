@@ -193,6 +193,53 @@ function runExecutionEngineTests() {
       throw new Error(`position_closed log should expose structured PnL components: ${JSON.stringify(validCloseLog)}`);
     }
 
+    const openedShort = engine.openShort({
+      botId: "bot_short_valid",
+      confidence: 0.82,
+      price: 100,
+      quantity: 1,
+      reason: ["bearish_cross_confirmed"],
+      strategyId: "emaCross",
+      symbol: "BTC/USDT"
+    });
+    if (!openedShort || openedShort.side !== "short") {
+      throw new Error(`execution engine should open first-class short positions: ${JSON.stringify(openedShort)}`);
+    }
+    const closedShortProfit = engine.closePosition({
+      botId: "bot_short_valid",
+      price: 98,
+      reason: ["cover_profit"],
+      timestamp: 12_456
+    });
+    if (!closedShortProfit || closedShortProfit.side !== "short" || !approxEqual(closedShortProfit.pnl, 2) || !approxEqual(closedShortProfit.fees, 0.198, 1e-6) || !approxEqual(closedShortProfit.netPnl, 1.802, 1e-6)) {
+      throw new Error(`short close should profit when price falls and charge both fees: ${JSON.stringify(closedShortProfit)}`);
+    }
+    const shortCloseLog = logs.find((entry) => entry.event === "position_closed" && entry.metadata.botId === "bot_short_valid");
+    if (!shortCloseLog || shortCloseLog.metadata.side !== "short" || shortCloseLog.metadata.orderSide !== "buy") {
+      throw new Error(`short close log should disambiguate cover order side: ${JSON.stringify(shortCloseLog)}`);
+    }
+
+    const openedShortLoss = engine.openShort({
+      botId: "bot_short_loss",
+      confidence: 0.82,
+      price: 100,
+      quantity: 1,
+      reason: ["bearish_cross_confirmed"],
+      strategyId: "emaCross",
+      symbol: "BTC/USDT"
+    });
+    if (!openedShortLoss) {
+      throw new Error("execution engine rejected valid short loss test open");
+    }
+    const closedShortLoss = engine.closePosition({
+      botId: "bot_short_loss",
+      price: 102,
+      reason: ["cover_loss"]
+    });
+    if (!closedShortLoss || closedShortLoss.side !== "short" || !approxEqual(closedShortLoss.pnl, -2) || !approxEqual(closedShortLoss.fees, 0.202, 1e-6) || !approxEqual(closedShortLoss.netPnl, -2.202, 1e-6)) {
+      throw new Error(`short close should lose when price rises and charge both fees: ${JSON.stringify(closedShortLoss)}`);
+    }
+
     const pnlCases = [
       {
         botId: "bot_profit_after_fees",

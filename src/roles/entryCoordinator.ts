@@ -8,6 +8,7 @@ import type { PositionRecord } from "../types/trade.ts";
 import type { ArchitectUsabilityState } from "./architectCoordinator.ts";
 
 const { isManagedRecoveryPosition } = require("./positionLifecycleManager.ts");
+const { isEntryAction, isExitActionForSide } = require("../utils/tradeSide.ts");
 
 export interface EntryCoordinatorParams {
   botId: string;
@@ -89,11 +90,11 @@ class EntryCoordinator implements EntryCoordinatorInstance {
     const managedRecoveryPriceTargetSignal = inManagedRecovery && Boolean(params.managedRecoveryPriceTargetHit);
     const nextEntrySignalStreak = cooldownActive
       ? params.state.entrySignalStreak
-      : !params.hasPosition && params.decisionAction === "buy"
+      : !params.hasPosition && isEntryAction(params.decisionAction)
         ? params.state.entrySignalStreak + 1
         : 0;
     const nextExitSignalStreak = params.hasPosition && (
-      (!inManagedRecovery && params.decisionAction === "sell")
+      (!inManagedRecovery && isExitActionForSide(params.position?.side, params.decisionAction))
       || managedRecoveryPriceTargetSignal
     )
       ? params.state.exitSignalStreak + 1
@@ -114,7 +115,7 @@ class EntryCoordinator implements EntryCoordinatorInstance {
     riskAllowed: boolean;
     riskReason?: string | null;
   }): EntryAttemptResolution {
-    if (params.decisionAction !== "buy") {
+    if (!isEntryAction(params.decisionAction)) {
       return {
         blockReason: null,
         kind: "skipped",
