@@ -65,7 +65,7 @@ function runManagedRecoveryExitResolverTests() {
     throw new Error(`managed recovery timeout should force exit: ${JSON.stringify(timeoutPlan)}`);
   }
 
-  const invalidationPlan = resolveManagedRecoveryExit({
+  const targetOverInvalidationPlan = resolveManagedRecoveryExit({
     buildExitReason,
     decisionReasons: ["reversion_price_target_hit"],
     exitConfirmationTicks: 2,
@@ -84,8 +84,31 @@ function runManagedRecoveryExitResolverTests() {
     tickTimestamp: 30_000,
     timeoutMs: 60_000
   });
+  if (!targetOverInvalidationPlan.exitNow || targetOverInvalidationPlan.exitMechanism !== "recovery" || targetOverInvalidationPlan.lifecycleEvent !== "PRICE_TARGET_HIT") {
+    throw new Error(`confirmed managed recovery target should preempt invalidation: ${JSON.stringify(targetOverInvalidationPlan)}`);
+  }
+
+  const invalidationPlan = resolveManagedRecoveryExit({
+    buildExitReason,
+    decisionReasons: ["hold_recovery"],
+    exitConfirmationTicks: 2,
+    exitSignalStreak: 1,
+    invalidationExit: {
+      exitMechanism: "invalidation",
+      invalidationLevel: "family",
+      invalidationMode: "family_mismatch",
+      lifecycleEvent: "REGIME_INVALIDATION",
+      reason: ["regime_invalidation_exit"]
+    },
+    managedRecoveryStartedAt: 1_000,
+    priceTargetHit: false,
+    protectiveExit: null,
+    rsiExitThresholdHit: false,
+    tickTimestamp: 30_000,
+    timeoutMs: 60_000
+  });
   if (!invalidationPlan.exitNow || invalidationPlan.exitMechanism !== "invalidation" || invalidationPlan.lifecycleEvent !== "REGIME_INVALIDATION") {
-    throw new Error(`managed recovery invalidation should preempt target-hit exit: ${JSON.stringify(invalidationPlan)}`);
+    throw new Error(`managed recovery invalidation should still exit when target is not confirmed: ${JSON.stringify(invalidationPlan)}`);
   }
 
   const targetHitPlan = resolveManagedRecoveryExit({

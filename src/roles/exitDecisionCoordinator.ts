@@ -6,7 +6,6 @@ import type { PositionRecord } from "../types/trade.ts";
 import type { PositionExitMechanism } from "../types/positionLifecycle.ts";
 
 const {
-  enterManagedRecovery,
   getManagedRecoveryPolicy,
   isManagedRecoveryPosition,
   POSITION_LIFECYCLE_EVENTS
@@ -123,17 +122,66 @@ function matchesInvalidationMode(architectState: any, mode: InvalidationMode) {
   return false;
 }
 
+function resolveMinRegimeInvalidationHoldMs(architectState: any) {
+  const publishIntervalMs = Number(architectState?.publisher?.publishIntervalMs);
+  return Math.max(
+    Number.isFinite(publishIntervalMs) ? publishIntervalMs * 2 : 60_000,
+    Number.isFinite(publishIntervalMs) ? publishIntervalMs : 30_000
+  );
+}
+
+function invalidationRequiresGrace(mode: InvalidationMode) {
+  return mode === "family_mismatch"
+    || mode === "low_maturity"
+    || mode === "stale"
+    || mode === "not_ready";
+}
+
+function hasFamilyMismatchConfirmation(params: {
+  architectState: any;
+  position: PositionRecord;
+  tickTimestamp: number;
+}) {
+  const publisher = params.architectState?.publisher || {};
+  const challengerCount = Number(publisher.challengerCount);
+  const challengerRequired = Number(publisher.challengerRequired);
+  const hasChallengerConfirmation = Number.isFinite(challengerCount)
+    && Number.isFinite(challengerRequired)
+    && challengerRequired > 0
+    && challengerCount >= challengerRequired;
+  if (hasChallengerConfirmation) {
+    return true;
+  }
+
+  const holdMs = params.tickTimestamp - params.position.openedAt;
+  return holdMs >= resolveMinRegimeInvalidationHoldMs(params.architectState);
+}
+
 function resolveManagedRecoveryInvalidation(params: {
   architectState: any;
   decisionReasons: string[];
   exitPolicy: ExitPolicy | null;
+  position: PositionRecord;
   resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) => string | null;
+  tickTimestamp: number;
 }) {
   const modes = Array.isArray(params.exitPolicy?.invalidation?.modes)
     ? params.exitPolicy.invalidation.modes
     : [];
   const invalidationMode = modes.find((mode) => matchesInvalidationMode(params.architectState, mode)) || null;
   if (!invalidationMode) {
+    return null;
+  }
+  const holdMs = params.tickTimestamp - params.position.openedAt;
+  const minRegimeInvalidationHoldMs = resolveMinRegimeInvalidationHoldMs(params.architectState);
+  if (invalidationRequiresGrace(invalidationMode) && holdMs < minRegimeInvalidationHoldMs) {
+    return null;
+  }
+  if (invalidationMode === "family_mismatch" && !hasFamilyMismatchConfirmation({
+    architectState: params.architectState,
+    position: params.position,
+    tickTimestamp: params.tickTimestamp
+  })) {
     return null;
   }
   return {
@@ -165,15 +213,6 @@ function resolveProtectiveExit(params: {
     protectionMode: getProtectionStopMode(params.exitPolicy),
     reason: buildExitReason(params.decisionReasons, "protective_stop_exit")
   };
-}
-
-function resolveManagedRecoveryPosition(position: PositionRecord, tick: MarketTick, exitFloorNetPnlUsdt: number) {
-  const transition = enterManagedRecovery(position, {
-    exitFloorNetPnlUsdt,
-    reason: "rsi_exit_deferred",
-    startedAt: tick.timestamp
-  });
-  return transition.allowed ? transition.position : null;
 }
 
 function resolveManagedRecoveryBreaker(decisionReasons: string[], confirmationTicks: number) {
@@ -224,7 +263,9 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
           architectState: params.architectState,
           decisionReasons,
           exitPolicy: params.exitPolicy,
-          resolveInvalidationLevel: params.resolveInvalidationLevel
+          position: params.position,
+          resolveInvalidationLevel: params.resolveInvalidationLevel,
+          tickTimestamp: params.tick.timestamp
         })
         : null;
       return resolveManagedRecoveryExit({
@@ -270,11 +311,9 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
           return {
             estimatedExitEconomics,
             exitMechanism: "qualification" as const,
-            exitNow: false,
+            exitNow: true,
             lifecycleEvent: POSITION_LIFECYCLE_EVENTS.RSI_EXIT_HIT,
-            nextPosition: resolveManagedRecoveryPosition(params.position, params.tick, exitFloorNetPnlUsdt),
-            reason: buildExitReason(decisionReasons, "rsi_exit_deferred"),
-            transition: "managed_recovery"
+            reason: buildExitReason(decisionReasons, "rsi_exit_floor_failed", params.exitConfirmationTicks)
           };
         }
 

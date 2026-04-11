@@ -141,7 +141,10 @@ function runSystemServerTests() {
     warmupStartedAt: now - 30_000
   });
   store.updateBotState("bot_a", {
-    architectSyncStatus: "synced"
+    architectSyncStatus: "synced",
+    postLossArchitectLatchActive: true,
+    postLossArchitectLatchFreshPublishCount: 1,
+    postLossArchitectLatchStrategyId: "emaCross"
   });
   store.setPosition("bot_a", {
     botId: "bot_a",
@@ -152,6 +155,10 @@ function runSystemServerTests() {
     openedAt: now - 60_000,
     quantity: 0.02,
     side: "long",
+    lifecycleMode: "managed_recovery",
+    lifecycleState: "MANAGED_RECOVERY",
+    managedRecoveryDeferredReason: "rsi_exit_deferred",
+    managedRecoveryStartedAt: now - 30_000,
     strategyId: "emaCross",
     symbol: "BTC/USDT"
   });
@@ -225,6 +232,12 @@ function runSystemServerTests() {
   }
   if (bots[0].pausedReason !== null || bots[0].manualResumeRequired !== false) {
     throw new Error(`bots payload should keep bot-level pause semantics explicit and separate from portfolio kill switch state: ${JSON.stringify(bots[0])}`);
+  }
+  if (bots[0].postLossArchitectLatchActive !== true || bots[0].postLossArchitectLatchFreshPublishCount !== 1 || bots[0].postLossArchitectLatchStrategyId !== "emaCross") {
+    throw new Error(`bots payload should expose compact latch state without moving dashboard concerns into bot logic: ${JSON.stringify(bots[0])}`);
+  }
+  if (bots[0].openPosition?.lifecycleMode !== "managed_recovery" || bots[0].openPosition?.lifecycleState !== "MANAGED_RECOVERY" || bots[0].openPosition?.managedRecoveryDeferredReason !== "rsi_exit_deferred") {
+    throw new Error(`bots payload should expose compact open-position recovery state: ${JSON.stringify(bots[0].openPosition)}`);
   }
   if (bots[0].architect?.recommendedFamily !== "trend_following" || bots[0].architect?.authoritative !== true) {
     throw new Error("bots payload missing published architect assessment");
@@ -480,8 +493,11 @@ function runSystemServerTests() {
   try {
     fs.mkdirSync(path.join(publicDir, "ui"), { recursive: true });
     fs.writeFileSync(path.join(publicDir, "index.html"), "<!doctype html><title>dashboard</title>");
+    fs.writeFileSync(path.join(publicDir, "compact.html"), "<!doctype html><title>compact</title>");
     fs.writeFileSync(path.join(publicDir, "app.js"), "window.__appLoaded = true;");
     fs.writeFileSync(path.join(publicDir, "styles.css"), "body{background:#000;}");
+    fs.writeFileSync(path.join(publicDir, "compact.js"), "window.__compactLoaded = true;");
+    fs.writeFileSync(path.join(publicDir, "compact.css"), "body{background:#050505;}");
     fs.writeFileSync(path.join(publicDir, "ui", "chartAdapter.js"), "window.ChartAdapter = { create() {} };");
 
     const assetServer = new SystemServer({
@@ -520,6 +536,46 @@ function runSystemServerTests() {
     }
     if (!String(jsResponse.body).includes("ChartAdapter")) {
       throw new Error("system server did not return the public JS dashboard asset body");
+    }
+
+    const compactResponse = createResponseRecorder();
+    assetServer.handleRequest({
+      headers: { host: "127.0.0.1:3104" },
+      url: "/compact"
+    }, compactResponse);
+    if (compactResponse.statusCode !== 200 || !String(compactResponse.headers?.["Content-Type"] || "").includes("text/html")) {
+      throw new Error(`system server should serve the compact monitor route: ${JSON.stringify(compactResponse)}`);
+    }
+    if (!String(compactResponse.body).includes("compact")) {
+      throw new Error("system server did not return the compact monitor HTML body");
+    }
+
+    const compactJsResponse = createResponseRecorder();
+    assetServer.handleRequest({
+      headers: { host: "127.0.0.1:3104" },
+      url: "/compact.js"
+    }, compactJsResponse);
+    if (compactJsResponse.statusCode !== 200 || !String(compactJsResponse.headers?.["Content-Type"] || "").includes("application/javascript")) {
+      throw new Error(`system server should serve compact JS assets: ${JSON.stringify(compactJsResponse)}`);
+    }
+
+    const openedUrls = [];
+    const compactAutoOpenServer = new SystemServer({
+      architectWarmupMs: 20_000,
+      autoOpenCompactUi: true,
+      compactUiRoute: "/compact",
+      executionMode: "paper",
+      feedMode: "live",
+      host: "0.0.0.0",
+      logger: { info() {}, warn() {} },
+      openExternalUrl: (url) => openedUrls.push(url),
+      port: 3106,
+      publicDir,
+      startedAt: now - 1000,
+      store
+    });
+    if (!compactAutoOpenServer.maybeOpenCompactUi() || openedUrls[0] !== "http://127.0.0.1:3106/compact") {
+      throw new Error(`compact auto-open should request the local compact route without launching a browser in tests: ${JSON.stringify(openedUrls)}`);
     }
 
     const tsResponse = createResponseRecorder();

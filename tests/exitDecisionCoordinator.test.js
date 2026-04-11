@@ -97,6 +97,11 @@ function runExitDecisionCoordinatorTests() {
     architectState: {
       blockReason: null,
       familyMatch: false,
+      publisher: {
+        challengerCount: 0,
+        challengerRequired: 2,
+        publishIntervalMs: 30_000
+      },
       usable: true
     },
     decision: {
@@ -111,7 +116,7 @@ function runExitDecisionCoordinatorTests() {
     exitConfirmationTicks: 2,
     exitPolicy,
     managedRecoveryTarget: {
-      hit: true
+      hit: false
     },
     minHoldMs: 15_000,
     position: createPosition({
@@ -119,6 +124,7 @@ function runExitDecisionCoordinatorTests() {
       managedRecoveryDeferredReason: "rsi_exit_deferred",
       managedRecoveryExitFloorNetPnlUsdt: 0.05,
       managedRecoveryStartedAt: 10_000,
+      openedAt: -50_000,
       strategyId: "rsiReversion"
     }),
     resolveInvalidationLevel() {
@@ -133,6 +139,54 @@ function runExitDecisionCoordinatorTests() {
   });
   if (!invalidationPlan.exitNow || invalidationPlan.exitMechanism !== "invalidation" || invalidationPlan.invalidationMode !== "family_mismatch" || invalidationPlan.lifecycleEvent !== "REGIME_INVALIDATION") {
     throw new Error(`managed recovery invalidation planning regressed: ${JSON.stringify(invalidationPlan)}`);
+  }
+
+  const gracePlan = coordinator.resolve({
+    architectState: {
+      blockReason: null,
+      familyMatch: false,
+      publisher: {
+        challengerCount: 0,
+        challengerRequired: 2,
+        publishIntervalMs: 30_000
+      },
+      usable: true
+    },
+    decision: {
+      action: "hold",
+      confidence: 0.5,
+      reason: ["hold_recovery"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics(position, price) {
+      return { netPnl: (price - position.entryPrice) * position.quantity };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy,
+    managedRecoveryTarget: {
+      hit: false
+    },
+    minHoldMs: 15_000,
+    position: createPosition({
+      lifecycleMode: "managed_recovery",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryExitFloorNetPnlUsdt: 0.05,
+      managedRecoveryStartedAt: 10_000,
+      openedAt: 5_000,
+      strategyId: "rsiReversion"
+    }),
+    resolveInvalidationLevel() {
+      return "family_mismatch";
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 0
+    }),
+    tick: createTick({
+      timestamp: 20_000
+    })
+  });
+  if (gracePlan.exitNow || gracePlan.reason.includes("regime_invalidation_exit")) {
+    throw new Error(`post-entry grace should suppress early managed recovery invalidation: ${JSON.stringify(gracePlan)}`);
   }
 
   const timeoutPlan = coordinator.resolve({
@@ -271,8 +325,8 @@ function runExitDecisionCoordinatorTests() {
       timestamp: 20_000
     })
   });
-  if (deferredRsiPlan.exitNow || deferredRsiPlan.transition !== "managed_recovery" || !deferredRsiPlan.nextPosition || deferredRsiPlan.lifecycleEvent !== "RSI_EXIT_HIT" || !deferredRsiPlan.reason.includes("rsi_exit_deferred")) {
-    throw new Error(`rsi deferred exit planning regressed: ${JSON.stringify(deferredRsiPlan)}`);
+  if (!deferredRsiPlan.exitNow || deferredRsiPlan.transition !== undefined || deferredRsiPlan.nextPosition || deferredRsiPlan.lifecycleEvent !== "RSI_EXIT_HIT" || !deferredRsiPlan.reason.includes("rsi_exit_floor_failed")) {
+    throw new Error(`rsi floor-failed exit should skip managed recovery: ${JSON.stringify(deferredRsiPlan)}`);
   }
 
   const breakerPlan = coordinator.resolve({

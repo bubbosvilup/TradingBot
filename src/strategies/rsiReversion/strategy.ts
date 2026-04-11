@@ -35,6 +35,8 @@ function createStrategy(config: {
   buyRsi?: number;
   sellRsi?: number;
   minConfidence?: number;
+  maxTargetDistancePctForShortHorizon?: number;
+  minExpectedNetEdgePct?: number;
   exitPolicyId?: string;
   exitPolicy?: Record<string, unknown>;
 } = {}): Strategy {
@@ -42,7 +44,16 @@ function createStrategy(config: {
   return {
     config: {
       ...config,
-      exitPolicyId: exitPolicy?.id || config.exitPolicyId
+      exitPolicyId: exitPolicy?.id || config.exitPolicyId,
+      maxTargetDistancePctForShortHorizon: Number.isFinite(Number(config.maxTargetDistancePctForShortHorizon))
+        ? config.maxTargetDistancePctForShortHorizon
+        : 0.01,
+      minExpectedNetEdgePct: Math.max(
+        Number.isFinite(Number(config.minExpectedNetEdgePct))
+          ? Number(config.minExpectedNetEdgePct)
+          : 0.0015,
+        0.0015
+      )
     },
     evaluate(context: MarketContext): StrategyDecision {
       const rsi = context.indicators.rsi;

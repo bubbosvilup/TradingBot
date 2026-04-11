@@ -10,6 +10,7 @@ import type { ClosedTradeRecord, PositionRecord } from "../types/trade.ts";
 import type { LoggerLike, PortfolioKillSwitchState, SymbolStateRetentionSnapshot } from "../types/runtime.ts";
 
 const fs = require("node:fs");
+const childProcess = require("node:child_process");
 const http = require("node:http");
 const path = require("node:path");
 const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
@@ -79,6 +80,30 @@ function getMimeType(filePath: string) {
   return "text/html; charset=utf-8";
 }
 
+function openUrlWithDefaultBrowser(url: string) {
+  const platform = process.platform;
+  const opener = platform === "win32"
+    ? { command: "cmd", args: ["/c", "start", "", url] }
+    : platform === "darwin"
+      ? { command: "open", args: [url] }
+      : { command: "xdg-open", args: [url] };
+  const child = childProcess.spawn(opener.command, opener.args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  });
+  child.on("error", () => {});
+  child.unref();
+}
+
+function normalizeCompactUiRoute(route?: string | null) {
+  const value = String(route || "/compact").trim();
+  if (!value || !/^\/[A-Za-z0-9/_-]*$/.test(value)) {
+    return "/compact";
+  }
+  return value;
+}
+
 class SystemServer {
   store: SystemServerStore;
   logger: LoggerLike;
@@ -87,10 +112,13 @@ class SystemServer {
   publicDir: string;
   startedAt: number;
   server: any;
+  autoOpenCompactUi: boolean;
+  compactUiRoute: string;
   feedMode: string;
   executionMode: string;
   feeRate: number;
   architectWarmupMs: number;
+  openExternalUrl: (url: string) => void;
   resolveStrategyFamily: (strategyId: string | null | undefined) => RecommendedFamily | "other";
 
   constructor(deps: {
@@ -100,10 +128,13 @@ class SystemServer {
     port?: number;
     publicDir?: string;
     startedAt?: number;
+    autoOpenCompactUi?: boolean;
+    compactUiRoute?: string;
     feedMode?: string;
     executionMode?: string;
     feeRate?: number;
     architectWarmupMs?: number;
+    openExternalUrl?: (url: string) => void;
     resolveStrategyFamily?: (strategyId: string | null | undefined) => RecommendedFamily | "other";
   }) {
     this.store = deps.store;
@@ -113,10 +144,15 @@ class SystemServer {
     this.publicDir = deps.publicDir || path.resolve(process.cwd(), "public");
     this.startedAt = deps.startedAt || Date.now();
     this.server = null;
+    this.autoOpenCompactUi = Boolean(deps.autoOpenCompactUi);
+    this.compactUiRoute = normalizeCompactUiRoute(deps.compactUiRoute);
     this.feedMode = deps.feedMode || "live";
     this.executionMode = deps.executionMode || "paper";
     this.feeRate = Math.max(Number(deps.feeRate) || 0, 0);
     this.architectWarmupMs = Math.max(Number(deps.architectWarmupMs) || 30_000, 5_000);
+    this.openExternalUrl = typeof deps.openExternalUrl === "function"
+      ? deps.openExternalUrl
+      : openUrlWithDefaultBrowser;
     this.resolveStrategyFamily = typeof deps.resolveStrategyFamily === "function"
       ? deps.resolveStrategyFamily
       : () => "other";
@@ -151,6 +187,7 @@ class SystemServer {
         feedMode: this.feedMode,
         url: `http://${this.host}:${this.port}`
       });
+      this.maybeOpenCompactUi();
     });
   }
 
@@ -183,6 +220,36 @@ class SystemServer {
       "Content-Type": getMimeType(filePath)
     });
     response.end(fs.readFileSync(filePath));
+  }
+
+  getPublicHost() {
+    if (this.host === "0.0.0.0" || this.host === "::") return "127.0.0.1";
+    return this.host;
+  }
+
+  getCompactUiUrl() {
+    return `http://${this.getPublicHost()}:${this.port}${this.compactUiRoute}`;
+  }
+
+  maybeOpenCompactUi() {
+    if (!this.autoOpenCompactUi) return false;
+    const url = this.getCompactUiUrl();
+    try {
+      this.openExternalUrl(url);
+      this.logger.info("compact_dashboard_open_requested", {
+        route: this.compactUiRoute,
+        url,
+        windowSizing: "default_browser_window"
+      });
+      return true;
+    } catch (error) {
+      this.logger.warn?.("compact_dashboard_open_failed", {
+        error: error instanceof Error ? error.message : String(error),
+        route: this.compactUiRoute,
+        url
+      });
+      return false;
+    }
   }
 
   getArchitectContextFeatures(context: any) {
@@ -385,14 +452,22 @@ class SystemServer {
         lastTickAt: state?.lastTickAt || null,
         lossStreak: state?.lossStreak || 0,
         manualResumeRequired,
+        managedRecoveryConsecutiveCount: state?.managedRecoveryConsecutiveCount || 0,
         openPosition: position ? {
           entryPrice: position.entryPrice,
+          lifecycleMode: position.lifecycleMode || "normal",
+          lifecycleState: position.lifecycleState || null,
+          managedRecoveryDeferredReason: position.managedRecoveryDeferredReason || null,
+          managedRecoveryStartedAt: position.managedRecoveryStartedAt || null,
           openedAt: position.openedAt,
           quantity: position.quantity,
           unrealizedPnl
         } : null,
         pausedReason: state?.pausedReason || null,
         performance,
+        postLossArchitectLatchActive: Boolean(state?.postLossArchitectLatchActive),
+        postLossArchitectLatchFreshPublishCount: state?.postLossArchitectLatchFreshPublishCount || 0,
+        postLossArchitectLatchStrategyId: state?.postLossArchitectLatchStrategyId || null,
         portfolioKillSwitch,
         price: latestPrice,
         riskProfile: config.riskProfile,
@@ -623,12 +698,24 @@ class SystemServer {
       this.serveFile(response, path.join(this.publicDir, "index.html"));
       return;
     }
+    if (pathname === "/compact" || pathname === "/compact.html") {
+      this.serveFile(response, path.join(this.publicDir, "compact.html"));
+      return;
+    }
     if (pathname === "/app.js") {
       this.serveFile(response, path.join(this.publicDir, "app.js"));
       return;
     }
     if (pathname === "/styles.css") {
       this.serveFile(response, path.join(this.publicDir, "styles.css"));
+      return;
+    }
+    if (pathname === "/compact.js") {
+      this.serveFile(response, path.join(this.publicDir, "compact.js"));
+      return;
+    }
+    if (pathname === "/compact.css") {
+      this.serveFile(response, path.join(this.publicDir, "compact.css"));
       return;
     }
     if (pathname.startsWith("/ui/")) {

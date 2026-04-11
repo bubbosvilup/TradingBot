@@ -58,10 +58,12 @@ export interface EntryEconomicsEstimate {
   expectedGrossEdgePct: number;
   expectedGrossEdgeUsdt: number;
   expectedNetEdgePct: number;
+  maxTargetDistancePctForShortHorizon?: number | null;
   minExpectedNetEdgePct: number;
   notionalUsdt: number;
   profitSafetyBufferPct: number;
   requiredEdgePct: number;
+  targetDistancePct?: number;
 }
 
 export interface Strategy {

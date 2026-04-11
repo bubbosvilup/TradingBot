@@ -1,6 +1,6 @@
 // Module responsibility: centralize published Architect state interpretation and flat-state sync/apply coordination.
 
-import type { ArchitectAssessment, ArchitectPublisherState, RecommendedFamily } from "../types/architect.ts";
+import type { ArchitectAssessment, ArchitectPublisherState, MarketRegime, RecommendedFamily } from "../types/architect.ts";
 import type { ArchitectSyncStatus, BotConfig, BotRuntimeState } from "../types/bot.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 import type { BotStateStoreLike, StrategyRegistryLike, StrategySwitchPlan, StrategySwitcherLike } from "../types/runtime.ts";
@@ -155,6 +155,13 @@ class ArchitectCoordinator implements ArchitectCoordinatorInstance {
     return this.minEntryContextMaturity;
   }
 
+  resolveRegimeFamily(regime?: MarketRegime | null): RecommendedFamily | null {
+    if (regime === "trend") return "trend_following";
+    if (regime === "range") return "mean_reversion";
+    if (regime === "volatile" || regime === "unclear") return "no_trade";
+    return null;
+  }
+
   evaluateUsability(params: EvaluateArchitectUsabilityParams = {}): ArchitectUsabilityState {
     const architect = params.architect !== undefined
       ? params.architect
@@ -176,6 +183,7 @@ class ArchitectCoordinator implements ArchitectCoordinatorInstance {
     const actionableFamily = architect?.recommendedFamily && architect.recommendedFamily !== "no_trade"
       ? architect.recommendedFamily
       : null;
+    const challengerFamily = this.resolveRegimeFamily(publisher?.challengerRegime || null);
 
     let blockReason = null;
     if (!architect) {
@@ -192,6 +200,12 @@ class ArchitectCoordinator implements ArchitectCoordinatorInstance {
       blockReason = "architect_stale";
     } else if (architect.contextMaturity < entryMaturityThreshold) {
       blockReason = this.resolveArchitectMaturityBlockReason(contextSnapshot);
+    } else if (
+      publisher?.hysteresisActive
+      && challengerFamily
+      && challengerFamily !== currentFamily
+    ) {
+      blockReason = "architect_challenger_pending";
     }
 
     const familyMatch = actionableFamily ? currentFamily === actionableFamily : null;

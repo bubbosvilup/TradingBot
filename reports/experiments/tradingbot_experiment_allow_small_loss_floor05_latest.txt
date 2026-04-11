@@ -1,2 +1,0 @@
-label=allow_small_loss_floor05 | elapsedMs=3042 | totalNetPnl=0 | closedTradesCount=0 | avgNetPnl=null | winRate=null | profitFactor=null | entryOpened=0 | entryBlocked=0 | entrySkipped=0
-managedRecoveryEntries=0 | exitManagedRecoveryTimeout=0 | exitManagedRecoveryTarget=0 | exitManagedRecoveryInvalidation=0 | exitManagedRecoveryProtection=0 | exitManagedRecoveryOther=0 | exitNormal=0 | exitProtectiveStop=0 | totalAccountedExits=0 | avgHoldPipelineMs=null | reconciliationError=0

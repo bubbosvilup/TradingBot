@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TradingBot Compact Monitor</title>
+    <link rel="stylesheet" href="/compact.css" />
+  </head>
+  <body>
+    <main class="compact-shell">
+      <header class="topline">
+        <div>
+          <p class="kicker">Compact console</p>
+          <h1>TradingBot</h1>
+        </div>
+        <div class="sync">
+          <strong id="mode">n/a</strong>
+          <span id="sync-status">connecting</span>
+        </div>
+      </header>
+
+      <section class="strip global-strip" aria-label="Runtime truth">
+        <div><span>Market</span><strong id="market-mode">n/a</strong></div>
+        <div><span>Exec</span><strong id="execution-mode">n/a</strong></div>
+        <div><span>Uptime</span><strong id="uptime">n/a</strong></div>
+        <div><span>Tick</span><strong id="freshness">n/a</strong></div>
+        <div><span>Stream</span><strong id="connection">n/a</strong></div>
+        <div><span>Bots</span><strong id="bots-running">0/0</strong></div>
+        <div><span>Open</span><strong id="open-count">0</strong></div>
+      </section>
+
+      <section class="strip portfolio-strip" aria-label="Portfolio state">
+        <div><span>Net</span><strong id="net-pnl">n/a</strong></div>
+        <div><span>Real</span><strong id="realized-pnl">n/a</strong></div>
+        <div><span>Unreal</span><strong id="unrealized-pnl">n/a</strong></div>
+        <div><span>DD</span><strong id="drawdown">n/a</strong></div>
+        <div><span>Closed</span><strong id="closed-count">0</strong></div>
+        <div><span>Win</span><strong id="win-rate">n/a</strong></div>
+        <div><span>PF</span><strong id="profit-factor">n/a</strong></div>
+      </section>
+
+      <section class="strip safety-strip" aria-label="Safety state">
+        <div><span>Kill</span><strong id="kill-switch">n/a</strong></div>
+        <div><span>Paused</span><strong id="paused-count">0</strong></div>
+        <div><span>Manual</span><strong id="manual-count">0</strong></div>
+        <div class="wide"><span>Risk</span><strong id="risk-summary">n/a</strong></div>
+      </section>
+
+      <section class="bot-panel" aria-label="Bots">
+        <div class="section-head">
+          <div>
+            <h2>Bots</h2>
+            <span id="bot-count">0 configured</span>
+          </div>
+          <label class="toggle">
+            <input id="abnormal-only" type="checkbox" />
+            <span>abnormal only</span>
+          </label>
+        </div>
+        <div class="bot-table" role="table" aria-label="Compact bot table">
+          <div class="bot-head" role="row">
+            <span>Bot</span>
+            <span>Sym</span>
+            <span>Strat</span>
+            <span>Fam</span>
+            <span>State</span>
+            <span>Risk</span>
+            <span>Gate</span>
+            <span>Age</span>
+          </div>
+          <div id="bots" class="bot-body">
+            <p class="empty">Loading bots...</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="last-row" aria-label="Latest trade and risk">
+        <div>
+          <span>Last trade</span>
+          <strong id="last-trade">n/a</strong>
+        </div>
+        <div>
+          <span>Risk</span>
+          <strong id="last-risk">n/a</strong>
+        </div>
+      </section>
+    </main>
+
+    <script src="/compact.js"></script>
+  </body>
+</html>

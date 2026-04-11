@@ -45,13 +45,6 @@ function resolveManagedRecoveryExit(params: {
     };
   }
 
-  if (params.invalidationExit) {
-    return {
-      exitNow: true,
-      ...params.invalidationExit
-    };
-  }
-
   if (params.priceTargetHit && params.exitSignalStreak >= params.exitConfirmationTicks) {
     return {
       exitMechanism: "recovery",
@@ -62,6 +55,13 @@ function resolveManagedRecoveryExit(params: {
         "reversion_price_target_hit",
         params.exitConfirmationTicks
       )
+    };
+  }
+
+  if (params.invalidationExit) {
+    return {
+      exitNow: true,
+      ...params.invalidationExit
     };
   }
 

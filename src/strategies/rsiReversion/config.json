@@ -3,6 +3,7 @@
   "sellRsi": 58,
   "emaBaseline": 34,
   "exitPolicyId": "RSI_REVERSION_PRO",
-  "minExpectedNetEdgePct": 0.0003,
+  "maxTargetDistancePctForShortHorizon": 0.01,
+  "minExpectedNetEdgePct": 0.0015,
   "minConfidence": 0.55
 }

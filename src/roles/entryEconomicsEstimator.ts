@@ -80,12 +80,20 @@ function estimateEntryEconomics(params: {
   const requiredEdgePct = estimatedEntryFeePct + estimatedExitFeePct + params.estimatedSlippagePct + params.profitSafetyBufferPct;
   const expectedNetEdgePct = expectedGrossEdgePct - requiredEdgePct;
   const configuredMinExpectedNetEdgePct = Number(params.strategy?.config?.minExpectedNetEdgePct);
+  const strategyMinExpectedNetEdgePctFloor = params.strategy?.id === "rsiReversion"
+    ? 0.0015
+    : 0;
   const minExpectedNetEdgePct = Math.max(
     Number.isFinite(configuredMinExpectedNetEdgePct)
       ? configuredMinExpectedNetEdgePct
       : params.defaultMinExpectedNetEdgePct,
+    strategyMinExpectedNetEdgePctFloor,
     0
   );
+  const configuredMaxTargetDistancePctForShortHorizon = Number(params.strategy?.config?.maxTargetDistancePctForShortHorizon);
+  const maxTargetDistancePctForShortHorizon = Number.isFinite(configuredMaxTargetDistancePctForShortHorizon)
+    ? Math.max(configuredMaxTargetDistancePctForShortHorizon, 0)
+    : null;
   const quantity = Number.isFinite(Number(params.quantity)) ? Number(params.quantity) : 0;
   const notionalUsdt = inputs.latestPrice * Math.max(quantity, 0);
 
@@ -97,10 +105,12 @@ function estimateEntryEconomics(params: {
     expectedGrossEdgePct,
     expectedGrossEdgeUsdt: notionalUsdt * expectedGrossEdgePct,
     expectedNetEdgePct,
+    maxTargetDistancePctForShortHorizon,
     minExpectedNetEdgePct,
     notionalUsdt,
     profitSafetyBufferPct: params.profitSafetyBufferPct,
-    requiredEdgePct
+    requiredEdgePct,
+    targetDistancePct: inputs.captureGapPct
   };
 }
 

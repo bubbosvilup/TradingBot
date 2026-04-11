@@ -158,6 +158,18 @@ class EntryCoordinator implements EntryCoordinatorInstance {
     if (params.quantity < params.tradeConstraints.minQuantity) {
       return { allowed: false, diagnostics: { ...params.diagnostics, blockReason: "quantity_below_minimum" } };
     }
+    const targetDistancePct = Number(params.economics.targetDistancePct);
+    const hasMaxTargetDistancePctForShortHorizon = params.economics.maxTargetDistancePctForShortHorizon !== null
+      && params.economics.maxTargetDistancePctForShortHorizon !== undefined;
+    const maxTargetDistancePctForShortHorizon = Number(params.economics.maxTargetDistancePctForShortHorizon);
+    if (
+      hasMaxTargetDistancePctForShortHorizon &&
+      Number.isFinite(targetDistancePct)
+      && Number.isFinite(maxTargetDistancePctForShortHorizon)
+      && targetDistancePct > maxTargetDistancePctForShortHorizon
+    ) {
+      return { allowed: false, diagnostics: { ...params.diagnostics, blockReason: "target_distance_exceeds_short_horizon" } };
+    }
     if (params.economics.expectedNetEdgePct < params.economics.minExpectedNetEdgePct) {
       return { allowed: false, diagnostics: { ...params.diagnostics, blockReason: "insufficient_edge_after_costs" } };
     }

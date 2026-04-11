@@ -193,6 +193,10 @@ Bot attivi di default:
 
 La dashboard locale viene servita da `SystemServer` e usa asset statici browser-ready.
 
+Route UI:
+- dashboard completa: `http://127.0.0.1:3000/`
+- monitor compatto: `http://127.0.0.1:3000/compact`
+
 Endpoint principali:
 - `GET /api/system`
 - `GET /api/bots`
@@ -208,8 +212,23 @@ Campi diagnostici rilevanti ora esposti:
 - retention/cleanup dello symbol state
 - `pausedReason` per bot
 - `manualResumeRequired` per bot
+- stato compatto latch post-loss e managed recovery per bot
 - diagnostica Architect published/observed/synthetic
 - latency di pipeline
+
+Il monitor compatto su `/compact` resta separato dalla dashboard completa: mostra strip globali/portfolio/safety, una tabella bot densa e due sole righe footer per ultimo trade e ultimo evento rischio. Include un filtro locale `abnormal only`; non espone controlli operativi e non mostra feed log.
+
+Auto-apertura monitor compatto:
+
+```bash
+AUTO_OPEN_COMPACT_UI=true npm start
+```
+
+Opzioni:
+- `AUTO_OPEN_COMPACT_UI=true` oppure `COMPACT_UI=true`
+- `COMPACT_UI_ROUTE=/compact`
+
+Il backend puo chiedere al sistema operativo di aprire la route compatta nel browser predefinito. Il controllo affidabile della dimensione finestra non e garantito tra browser e piattaforme senza introdurre un launcher browser-specifico, quindi l'apertura automatica usa la finestra predefinita del browser.
 
 ## Logging
 

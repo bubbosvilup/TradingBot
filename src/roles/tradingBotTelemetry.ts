@@ -507,6 +507,9 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       familyMatch: params.architectState.familyMatch,
       latestPrice: Number(latestPrice.toFixed(4)),
       localReasons: Array.isArray(params.decision?.reason) ? params.decision.reason.slice(0, 3) : [],
+      maxTargetDistancePctForShortHorizon: Number.isFinite(Number(params.economics.maxTargetDistancePctForShortHorizon))
+        ? Number(Number(params.economics.maxTargetDistancePctForShortHorizon).toFixed(4))
+        : null,
       minExpectedNetEdgePct: Number(params.economics.minExpectedNetEdgePct.toFixed(4)),
       minNotionalUsdt: Number(params.tradeConstraints.minNotionalUsdt.toFixed(4)),
       minQuantity: Number(params.tradeConstraints.minQuantity.toFixed(8)),
@@ -534,6 +537,9 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       signalEvaluated: params.signalEvaluated !== false,
       strategy: params.strategyId,
       strategyRsi,
+      targetDistancePct: Number.isFinite(Number(params.economics.targetDistancePct))
+        ? Number(Number(params.economics.targetDistancePct).toFixed(4))
+        : null,
       strategyRsiSource: strategyRsi === null ? null : "strategy_indicator_snapshot",
       symbol: this.symbol,
       targetFamily: params.architectState.actionableFamily || null,

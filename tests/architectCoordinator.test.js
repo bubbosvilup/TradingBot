@@ -166,6 +166,28 @@ async function runArchitectCoordinatorTests() {
     throw new Error(`stale published architect should be rejected with the existing threshold: ${JSON.stringify(staleUsability)}`);
   }
 
+  const challengerClock = Date.now();
+  const challengerHarness = createCoordinatorHarness({
+    strategy: "rsiReversion",
+    publishedArchitect: createPublishedArchitect({
+      recommendedFamily: "mean_reversion",
+      updatedAt: challengerClock
+    }),
+    publisherState: {
+      challengerCount: 1,
+      challengerRegime: "trend",
+      hysteresisActive: true,
+      lastPublishedAt: challengerClock
+    }
+  });
+  const challengerUsability = challengerHarness.coordinator.evaluateUsability({
+    activeStrategyId: "rsiReversion",
+    timestamp: challengerClock
+  });
+  if (challengerUsability.usable || challengerUsability.blockReason !== "architect_challenger_pending") {
+    throw new Error(`pending challenger should block entry during architect hysteresis: ${JSON.stringify(challengerUsability)}`);
+  }
+
   const syncClock = Date.now();
   const syncHarness = createCoordinatorHarness({
     publishedArchitect: createPublishedArchitect({

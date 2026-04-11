@@ -67,6 +67,11 @@ function parseArgs(argv: string[]) {
   };
 }
 
+function isEnabledFlag(value: string | undefined) {
+  if (value === undefined) return false;
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
 function resolvePaperOnlyExecutionMode(cliArgs: { executionMode?: string | null }, botConfig: { executionMode?: string | null }) {
   const paperTradingEnv = process.env.PAPER_TRADING;
   const requestedExecutionMode = cliArgs.executionMode !== null && cliArgs.executionMode !== undefined && cliArgs.executionMode !== ""
@@ -212,6 +217,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
   const systemServer = new SystemServer({
     architectWarmupMs,
+    autoOpenCompactUi: isEnabledFlag(process.env.AUTO_OPEN_COMPACT_UI) || isEnabledFlag(process.env.COMPACT_UI),
+    compactUiRoute: process.env.COMPACT_UI_ROUTE || "/compact",
     executionMode,
     feeRate: executionFee.feeRate,
     feedMode: "live",

@@ -148,6 +148,38 @@ async function runEntryCoordinatorTests() {
     throw new Error(`post-loss latch should block the final local entry gate: ${JSON.stringify(latchGate)}`);
   }
 
+  const targetDistanceGate = progressionHarness.coordinator.evaluateFinalGate({
+    architectState: createArchitectState(),
+    diagnostics: {
+      expectedGrossEdgePct: 0.02,
+      expectedNetEdgePct: 0.017
+    },
+    economics: {
+      estimatedEntryFeePct: 0.001,
+      estimatedExitFeePct: 0.001,
+      estimatedRoundTripFeesUsdt: 0.2,
+      estimatedSlippagePct: 0.0005,
+      expectedGrossEdgePct: 0.02,
+      expectedGrossEdgeUsdt: 2,
+      expectedNetEdgePct: 0.017,
+      maxTargetDistancePctForShortHorizon: 0.01,
+      minExpectedNetEdgePct: 0.0005,
+      notionalUsdt: 100,
+      profitSafetyBufferPct: 0.0005,
+      requiredEdgePct: 0.0025,
+      targetDistancePct: 0.015
+    },
+    postLossArchitectLatchBlocking: false,
+    quantity: 1,
+    tradeConstraints: {
+      minNotionalUsdt: 10,
+      minQuantity: 0.001
+    }
+  });
+  if (targetDistanceGate.allowed || targetDistanceGate.diagnostics.blockReason !== "target_distance_exceeds_short_horizon") {
+    throw new Error(`short-horizon target distance should block the final local entry gate: ${JSON.stringify(targetDistanceGate)}`);
+  }
+
   const allowedGate = progressionHarness.coordinator.evaluateFinalGate({
     architectState: createArchitectState(),
     diagnostics: {
