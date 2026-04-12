@@ -12,6 +12,7 @@ const { ExecutionEngine } = require("../engines/executionEngine.ts");
 const { ContextService } = require("./contextService.ts");
 const { MtfContextService } = require("./mtfContextService.ts");
 const { ArchitectService } = require("./architectService.ts");
+const { HistoricalBootstrapService } = require("./historicalBootstrapService.ts");
 const { MarketStream } = require("../streams/marketStream.ts");
 const { UserStream } = require("../streams/userStream.ts");
 const { ContextBuilder } = require("../roles/contextBuilder.ts");
@@ -147,6 +148,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const botConfig = configLoader.loadBotsConfig();
   const architectWarmupMs = Math.max(Number(botConfig.architectWarmupMs) || 30_000, 5_000);
   const architectPublishIntervalMs = Math.max(Number(botConfig.architectPublishIntervalMs) || 30_000, 5_000);
+  const contextMaxWindowMs = 300_000;
   const postLossLatchMinFreshPublications = Math.max(Number(botConfig.postLossLatchMinFreshPublications) || 2, 1);
   const symbolStateRetentionMs = Math.max(Number(botConfig.symbolStateRetentionMs) || (30 * 60 * 1000), 60_000);
   store.setSymbolStateRetentionMs(symbolStateRetentionMs);
@@ -227,7 +229,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     contextBuilder,
     logger: logger.child("context"),
     marketStream,
-    maxWindowMs: 300_000,
+    maxWindowMs: contextMaxWindowMs,
     store,
     warmupMs: architectWarmupMs
   });
@@ -249,6 +251,16 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     store,
     switchDelta: 0.12,
     warmupMs: architectWarmupMs
+  });
+  const historicalBootstrapService = new HistoricalBootstrapService({
+    architectWarmupMs,
+    config: botConfig.historicalPreload || null,
+    contextMaxWindowMs,
+    logger: logger.child("preload"),
+    marketKlineIntervals: botConfig.market?.klineIntervals || [],
+    marketStream,
+    mtfConfig,
+    store
   });
   const systemServer = new SystemServer({
     architectWarmupMs,
@@ -281,10 +293,12 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     strategySwitcher
   });
 
+  const enabledSymbols = enabledBots.map((bot: any) => bot.symbol);
+  const historicalPreloadResult = await historicalBootstrapService.run(enabledSymbols, { observedAt: startedAt });
   botManager.initialize(enabledBots);
-  marketStream.start(enabledBots.map((bot: any) => bot.symbol));
-  contextService.start(enabledBots.map((bot: any) => bot.symbol));
-  architectService.start(enabledBots.map((bot: any) => bot.symbol));
+  marketStream.start(enabledSymbols);
+  contextService.start(enabledSymbols);
+  architectService.start(enabledSymbols);
   botManager.startAll();
   if (runtimeOptions.serverEnabled !== false) {
     systemServer.start();
@@ -320,6 +334,11 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       mtfEnabled: Boolean(mtfConfig.enabled),
       mtfEnabledSource: resolvedMtf.enabledSource,
       mtfFrameCount: Array.isArray(mtfConfig.frames) ? mtfConfig.frames.length : 0,
+      historicalPreloadEnabled: Boolean(historicalPreloadResult?.enabled),
+      historicalPreloadOutcome: historicalPreloadResult?.outcome || "disabled",
+      historicalPreloadRequired: Boolean(historicalPreloadResult?.required),
+      historicalPreloadHorizonMs: historicalPreloadResult?.horizonMs || null,
+      historicalPreloadDurationMs: historicalPreloadResult?.durationMs || 0,
       postLossLatchMinFreshPublications,
       symbolStateRetentionMs,
       userStreamRuntime: "paper_simulated_events_only",

@@ -7,14 +7,20 @@ async function runOrchestratorTests() {
   const originalWebSocket = global.WebSocket;
   global.WebSocket = FakeWebSocket;
   const { parseArgs, resolveMtfRuntimeConfig, startOrchestrator } = require("../src/core/orchestrator.ts");
+  const { MarketStream } = require("../src/streams/marketStream.ts");
   const { UserStream } = require("../src/streams/userStream.ts");
   const originalMarketMode = process.env.MARKET_MODE;
   const originalExecutionMode = process.env.EXECUTION_MODE;
   const originalFeeBps = process.env.FEE_BPS;
   const originalLogType = process.env.LOG_TYPE;
   const originalMtfEnabled = process.env.MTF_ENABLED;
+  const originalHistoricalPreloadEnabled = process.env.HISTORICAL_PRELOAD_ENABLED;
+  const originalHistoricalPreloadRequired = process.env.HISTORICAL_PRELOAD_REQUIRED;
+  const originalHistoricalPreloadTimeframes = process.env.HISTORICAL_PRELOAD_TIMEFRAMES;
   const originalPaperTrading = process.env.PAPER_TRADING;
   const originalUserStreamStart = UserStream.prototype.start;
+  const originalMarketStreamFetchHistoricalKlines = MarketStream.prototype.fetchHistoricalKlines;
+  const originalMarketStreamStart = MarketStream.prototype.start;
   let userStreamStartCalls = 0;
   UserStream.prototype.start = async function startSpy(...args) {
     userStreamStartCalls += 1;
@@ -62,6 +68,7 @@ async function runOrchestratorTests() {
   };
   process.env.FEE_BPS = "17";
   process.env.LOG_TYPE = "verbose";
+  process.env.HISTORICAL_PRELOAD_ENABLED = "false";
   delete process.env.MTF_ENABLED;
 
   try {
@@ -82,6 +89,11 @@ async function runOrchestratorTests() {
       delete process.env.MTF_ENABLED;
     } else {
       process.env.MTF_ENABLED = originalMtfEnabled;
+    }
+    if (originalHistoricalPreloadEnabled === undefined) {
+      delete process.env.HISTORICAL_PRELOAD_ENABLED;
+    } else {
+      process.env.HISTORICAL_PRELOAD_ENABLED = originalHistoricalPreloadEnabled;
     }
   }
 
@@ -132,6 +144,11 @@ async function runOrchestratorTests() {
     || !transcript.includes("mtfFrameCount=4")) {
     throw new Error(`orchestrator did not log MTF readiness clearly\n${transcript}`);
   }
+  if (!transcript.includes("historicalPreloadEnabled=false")
+    || !transcript.includes("historicalPreloadOutcome=disabled")
+    || !transcript.includes("historicalPreloadRequired=false")) {
+    throw new Error(`orchestrator disabled preload path should leave startup baseline unchanged and visible\n${transcript}`);
+  }
   if (!transcript.includes("architectWarmupMs=20000")
     || !transcript.includes("architectPublishIntervalMs=15000")
     || !transcript.includes("postLossLatchMinFreshPublications=1")) {
@@ -156,6 +173,56 @@ async function runOrchestratorTests() {
       delete process.env.MARKET_MODE;
     } else {
       process.env.MARKET_MODE = originalMarketMode;
+    }
+  }
+
+  process.env.HISTORICAL_PRELOAD_ENABLED = "true";
+  process.env.HISTORICAL_PRELOAD_REQUIRED = "true";
+  process.env.HISTORICAL_PRELOAD_TIMEFRAMES = "1m";
+  let marketStartCallsAfterRequiredPreloadFailure = 0;
+  MarketStream.prototype.fetchHistoricalKlines = async function fetchHistoricalKlinesFailure(request) {
+    return {
+      interval: request.interval,
+      klinesBySymbol: {},
+      requestedSymbols: request.symbols,
+      symbolResults: request.symbols.map((symbol) => ({
+        error: "fixture_required_preload_failure",
+        klineCount: 0,
+        symbol
+      }))
+    };
+  };
+  MarketStream.prototype.start = function startSpy() {
+    marketStartCallsAfterRequiredPreloadFailure += 1;
+    throw new Error("market stream should not start after required preload failure");
+  };
+  try {
+    await startOrchestrator({ durationMs: 2200, serverEnabled: false, summaryEveryMs: 1000 });
+    throw new Error("orchestrator should abort when required historical preload fails");
+  } catch (error) {
+    if (!String(error && error.message).includes("required historical preload failed")) {
+      throw new Error(`orchestrator did not fail with a clear required-preload error\n${error && error.stack ? error.stack : error}`);
+    }
+    if (marketStartCallsAfterRequiredPreloadFailure !== 0) {
+      throw new Error("market stream should not start before a required historical preload succeeds");
+    }
+  } finally {
+    MarketStream.prototype.fetchHistoricalKlines = originalMarketStreamFetchHistoricalKlines;
+    MarketStream.prototype.start = originalMarketStreamStart;
+    if (originalHistoricalPreloadEnabled === undefined) {
+      delete process.env.HISTORICAL_PRELOAD_ENABLED;
+    } else {
+      process.env.HISTORICAL_PRELOAD_ENABLED = originalHistoricalPreloadEnabled;
+    }
+    if (originalHistoricalPreloadRequired === undefined) {
+      delete process.env.HISTORICAL_PRELOAD_REQUIRED;
+    } else {
+      process.env.HISTORICAL_PRELOAD_REQUIRED = originalHistoricalPreloadRequired;
+    }
+    if (originalHistoricalPreloadTimeframes === undefined) {
+      delete process.env.HISTORICAL_PRELOAD_TIMEFRAMES;
+    } else {
+      process.env.HISTORICAL_PRELOAD_TIMEFRAMES = originalHistoricalPreloadTimeframes;
     }
   }
 
@@ -189,6 +256,8 @@ async function runOrchestratorTests() {
     } else {
       process.env.PAPER_TRADING = originalPaperTrading;
     }
+    MarketStream.prototype.fetchHistoricalKlines = originalMarketStreamFetchHistoricalKlines;
+    MarketStream.prototype.start = originalMarketStreamStart;
     UserStream.prototype.start = originalUserStreamStart;
     global.WebSocket = originalWebSocket;
   }

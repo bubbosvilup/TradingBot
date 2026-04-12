@@ -18,6 +18,7 @@ const { runExitOutcomeCoordinatorTests } = require("./exitOutcomeCoordinator.tes
 const { runExitPolicyRegistryTests } = require("./exitPolicyRegistry.test");
 const { runExitLifecycleReportTests } = require("./exitLifecycleReport.test");
 const { runLoggerTests } = require("./logger.test");
+const { runHistoricalBootstrapServiceTests } = require("./historicalBootstrapService.test");
 const { runOpenAttemptCoordinatorTests } = require("./openAttemptCoordinator.test");
 const { runPerformanceMonitorTests } = require("./performanceMonitor.test");
 const { runOrchestratorTests } = require("./orchestrator.test");
@@ -62,6 +63,7 @@ async function main() {
     { name: "exitOutcomeCoordinator", run: async () => runExitOutcomeCoordinatorTests() },
     { name: "exitLifecycleReport", run: async () => runExitLifecycleReportTests() },
     { name: "exitPolicyRegistry", run: async () => runExitPolicyRegistryTests() },
+    { name: "historicalBootstrapService", run: async () => runHistoricalBootstrapServiceTests() },
     { name: "logger", run: async () => runLoggerTests() },
     { name: "managedRecoveryExitResolver", run: async () => runManagedRecoveryExitResolverTests() },
     { name: "mtfContextAggregator", run: async () => runMtfContextAggregatorTests() },

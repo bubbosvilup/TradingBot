@@ -369,6 +369,112 @@ class MarketStream {
     return this.fallbackExchange;
   }
 
+  normalizeHistoricalKline(symbol: string, interval: string, row: any, receivedAt: number): MarketKline | null {
+    if (!Array.isArray(row) || row.length < 6) {
+      return null;
+    }
+    const openedAt = Number(row[0]);
+    const open = Number(row[1]);
+    const high = Number(row[2]);
+    const low = Number(row[3]);
+    const close = Number(row[4]);
+    const volume = Number(row[5]);
+    if (
+      !Number.isFinite(openedAt)
+      || !Number.isFinite(open)
+      || !Number.isFinite(high)
+      || !Number.isFinite(low)
+      || !Number.isFinite(close)
+      || !(close > 0)
+    ) {
+      return null;
+    }
+    const closedAt = openedAt + this.timeframeToMs(interval) - 1;
+    return {
+      close,
+      closedAt,
+      high,
+      interval,
+      isClosed: closedAt <= receivedAt,
+      low,
+      open,
+      openedAt,
+      receivedAt,
+      source: "rest" as const,
+      symbol,
+      timestamp: closedAt,
+      volume: Number.isFinite(volume) ? volume : 0
+    };
+  }
+
+  timeframeToMs(interval: string) {
+    const normalized = String(interval || "").trim();
+    const match = normalized.match(/^(\d+)([mhd])$/);
+    if (!match) {
+      return 60_000;
+    }
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value <= 0) {
+      return 60_000;
+    }
+    if (match[2] === "m") return value * 60_000;
+    if (match[2] === "h") return value * 60 * 60_000;
+    return value * 24 * 60 * 60_000;
+  }
+
+  async fetchHistoricalKlines(params: {
+    symbols: string[];
+    interval: string;
+    since: number;
+    limit: number;
+    observedAt?: number;
+  }) {
+    const observedAt = Number.isFinite(Number(params.observedAt)) ? Number(params.observedAt) : now();
+    const interval = String(params.interval || "").trim();
+    const symbols = [...new Set(params.symbols || [])].map((symbol) => String(symbol || "").trim()).filter(Boolean);
+    const since = Math.max(0, Number(params.since) || 0);
+    const limit = Math.max(1, Math.floor(Number(params.limit) || 1));
+    const exchange = this.getFallbackExchange();
+    if (typeof exchange.fetchOHLCV !== "function") {
+      throw new Error(`market provider ${this.fallbackRestUrl} does not support fetchOHLCV`);
+    }
+
+    const symbolResults = [];
+    const klinesBySymbol: Record<string, MarketKline[]> = {};
+
+    for (const symbol of symbols) {
+      try {
+        const rows = await exchange.fetchOHLCV(symbol, interval, since, limit);
+        const klines = (Array.isArray(rows) ? rows : [])
+          .map((row: any) => this.normalizeHistoricalKline(symbol, interval, row, observedAt))
+          .filter(Boolean)
+          .sort((a: MarketKline, b: MarketKline) => Number(a.openedAt) - Number(b.openedAt)) as MarketKline[];
+        klinesBySymbol[symbol] = klines;
+        symbolResults.push({
+          error: null,
+          klineCount: klines.length,
+          symbol
+        });
+      } catch (error: any) {
+        klinesBySymbol[symbol] = [];
+        symbolResults.push({
+          error: error?.message || String(error),
+          klineCount: 0,
+          symbol
+        });
+      }
+    }
+
+    return {
+      interval,
+      klinesBySymbol,
+      limit,
+      requestedSymbols: symbols,
+      since,
+      symbolResults
+    };
+  }
+
   startRestFallback() {
     if (this.fallbackTimer || this.mode !== "live") return;
     this.store.updateWsConnection("market-stream", {

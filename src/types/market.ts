@@ -42,3 +42,14 @@ export interface MarketStreamConfig {
   klineIntervals?: string[];
   liveEmitIntervalMs?: number;
 }
+
+export interface HistoricalPreloadConfig {
+  enabled?: boolean;
+  required?: boolean;
+  horizonMs?: number;
+  maxHorizonMs?: number;
+  timeoutMs?: number;
+  timeframes?: string[];
+  priceTimeframe?: string;
+  limit?: number;
+}

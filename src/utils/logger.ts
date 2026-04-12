@@ -52,7 +52,7 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
     return "risk_change";
   }
 
-  if (message === "started" || message === "system_ready" || message === "market_stream_started" || message === "context_ready" || message === "dashboard_ready" || message === "execution_mode_forced_paper" || message === "non_routable_allowed_strategies") {
+  if (message === "started" || message === "system_ready" || message === "market_stream_started" || message === "context_ready" || message === "dashboard_ready" || message === "execution_mode_forced_paper" || message === "non_routable_allowed_strategies" || message.startsWith("historical_preload_")) {
     return "startup";
   }
   if (message === "stopped" || message === "system_stopped" || message === "duration_reached") {

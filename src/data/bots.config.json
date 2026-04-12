@@ -22,6 +22,15 @@
     "klineIntervals": ["1m", "5m", "1h"],
     "liveEmitIntervalMs": 250
   },
+  "historicalPreload": {
+    "enabled": true,
+    "required": false,
+    "priceTimeframe": "1m",
+    "timeframes": ["1m", "5m", "15m", "1h"],
+    "maxHorizonMs": 14400000,
+    "timeoutMs": 15000,
+    "limit": 600
+  },
   "mtf": {
     "enabled": true,
     "instabilityThreshold": 0.5,

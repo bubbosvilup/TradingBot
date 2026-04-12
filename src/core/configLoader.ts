@@ -1,7 +1,7 @@
 // Module responsibility: load JSON configuration files without mixing them into runtime logic.
 
 import type { BotConfig } from "../types/bot.ts";
-import type { MarketStreamConfig, MarketMode } from "../types/market.ts";
+import type { HistoricalPreloadConfig, MarketStreamConfig, MarketMode } from "../types/market.ts";
 import type { MtfFrameConfig, MtfRuntimeConfig } from "../types/mtf.ts";
 import type { PortfolioKillSwitchConfig, RuntimeTuningConfig } from "../types/runtime.ts";
 
@@ -35,6 +35,7 @@ class ConfigLoader {
     executionMode?: "paper" | "live";
     marketMode?: MarketMode;
     market?: MarketStreamConfig;
+    historicalPreload?: HistoricalPreloadConfig;
     mtf?: MtfRuntimeConfig;
     portfolioKillSwitch?: PortfolioKillSwitchConfig;
     postLossLatchMinFreshPublications?: number;
@@ -131,6 +132,7 @@ class ConfigLoader {
     executionMode?: string;
     marketMode?: string;
     market?: MarketStreamConfig | unknown;
+    historicalPreload?: HistoricalPreloadConfig | unknown;
     portfolioKillSwitch?: PortfolioKillSwitchConfig | unknown;
     mtf?: MtfRuntimeConfig | unknown;
     postLossLatchMinFreshPublications?: number;
@@ -183,6 +185,8 @@ class ConfigLoader {
       }
     }
 
+    this.validateHistoricalPreloadConfig(config.historicalPreload);
+
     if (config.portfolioKillSwitch !== undefined) {
       if (!config.portfolioKillSwitch || typeof config.portfolioKillSwitch !== "object" || Array.isArray(config.portfolioKillSwitch)) {
         throw new Error("bots.config.json has invalid portfolioKillSwitch; expected an object");
@@ -206,6 +210,46 @@ class ConfigLoader {
     this.validateMtfConfig(config.mtf);
 
     this.validateRuntimeTuningConfig(config);
+  }
+
+  validateHistoricalPreloadConfig(preloadConfig?: HistoricalPreloadConfig | unknown) {
+    if (preloadConfig === undefined) return;
+    if (!preloadConfig || typeof preloadConfig !== "object" || Array.isArray(preloadConfig)) {
+      throw new Error("bots.config.json has invalid historicalPreload; expected an object");
+    }
+
+    const preload = preloadConfig as HistoricalPreloadConfig;
+    if (preload.enabled !== undefined && typeof preload.enabled !== "boolean") {
+      throw new Error(`bots.config.json has invalid historicalPreload.enabled "${String(preload.enabled)}"`);
+    }
+    if (preload.required !== undefined && typeof preload.required !== "boolean") {
+      throw new Error(`bots.config.json has invalid historicalPreload.required "${String(preload.required)}"`);
+    }
+
+    const numericFields = ["horizonMs", "maxHorizonMs", "timeoutMs", "limit"];
+    for (const field of numericFields) {
+      const value = (preload as Record<string, unknown>)[field];
+      if (value === undefined) continue;
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue) || numericValue <= 0) {
+        throw new Error(`bots.config.json has invalid historicalPreload.${field} "${String(value)}"`);
+      }
+    }
+
+    if (preload.priceTimeframe !== undefined && !VALID_MTF_TIMEFRAMES.has(String(preload.priceTimeframe || "").trim())) {
+      throw new Error(`bots.config.json has invalid historicalPreload.priceTimeframe "${String(preload.priceTimeframe || "")}"`);
+    }
+
+    if (preload.timeframes !== undefined) {
+      if (!Array.isArray(preload.timeframes) || preload.timeframes.length <= 0) {
+        throw new Error("bots.config.json has invalid historicalPreload.timeframes; expected a non-empty array");
+      }
+      for (const timeframe of preload.timeframes) {
+        if (!VALID_MTF_TIMEFRAMES.has(String(timeframe || "").trim())) {
+          throw new Error(`bots.config.json has invalid historicalPreload.timeframes entry "${String(timeframe || "")}"`);
+        }
+      }
+    }
   }
 
   validateMtfConfig(mtfConfig?: MtfRuntimeConfig | unknown) {

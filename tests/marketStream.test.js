@@ -66,7 +66,7 @@ function runMarketStreamTests() {
   wsManager.closeAll();
 }
 
-function runMarketStreamLiveEmitIntervalTests() {
+async function runMarketStreamLiveEmitIntervalTests() {
   function build(deps) {
     const sockets = [];
     const store = new StateStore();
@@ -171,6 +171,36 @@ function runMarketStreamLiveEmitIntervalTests() {
     stream.stop();
     wsManager.closeAll();
   })();
+
+  {
+    const { stream, wsManager } = build({});
+    const calls = [];
+    stream.fallbackExchange = {
+      async fetchOHLCV(symbol, interval, since, limit) {
+        calls.push({ interval, limit, since, symbol });
+        return [
+          [2_000, "101", "103", "100", "102", "12"],
+          [1_000, "100", "102", "99", "101", "10"]
+        ];
+      }
+    };
+    const result = await stream.fetchHistoricalKlines({
+      interval: "1m",
+      limit: 2,
+      observedAt: 200_000,
+      since: 1_000,
+      symbols: ["BTC/USDT"]
+    });
+    if (calls.length !== 1 || calls[0].symbol !== "BTC/USDT" || calls[0].interval !== "1m") {
+      throw new Error(`historical fetch should use the stream's configured REST exchange: ${JSON.stringify(calls)}`);
+    }
+    const klines = result.klinesBySymbol["BTC/USDT"];
+    if (!Array.isArray(klines) || klines.length !== 2 || klines[0].openedAt !== 1_000 || klines[0].source !== "rest") {
+      throw new Error(`historical klines should be normalized and sorted: ${JSON.stringify(result)}`);
+    }
+    stream.stop();
+    wsManager.closeAll();
+  }
 
   // Buffering model is unchanged: ticks queued and flushed by interval
   (function testBufferingBehavior() {

@@ -56,6 +56,16 @@ function runConfigLoaderTests() {
       streamType: "trade",
       wsBaseUrl: "wss://stream.binance.com:9443"
     },
+    historicalPreload: {
+      enabled: true,
+      required: false,
+      horizonMs: 3_600_000,
+      maxHorizonMs: 14_400_000,
+      timeoutMs: 15_000,
+      priceTimeframe: "1m",
+      timeframes: ["1m", "5m"],
+      limit: 600
+    },
     mtf: {
       enabled: true,
       instabilityThreshold: 0.5,
@@ -74,6 +84,9 @@ function runConfigLoaderTests() {
     }
     if (loaded.mtf?.enabled !== true || loaded.mtf?.frames?.[2]?.horizonFrame !== "long") {
       throw new Error(`valid MTF config should load normally: ${JSON.stringify(loaded.mtf)}`);
+    }
+    if (loaded.historicalPreload?.enabled !== true || loaded.historicalPreload?.priceTimeframe !== "1m") {
+      throw new Error(`valid historical preload config should load normally: ${JSON.stringify(loaded.historicalPreload)}`);
     }
   } finally {
     fs.rmSync(validRootDir, { force: true, recursive: true });
@@ -136,6 +149,39 @@ function runConfigLoaderTests() {
       }
     ]
   }, "invalid market.provider");
+
+  expectConfigError({
+    historicalPreload: {
+      enabled: "yes"
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_preload_enabled",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid historicalPreload.enabled");
+
+  expectConfigError({
+    historicalPreload: {
+      enabled: true,
+      timeframes: ["2m"]
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_preload_timeframe",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid historicalPreload.timeframes entry");
 
   expectConfigError({
     mtf: {
