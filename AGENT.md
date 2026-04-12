@@ -25,7 +25,8 @@ Preserve behavior unless the task explicitly asks for semantic changes.
 - `Architect*` services/coordinators: interpret/publish regime-family-usability state
 - `TradingBot`: top-level tick orchestration and execution coordination
 - `mtfParamResolver`: pure MTF-driven RSI entry hint/cap resolution from published internal frame diagnostics
-- `entryEconomicsEstimator`: strategy-specific entry edge formulas and resolved economics diagnostics
+- `entryEconomicsEstimator`: strategy-specific entry edge formulas, explicit strategy economics policy/capability handling, and resolved economics diagnostics
+- `RiskManager`: entry sizing, drawdown/loss cooldown policy, volatility size penalties, and post-trade cooldown decisions
 - `postLossArchitectLatch`: post-loss re-entry defense
 - `architectCoordinator`: published Architect sync/usability/apply logic
 - `tradingBotTelemetry`: log/diagnostic metadata shaping
@@ -51,6 +52,8 @@ Avoid putting these back into `TradingBot`:
 - Do not silently change thresholds, debounce rules, lifecycle semantics, or risk behavior
 - Reuse existing store/runtime state; do not invent parallel persistence unless required
 - Keep historical preload startup-only and store-centered; do not add per-tick history fetches
+- Keep strategy economics policy explicit in strategy/economics surfaces; do not reintroduce strategy-id or symbol-name branching in shared economics code
+- Keep volatility sizing conservative: it may reduce or preserve size only, never increase it
 - Keep operator-facing log names/fields stable unless explicitly asked to change them
 - Add tests for extracted roles when behavior is non-trivial
 - Run:

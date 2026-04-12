@@ -357,7 +357,7 @@ class ArchitectService {
     }
 
     const candidateScore = Number(candidate.regimeScores[candidate.marketRegime] || 0);
-    const incumbentScore = Number(candidate.regimeScores[currentPublished.marketRegime] || 0);
+    const incumbentScore = Number(currentPublished.regimeScores[currentPublished.marketRegime] || 0);
     const canImmediateSwitch = candidateScore > (incumbentScore + this.switchDelta);
     const sameChallenger = currentPublisher.challengerRegime === candidate.marketRegime;
     const challengerCount = sameChallenger ? currentPublisher.challengerCount + 1 : 1;

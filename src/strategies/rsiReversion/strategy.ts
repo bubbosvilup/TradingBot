@@ -56,6 +56,10 @@ function createStrategy(config: {
         0.0015
       )
     },
+    entryEconomicsPolicy: {
+      minExpectedNetEdgePctFloor: 0.0015,
+      mtfParamPolicy: "range_reversion_target_distance_cap"
+    },
     evaluate(context: MarketContext): StrategyDecision {
       const rsi = context.indicators.rsi;
       const emaSlow = context.indicators.emaSlow;

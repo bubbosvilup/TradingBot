@@ -63,7 +63,7 @@ function runRiskManagerTests() {
   }
 
   const presetProfile = riskManager.getProfile("medium");
-  if (presetProfile.positionPct !== 0.16 || presetProfile.cooldownMs !== 75_000 || presetProfile.emergencyStopPct !== 0.01 || presetProfile.reentryCooldownMs !== 15_000 || presetProfile.exitConfirmationTicks !== 2 || presetProfile.minHoldMs !== 15_000) {
+  if (presetProfile.positionPct !== 0.16 || presetProfile.cooldownMs !== 75_000 || presetProfile.emergencyStopPct !== 0.01 || presetProfile.reentryCooldownMs !== 15_000 || presetProfile.exitConfirmationTicks !== 2 || presetProfile.meaningfulWinUsdt !== 0.1 || presetProfile.minHoldMs !== 15_000 || presetProfile.winReentryCooldownMs !== null) {
     throw new Error(`preset-only behavior should remain unchanged: ${JSON.stringify(presetProfile)}`);
   }
 
@@ -85,6 +85,108 @@ function runRiskManagerTests() {
   }
   if (overriddenProfile.entryDebounceTicks !== presetProfile.entryDebounceTicks || overriddenProfile.maxDrawdownPct !== presetProfile.maxDrawdownPct || overriddenProfile.maxLossStreak !== presetProfile.maxLossStreak) {
     throw new Error(`partial overrides should preserve untargeted preset fields: ${JSON.stringify(overriddenProfile)}`);
+  }
+
+  const baselineMeaningfulWinResult = riskManager.onTradeClosed({
+    netPnl: 0.5,
+    now: 1_000_000,
+    riskProfile: "medium",
+    state: baseState
+  });
+  if (baselineMeaningfulWinResult.cooldownUntil !== 1_015_000 || baselineMeaningfulWinResult.lossStreak !== 0) {
+    throw new Error(`missing win cooldown override should preserve baseline reentry cooldown semantics: ${JSON.stringify(baselineMeaningfulWinResult)}`);
+  }
+
+  const smallWinConfiguredCooldownResult = riskManager.onTradeClosed({
+    netPnl: 0.05,
+    now: 1_000_000,
+    riskProfile: "medium",
+    riskOverrides: {
+      meaningfulWinUsdt: 0.1,
+      winReentryCooldownMs: 5_000
+    },
+    state: baseState
+  });
+  if (smallWinConfiguredCooldownResult.cooldownUntil !== 1_015_000 || smallWinConfiguredCooldownResult.lossStreak !== 2) {
+    throw new Error(`small wins should keep normal reentry cooldown even when win-specific cooldown is configured: ${JSON.stringify(smallWinConfiguredCooldownResult)}`);
+  }
+
+  const meaningfulWinConfiguredCooldownResult = riskManager.onTradeClosed({
+    netPnl: 0.5,
+    now: 1_000_000,
+    riskProfile: "medium",
+    riskOverrides: {
+      meaningfulWinUsdt: 0.1,
+      winReentryCooldownMs: 5_000
+    },
+    state: baseState
+  });
+  if (meaningfulWinConfiguredCooldownResult.cooldownUntil !== 1_005_000 || meaningfulWinConfiguredCooldownResult.lossStreak !== 0) {
+    throw new Error(`meaningful wins should use configured shorter win reentry cooldown: ${JSON.stringify(meaningfulWinConfiguredCooldownResult)}`);
+  }
+
+  const lossWithWinCooldownResult = riskManager.onTradeClosed({
+    netPnl: -0.25,
+    now: 1_000_000,
+    riskProfile: "medium",
+    riskOverrides: {
+      cooldownMs: 90_000,
+      postExitReentryGuardMs: 12_000,
+      winReentryCooldownMs: 5_000
+    },
+    state: baseState
+  });
+  if (lossWithWinCooldownResult.cooldownUntil !== 1_090_000 || lossWithWinCooldownResult.lossStreak !== 3) {
+    throw new Error(`win-specific cooldown must not weaken loss cooldown behavior: ${JSON.stringify(lossWithWinCooldownResult)}`);
+  }
+
+  const baselineSizingParams = {
+    balanceUsdt: 1000,
+    confidence: 0.8,
+    latestPrice: 100,
+    performance: {
+      drawdown: 0
+    },
+    riskProfile: "medium",
+    state: {
+      ...baseState,
+      lossStreak: 0
+    }
+  };
+  const disabledVolatilitySizing = riskManager.calculatePositionSize({
+    ...baselineSizingParams,
+    riskOverrides: {
+      volatilitySizingEnabled: false
+    },
+    volatilityRisk: 0.95
+  });
+  const missingVolatilitySizing = riskManager.calculatePositionSize(baselineSizingParams);
+  if (disabledVolatilitySizing.notionalUsdt !== missingVolatilitySizing.notionalUsdt || disabledVolatilitySizing.quantity !== missingVolatilitySizing.quantity) {
+    throw new Error(`disabled volatility sizing should remain baseline-identical: ${JSON.stringify({ disabledVolatilitySizing, missingVolatilitySizing })}`);
+  }
+
+  const invalidVolatilitySizing = riskManager.calculatePositionSize({
+    ...baselineSizingParams,
+    volatilityRisk: "not-a-number"
+  });
+  if (invalidVolatilitySizing.notionalUsdt !== missingVolatilitySizing.notionalUsdt || invalidVolatilitySizing.quantity !== missingVolatilitySizing.quantity) {
+    throw new Error(`invalid volatilityRisk should fall back to baseline sizing: ${JSON.stringify({ invalidVolatilitySizing, missingVolatilitySizing })}`);
+  }
+
+  const lowVolatilitySizing = riskManager.calculatePositionSize({
+    ...baselineSizingParams,
+    volatilityRisk: 0.2
+  });
+  if (lowVolatilitySizing.notionalUsdt !== missingVolatilitySizing.notionalUsdt || lowVolatilitySizing.quantity !== missingVolatilitySizing.quantity) {
+    throw new Error(`low volatilityRisk should preserve baseline sizing: ${JSON.stringify({ lowVolatilitySizing, missingVolatilitySizing })}`);
+  }
+
+  const highVolatilitySizing = riskManager.calculatePositionSize({
+    ...baselineSizingParams,
+    volatilityRisk: 0.9
+  });
+  if (!(highVolatilitySizing.notionalUsdt < missingVolatilitySizing.notionalUsdt) || highVolatilitySizing.notionalUsdt !== missingVolatilitySizing.notionalUsdt * 0.5) {
+    throw new Error(`high volatilityRisk should reduce sizing to the conservative floor: ${JSON.stringify({ highVolatilitySizing, missingVolatilitySizing })}`);
   }
 
   const overriddenLossResult = riskManager.onTradeClosed({

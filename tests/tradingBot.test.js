@@ -414,6 +414,72 @@ function runTradingBotTests() {
       throw new Error(`standard confirmed sell exits should close only after required confirmation ticks: ${JSON.stringify(confirmedSellPlan)}`);
     }
 
+    const closeRejectHarness = createHarness(() => ({
+      action: "sell",
+      confidence: 0.9,
+      reason: ["exit_signal"]
+    }), {
+      strategy: "emaCross"
+    });
+    const closeRejectProfile = closeRejectHarness.bot.deps.riskManager.getProfile(closeRejectHarness.config.riskProfile);
+    closeRejectHarness.store.setPosition("bot_test", createPosition({
+      openedAt: clock - closeRejectProfile.minHoldMs - 1_000,
+      quantity: 1,
+      strategyId: "emaCross"
+    }));
+    closeRejectHarness.store.updateBotState("bot_test", {
+      exitSignalStreak: Math.max(closeRejectProfile.exitConfirmationTicks - 1, 0)
+    });
+    closeRejectHarness.executionEngine.closePosition = () => null;
+    closeRejectHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!closeRejectHarness.store.getPosition("bot_test") || closeRejectHarness.store.getClosedTrades("bot_test").length !== 0) {
+      throw new Error("failed closePosition should leave the open position unchanged and avoid recording a closed trade");
+    }
+    const closeRejectedLog = closeRejectHarness.botLogs.find((entry) =>
+      entry.message === "RISK_CHANGE"
+      && entry.metadata.status === "position_close_rejected"
+    );
+    if (!closeRejectedLog || closeRejectedLog.metadata.reason !== "close_position_returned_null" || closeRejectedLog.metadata.positionId !== "pos-test" || closeRejectedLog.metadata.tickPrice !== 100.2) {
+      throw new Error(`closePosition null return should emit explicit operator-visible failure telemetry: ${JSON.stringify(closeRejectedLog)}`);
+    }
+
+    process.env.LOG_TYPE = "strategy_debug";
+    const closeSnapshotHarness = createHarness(() => ({
+      action: "sell",
+      confidence: 0.9,
+      reason: ["exit_signal"]
+    }), {
+      strategy: "emaCross"
+    });
+    const closeSnapshotProfile = closeSnapshotHarness.bot.deps.riskManager.getProfile(closeSnapshotHarness.config.riskProfile);
+    closeSnapshotHarness.store.setPosition("bot_test", createPosition({
+      openedAt: clock - closeSnapshotProfile.minHoldMs - 1_000,
+      quantity: 1,
+      strategyId: "emaCross"
+    }));
+    closeSnapshotHarness.store.updateBotState("bot_test", {
+      exitSignalStreak: Math.max(closeSnapshotProfile.exitConfirmationTicks - 1, 0)
+    });
+    const originalClosePosition = closeSnapshotHarness.executionEngine.closePosition.bind(closeSnapshotHarness.executionEngine);
+    closeSnapshotHarness.executionEngine.closePosition = (params) => {
+      const livePosition = closeSnapshotHarness.store.getPosition("bot_test");
+      livePosition.lifecycleMode = "managed_recovery";
+      livePosition.lifecycleState = "MANAGED_RECOVERY";
+      livePosition.managedRecoveryStartedAt = clock - 10_000;
+      livePosition.notes.push("mutated_during_close");
+      return originalClosePosition(params);
+    };
+    closeSnapshotHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const closeSnapshotTrade = closeSnapshotHarness.store.getClosedTrades("bot_test")[0];
+    if (!closeSnapshotTrade || closeSnapshotHarness.store.getPosition("bot_test")) {
+      throw new Error(`defensive position snapshot should not change successful close execution: ${JSON.stringify(closeSnapshotTrade)}`);
+    }
+    const closeSnapshotSellLog = closeSnapshotHarness.botLogs.find((entry) => entry.message === "SELL");
+    if (!closeSnapshotSellLog || closeSnapshotSellLog.metadata.positionStatus !== "ACTIVE" || closeSnapshotSellLog.metadata.timeoutRemainingMs !== null) {
+      throw new Error(`exit telemetry should use the pre-close defensive position snapshot, not later store mutations: ${JSON.stringify(closeSnapshotSellLog)}`);
+    }
+    process.env.LOG_TYPE = testDefaultLogType;
+
     const directRsiHarness = createHarness(() => ({
       action: "hold",
       confidence: 0.5,

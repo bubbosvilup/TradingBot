@@ -23,9 +23,16 @@ export interface RiskProfileSettings {
   exitConfirmationTicks: number;
   maxDrawdownPct: number;
   maxLossStreak: number;
+  meaningfulWinUsdt: number;
   minHoldMs: number;
   positionPct: number;
   reentryCooldownMs: number;
+  winReentryCooldownMs: number | null;
+  volatilitySizing: {
+    enabled: boolean;
+    minPenalty: number;
+    multiplier: number;
+  };
 }
 
 export type PortfolioKillSwitchMode = "block_entries_only";
@@ -194,6 +201,7 @@ export interface RiskManagerLike {
     riskProfile: RiskProfile;
     riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
+    volatilityRisk?: unknown;
   }): {
     notionalUsdt: number;
     quantity: number;

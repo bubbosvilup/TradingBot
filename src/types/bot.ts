@@ -12,7 +12,12 @@ export interface RiskOverrides {
   emergencyStopPct?: number;
   postExitReentryGuardMs?: number;
   exitConfirmationTicks?: number;
+  meaningfulWinUsdt?: number;
   minHoldMs?: number;
+  winReentryCooldownMs?: number;
+  volatilitySizingEnabled?: boolean;
+  volatilitySizingMultiplier?: number;
+  volatilitySizingMinPenalty?: number;
 }
 
 export interface BotConfig {

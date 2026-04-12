@@ -13,16 +13,22 @@ class RiskManager {
   lossStreakResetWinUsdt: number;
 
   constructor() {
+    const defaultMeaningfulWinUsdt = 0.1;
+    const conservativeVolatilitySizing = {
+      enabled: true,
+      minPenalty: 0.5,
+      multiplier: 1
+    };
     this.profiles = {
-      high: { cooldownMs: 45_000, emergencyStopPct: 0.012, entryDebounceTicks: 2, exitConfirmationTicks: 2, maxDrawdownPct: 8, maxLossStreak: 5, minHoldMs: 10_000, positionPct: 0.22, reentryCooldownMs: 10_000 },
-      low: { cooldownMs: 120_000, emergencyStopPct: 0.008, entryDebounceTicks: 3, exitConfirmationTicks: 3, maxDrawdownPct: 4, maxLossStreak: 3, minHoldMs: 20_000, positionPct: 0.1, reentryCooldownMs: 20_000 },
-      medium: { cooldownMs: 75_000, emergencyStopPct: 0.01, entryDebounceTicks: 2, exitConfirmationTicks: 2, maxDrawdownPct: 6, maxLossStreak: 4, minHoldMs: 15_000, positionPct: 0.16, reentryCooldownMs: 15_000 }
+      high: { cooldownMs: 45_000, emergencyStopPct: 0.012, entryDebounceTicks: 2, exitConfirmationTicks: 2, maxDrawdownPct: 8, maxLossStreak: 5, meaningfulWinUsdt: defaultMeaningfulWinUsdt, minHoldMs: 10_000, positionPct: 0.22, reentryCooldownMs: 10_000, winReentryCooldownMs: null, volatilitySizing: conservativeVolatilitySizing },
+      low: { cooldownMs: 120_000, emergencyStopPct: 0.008, entryDebounceTicks: 3, exitConfirmationTicks: 3, maxDrawdownPct: 4, maxLossStreak: 3, meaningfulWinUsdt: defaultMeaningfulWinUsdt, minHoldMs: 20_000, positionPct: 0.1, reentryCooldownMs: 20_000, winReentryCooldownMs: null, volatilitySizing: conservativeVolatilitySizing },
+      medium: { cooldownMs: 75_000, emergencyStopPct: 0.01, entryDebounceTicks: 2, exitConfirmationTicks: 2, maxDrawdownPct: 6, maxLossStreak: 4, meaningfulWinUsdt: defaultMeaningfulWinUsdt, minHoldMs: 15_000, positionPct: 0.16, reentryCooldownMs: 15_000, winReentryCooldownMs: null, volatilitySizing: conservativeVolatilitySizing }
     };
     this.minTradeNotionalUsdt = 25;
     this.minTradeQuantity = 1e-6;
     // Require a small but real net win before clearing consecutive-loss memory.
     // This avoids dust wins or near-flat closes resetting the streak too easily.
-    this.lossStreakResetWinUsdt = 0.1;
+    this.lossStreakResetWinUsdt = defaultMeaningfulWinUsdt;
   }
 
   getProfile(riskProfile: RiskProfile, riskOverrides: RiskOverrides | null = null) {
@@ -44,12 +50,29 @@ class RiskManager {
       minHoldMs: Number.isFinite(Number(riskOverrides.minHoldMs))
         ? Number(riskOverrides.minHoldMs)
         : profile.minHoldMs,
+      meaningfulWinUsdt: Number.isFinite(Number(riskOverrides.meaningfulWinUsdt))
+        ? Math.max(Number(riskOverrides.meaningfulWinUsdt), 0)
+        : profile.meaningfulWinUsdt,
       positionPct: Number.isFinite(Number(riskOverrides.positionPct))
         ? Number(riskOverrides.positionPct)
         : profile.positionPct,
       reentryCooldownMs: Number.isFinite(Number(riskOverrides.postExitReentryGuardMs))
         ? Number(riskOverrides.postExitReentryGuardMs)
-        : profile.reentryCooldownMs
+        : profile.reentryCooldownMs,
+      winReentryCooldownMs: Number.isFinite(Number(riskOverrides.winReentryCooldownMs))
+        ? Math.max(Number(riskOverrides.winReentryCooldownMs), 1)
+        : profile.winReentryCooldownMs,
+      volatilitySizing: {
+        enabled: typeof riskOverrides.volatilitySizingEnabled === "boolean"
+          ? riskOverrides.volatilitySizingEnabled
+          : profile.volatilitySizing.enabled,
+        minPenalty: Number.isFinite(Number(riskOverrides.volatilitySizingMinPenalty))
+          ? clamp(Number(riskOverrides.volatilitySizingMinPenalty), 0.01, 1)
+          : profile.volatilitySizing.minPenalty,
+        multiplier: Number.isFinite(Number(riskOverrides.volatilitySizingMultiplier))
+          ? Math.max(Number(riskOverrides.volatilitySizingMultiplier), 0)
+          : profile.volatilitySizing.multiplier
+      }
     };
   }
 
@@ -96,12 +119,14 @@ class RiskManager {
     riskProfile: RiskProfile;
     riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
+    volatilityRisk?: unknown;
   }) {
     const profile = this.getProfile(params.riskProfile, params.riskOverrides || null);
     const confidenceBoost = clamp(params.confidence, 0.15, 1);
     const drawdownPenalty = clamp(1 - (params.performance.drawdown / Math.max(profile.maxDrawdownPct, 0.1)), 0.35, 1);
     const lossPenalty = clamp(1 - (params.state.lossStreak * 0.12), 0.4, 1);
-    const notionalUsdt = params.balanceUsdt * profile.positionPct * confidenceBoost * drawdownPenalty * lossPenalty;
+    const volatilityPenalty = this.resolveVolatilitySizingPenalty(profile.volatilitySizing, params.volatilityRisk);
+    const notionalUsdt = params.balanceUsdt * profile.positionPct * confidenceBoost * drawdownPenalty * lossPenalty * volatilityPenalty;
     const quantity = params.latestPrice > 0 ? notionalUsdt / params.latestPrice : 0;
     return {
       notionalUsdt,
@@ -109,15 +134,37 @@ class RiskManager {
     };
   }
 
+  resolveVolatilitySizingPenalty(volatilitySizing: RiskProfileSettings["volatilitySizing"], volatilityRisk: unknown) {
+    if (!volatilitySizing?.enabled) {
+      return 1;
+    }
+    const normalizedVolatilityRisk = Number(volatilityRisk);
+    if (!Number.isFinite(normalizedVolatilityRisk)) {
+      return 1;
+    }
+    const boundedVolatilityRisk = clamp(normalizedVolatilityRisk, 0, 1);
+    const minPenalty = clamp(Number(volatilitySizing.minPenalty), 0.01, 1);
+    const multiplier = Math.max(Number(volatilitySizing.multiplier) || 0, 0);
+    const penaltyStart = 0.3;
+    const penalty = 1 - (Math.max(0, boundedVolatilityRisk - penaltyStart) * multiplier);
+    return clamp(penalty, minPenalty, 1);
+  }
+
   onTradeClosed(params: { now: number; netPnl: number; riskProfile: RiskProfile; riskOverrides?: RiskOverrides | null; state: BotRuntimeState }) {
     const profile = this.getProfile(params.riskProfile, params.riskOverrides || null);
     const loss = params.netPnl <= 0;
-    const meaningfulWin = params.netPnl >= this.lossStreakResetWinUsdt;
+    const meaningfulWin = params.netPnl >= profile.meaningfulWinUsdt;
     const reentryCooldownUntil = params.now + profile.reentryCooldownMs;
     const lossCooldownUntil = params.now + profile.cooldownMs;
+    const winReentryCooldownMs = profile.winReentryCooldownMs !== null && Number.isFinite(Number(profile.winReentryCooldownMs))
+      ? Number(profile.winReentryCooldownMs)
+      : null;
+    const winReentryCooldownUntil = meaningfulWin && winReentryCooldownMs !== null
+      ? params.now + Math.min(winReentryCooldownMs, profile.reentryCooldownMs)
+      : reentryCooldownUntil;
     return {
       cooldownReason: loss ? "loss_cooldown" : "post_exit_reentry_guard",
-      cooldownUntil: loss ? Math.max(lossCooldownUntil, reentryCooldownUntil) : reentryCooldownUntil,
+      cooldownUntil: loss ? Math.max(lossCooldownUntil, reentryCooldownUntil) : winReentryCooldownUntil,
       lossStreak: loss
         ? params.state.lossStreak + 1
         : meaningfulWin

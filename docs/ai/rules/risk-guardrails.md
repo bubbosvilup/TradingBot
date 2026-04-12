@@ -14,6 +14,10 @@ Guardrails:
 - Do not silently change entry/exit thresholds, hold times, publish cadence, cooldowns, or fee assumptions.
 - Do not lower the `rsiReversion` edge floor or target-distance cap without test updates and explicit rationale.
 - Do not widen the `rsiReversion` target-distance cap outside the MTF-enabled, coherent range-context path.
+- Do not widen the shared capture-gap cap by default. The baseline remains `0.03`; any higher cap must be explicit strategy/economics policy or config.
+- Do not use hardcoded symbol checks for capture-gap or economics tuning. Symbol-specific tuning must come from config/policy.
+- Do not let volatility-aware sizing increase position size. It may only reduce or preserve the baseline sizing result.
+- Do not weaken post-loss cooldown behavior when adding win-specific cooldown controls.
 - Coherent MTF RSI cap widening requires enabled MTF, sufficient ready frames, `mtfMetaRegime === "range"`, present internal dominant frame, `mtfInstability <= 0.25`, and `mtfAgreement >= 0.75`.
 - The only allowed MTF cap policy today is `short` = baseline, `medium` = `1.5x`, `long` = `2.0x`; disabled, unclear, unstable, insufficient, non-range, or missing-dominant context must remain baseline.
 - Do not hide risk changes inside UI or telemetry patches.
@@ -27,6 +31,8 @@ Required review questions for risk-sensitive patches:
 - Does this bypass Architect challenger hysteresis at entry?
 - Does this make recovery/invalidation ordering easier to trigger than entry?
 - Does this change the target-distance gate or the resolved target-distance cap?
+- Does this change the capture-gap cap default or make economics more permissive without explicit config?
+- Does this let volatility or cooldown logic make entries more aggressive after losses?
 - Does this change MTF coherence thresholds or the RSI resolved cap policy?
 - Does this create a path that can look paper-safe but behave more aggressively?
 

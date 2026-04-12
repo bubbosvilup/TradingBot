@@ -57,6 +57,12 @@ export interface StrategyEntryEdgeInputs {
   side?: TradeDirection;
 }
 
+export interface StrategyEntryEconomicsPolicy {
+  captureGapCapPct?: number;
+  minExpectedNetEdgePctFloor?: number;
+  mtfParamPolicy?: "range_reversion_target_distance_cap";
+}
+
 export interface EntryEconomicsEstimate {
   estimatedEntryFeePct: number;
   estimatedExitFeePct: number;
@@ -87,6 +93,7 @@ export interface EntryEconomicsEstimate {
 
 export interface Strategy {
   config?: Record<string, unknown>;
+  entryEconomicsPolicy?: StrategyEntryEconomicsPolicy;
   id: string;
   evaluate(context: MarketContext): StrategyDecision;
   estimateExpectedGrossEdgePct?(inputs: StrategyEntryEdgeInputs): number;

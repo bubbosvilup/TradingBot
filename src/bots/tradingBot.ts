@@ -724,6 +724,13 @@ class TradingBot extends BaseBot {
     };
   }
 
+  clonePositionSnapshot(position: PositionRecord): PositionRecord {
+    return {
+      ...position,
+      notes: Array.isArray(position.notes) ? [...position.notes] : []
+    };
+  }
+
   getExitPolicy(): ExitPolicy | null {
     return resolveExitPolicy(this.strategy?.config);
   }
@@ -765,13 +772,14 @@ class TradingBot extends BaseBot {
   handleDeferredManagedRecoveryExit(params: {
     architectState: any;
     exitPlan: ExitPlan;
+    positionSnapshot: PositionRecord;
     snapshot: TradingTickDecisionContext;
   }) {
     if (params.exitPlan.transition !== "managed_recovery" || !params.exitPlan.nextPosition) {
       return false;
     }
 
-    const estimatedExitEconomics = params.exitPlan.estimatedExitEconomics || this.estimateExitEconomics(params.snapshot.position, params.snapshot.tick.price);
+    const estimatedExitEconomics = params.exitPlan.estimatedExitEconomics || this.estimateExitEconomics(params.positionSnapshot, params.snapshot.tick.price);
     const managedRecoveryPosition = params.exitPlan.nextPosition;
     const deferredRecoveryTarget = this.resolveManagedRecoveryTarget({
       context: params.snapshot.context,
@@ -806,15 +814,17 @@ class TradingBot extends BaseBot {
   handlePendingManagedRecoveryExit(params: {
     architectState: any;
     exitPlan: ExitPlan;
+    managedRecoveryTarget: any;
+    positionSnapshot: PositionRecord;
     snapshot: TradingTickDecisionContext;
   }) {
     if (params.exitPlan.exitNow) {
       return false;
     }
-    if (!isManagedRecoveryPosition(params.snapshot.position)) {
+    if (!isManagedRecoveryPosition(params.positionSnapshot)) {
       return false;
     }
-    if (!params.snapshot.managedRecoveryTarget?.hit && !(Array.isArray(params.exitPlan.reason) && params.exitPlan.reason.includes("managed_recovery_rsi_ignored"))) {
+    if (!params.managedRecoveryTarget?.hit && !(Array.isArray(params.exitPlan.reason) && params.exitPlan.reason.includes("managed_recovery_rsi_ignored"))) {
       return false;
     }
 
@@ -822,19 +832,19 @@ class TradingBot extends BaseBot {
       metadata: {
         ...this.buildExitTelemetry({
           architectState: params.architectState,
-          exitMechanism: params.snapshot.managedRecoveryTarget?.hit ? "recovery" : null,
+          exitMechanism: params.managedRecoveryTarget?.hit ? "recovery" : null,
           exitReasons: Array.isArray(params.exitPlan.reason) ? params.exitPlan.reason : [],
-          lifecycleEvent: params.snapshot.managedRecoveryTarget?.hit
+          lifecycleEvent: params.managedRecoveryTarget?.hit
             ? POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
             : null,
-          managedRecoveryTarget: params.snapshot.managedRecoveryTarget,
-          position: params.snapshot.position,
+          managedRecoveryTarget: params.managedRecoveryTarget,
+          position: params.positionSnapshot,
           signalTimestamp: params.snapshot.tick.timestamp,
           tick: params.snapshot.tick
         }),
         exitSignalStreak: params.snapshot.signalState.exitSignalStreak,
         latestPrice: Number(Number(params.snapshot.tick.price || 0).toFixed(4)),
-        status: params.snapshot.managedRecoveryTarget?.hit ? "managed_recovery_target_ready" : "managed_recovery_rsi_ignored",
+        status: params.managedRecoveryTarget?.hit ? "managed_recovery_target_ready" : "managed_recovery_rsi_ignored",
         strategy: this.strategy.id
       }
     }));
@@ -1336,7 +1346,8 @@ class TradingBot extends BaseBot {
         performance: snapshot.performance,
         riskProfile: this.config.riskProfile,
         riskOverrides: this.config.riskOverrides || null,
-        state: snapshot.signalState
+        state: snapshot.signalState,
+        volatilityRisk: snapshot.contextSnapshot?.features?.volatilityRisk
       });
       if (preparedOpenAttempt.kind === "skipped") {
         const sizingEconomics = this.estimateEntryEconomics({
@@ -1526,15 +1537,25 @@ class TradingBot extends BaseBot {
   }
 
   handleExitTick(snapshot: TradingTickDecisionContext) {
-    const managedRecoveryArchitectState = isManagedRecoveryPosition(snapshot.position)
+    if (!snapshot.position) {
+      return;
+    }
+    const positionSnapshot = this.clonePositionSnapshot(snapshot.position);
+    const managedRecoveryTarget = isManagedRecoveryPosition(positionSnapshot)
+      ? this.resolveManagedRecoveryTarget({
+          context: snapshot.context,
+          position: positionSnapshot
+        })
+      : snapshot.managedRecoveryTarget;
+    const managedRecoveryArchitectState = isManagedRecoveryPosition(positionSnapshot)
       ? this.evaluateArchitectStateForTick(snapshot, snapshot.tick.timestamp)
       : null;
 
     const exitPlan = this.shouldExitPosition({
       architectState: managedRecoveryArchitectState,
       decision: snapshot.decision,
-      managedRecoveryTarget: snapshot.managedRecoveryTarget,
-      position: snapshot.position,
+      managedRecoveryTarget,
+      position: positionSnapshot,
       signalState: snapshot.signalState,
       tick: snapshot.tick
     });
@@ -1542,6 +1563,7 @@ class TradingBot extends BaseBot {
     if (this.handleDeferredManagedRecoveryExit({
       architectState: managedRecoveryArchitectState,
       exitPlan,
+      positionSnapshot,
       snapshot
     })) {
       return;
@@ -1550,6 +1572,8 @@ class TradingBot extends BaseBot {
     if (this.handlePendingManagedRecoveryExit({
       architectState: managedRecoveryArchitectState,
       exitPlan,
+      managedRecoveryTarget,
+      positionSnapshot,
       snapshot
     })) {
       return;
@@ -1560,14 +1584,14 @@ class TradingBot extends BaseBot {
     }
 
     const exitingTransition = exitPlan.lifecycleEvent
-      ? beginPositionExit(snapshot.position, {
+      ? beginPositionExit(positionSnapshot, {
           event: exitPlan.lifecycleEvent,
           timestamp: snapshot.tick.timestamp
         })
       : null;
     const exitingPosition = exitingTransition?.allowed
       ? exitingTransition.position
-      : snapshot.position;
+      : positionSnapshot;
 
     const closedTrade = this.deps.executionEngine.closePosition({
       botId: this.config.id,
@@ -1578,7 +1602,27 @@ class TradingBot extends BaseBot {
       timestamp: snapshot.tick.timestamp
     });
 
-    if (!closedTrade) return;
+    if (!closedTrade) {
+      this.deps.logger.bot(this.config, "RISK_CHANGE", {
+        status: "position_close_rejected",
+        reason: "close_position_returned_null",
+        botId: this.config.id,
+        symbol: this.config.symbol,
+        strategyId: this.strategy.id,
+        lifecycleEvent: exitPlan.lifecycleEvent || null,
+        lifecycleState: "EXITING",
+        exitMechanism: exitPlan.exitMechanism || null,
+        exitReasons: exitPlan.reason,
+        invalidationLevel: exitPlan.invalidationLevel || null,
+        invalidationMode: exitPlan.invalidationMode || null,
+        positionId: positionSnapshot.id,
+        positionLifecycleMode: positionSnapshot.lifecycleMode || null,
+        positionLifecycleState: positionSnapshot.lifecycleState || null,
+        signalTimestamp: snapshot.tick.timestamp,
+        tickPrice: snapshot.tick.price
+      });
+      return;
+    }
     const closeClassification = this.classifyClosedTrade(closedTrade);
     const closedLifecycleEvent = resolveLifecycleEventFromReasons(
       Array.isArray(closedTrade.exitReason) ? closedTrade.exitReason : [],
@@ -1601,7 +1645,7 @@ class TradingBot extends BaseBot {
       invalidationLevel: exitPlan.invalidationLevel || null,
       invalidationMode: exitPlan.invalidationMode || null,
       lifecycleEvent: closedTrade.lifecycleEvent,
-      managedRecoveryTarget: snapshot.managedRecoveryTarget,
+      managedRecoveryTarget,
       position: exitingPosition,
       protectionMode: exitPlan.protectionMode || null,
       signalTimestamp: snapshot.tick.timestamp,
@@ -1617,7 +1661,7 @@ class TradingBot extends BaseBot {
       feeRate: Number(this.deps.executionEngine?.feeRate || 0),
       lifecycleStatus: snapshot.signalState.status,
       nextPerformance,
-      positionWasManagedRecovery: isManagedRecoveryPosition(snapshot.position),
+      positionWasManagedRecovery: isManagedRecoveryPosition(positionSnapshot),
       riskProfile: this.config.riskProfile,
       riskOverrides: this.config.riskOverrides || null,
       signalState: snapshot.signalState,

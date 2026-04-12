@@ -19,6 +19,8 @@ Do not do these regressions:
 - Do not put short-horizon target-distance gating into individual signal formulas.
 - Do not put MTF interpretation, raw timeframe-label mapping, or strategy-specific MTF branching into `TradingBot`.
 - Do not let `mtfParamResolver` interpret raw market timeframe labels such as `1m`, `5m`, `15m`, or `1h`; it consumes only internal horizon frame ids.
+- Do not use strategy ids or symbol names as hidden switches in shared economics code. Use explicit strategy/config policy surfaces.
+- Do not move sizing or post-trade cooldown policy into `TradingBot`; `RiskManager` owns that behavior.
 
 Expected ownership:
 
@@ -35,8 +37,9 @@ Current ownership notes:
 - `mtfContextAggregator` owns MTF aggregation and dominant internal horizon-frame diagnostics.
 - MTF raw-to-internal frame mapping belongs in MTF frame configuration / aggregation plumbing.
 - `mtfParamResolver` owns pure MTF-driven RSI entry hint/cap resolution only.
-- `entryEconomicsEstimator` owns fee-aware edge estimates, resolved cap computation, and target-distance diagnostics.
+- `entryEconomicsEstimator` owns fee-aware edge estimates, strategy economics policy interpretation, capture-gap cap resolution, resolved cap computation, and target-distance diagnostics.
 - `entryCoordinator` owns final entry gates, including `target_distance_exceeds_short_horizon`.
+- `RiskManager` owns position sizing penalties, drawdown/loss gating, loss cooldowns, post-win cooldown nuance, and trade constraint baselines.
 - `exitDecisionCoordinator` owns managed-recovery invalidation confirmation/grace policy.
 - `managedRecoveryExitResolver` owns managed-recovery exit precedence.
 - `SystemServer` and `public/compact.*` own compact monitor presentation only.

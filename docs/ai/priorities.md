@@ -19,6 +19,11 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: add MTF-aware RSI target-distance cap resolution with baseline-identical disabled behavior.
 - Completed: expose MTF publish and RSI entry cap-resolution diagnostics in full and compact telemetry.
 - Completed: add startup-only historical preload so ContextService/MTF/Architect can warm start from recent store history.
+- Completed: remove strategy-name branching from shared entry economics by moving RSI economics behavior behind explicit strategy policy.
+- Completed: make the shared capture-gap cap configurable through strategy economics policy while preserving the `0.03` baseline.
+- Completed: add conservative volatility-aware sizing and win-specific reentry cooldown controls in `RiskManager`.
+- Completed: harden the exit tick path with defensive position snapshots and explicit close-failure telemetry.
+- Completed: fix Architect switch-delta incumbent score comparison basis.
 - Continue: reduce architect/latch/publish cadence rigidity where evidence shows churn remains.
 
 ## P2
@@ -42,5 +47,7 @@ Priority notes:
 - MTF work should remain behind `mtf.enabled` / `MTF_ENABLED`; raw timeframe mapping belongs in MTF frame config, not in downstream strategy/economics roles.
 - Historical preload remains a bootstrap/store/history concern. It must not move into `TradingBot`, downstream strategy roles, or the hot tick path.
 - RSI target-distance permissiveness may only come from coherent MTF medium/long internal frames and must remain observable in telemetry.
+- Capture-gap cap permissiveness must be explicit via strategy/economics policy; the default remains `0.03`.
+- Volatility-aware sizing may only reduce or preserve position size, and post-loss cooldown behavior must remain stronger than post-win cooldown behavior.
 - Avoid broad rewrites while the runtime is under active refactor.
 - Treat short support as an audit-and-prep area until entry/exit/risk/UI semantics are explicitly upgraded end-to-end.

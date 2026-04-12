@@ -15,6 +15,8 @@ Test expectations by change type:
 - historical preload changes: update `tests/historicalBootstrapService.test.js`, `tests/orchestrator.test.js`, and stream/store/MTF readiness tests when behavior is observable
 - market stream teardown/fallback changes: update `tests/marketStream.test.js` and verify `npm test` exits without late runtime logs after `PASS all`
 - MTF parameter resolution: update `tests/mtfParamResolver.test.js`, `tests/entryEconomicsEstimator.test.js`, and tick-path coverage only when runtime behavior is observable
+- Strategy economics policy changes: update `tests/entryEconomicsEstimator.test.js`; include baseline-missing-config, explicit-config, invalid-config fallback, and unrelated-strategy cases
+- Risk sizing/cooldown policy changes: update `tests/riskManager.test.js`; include disabled/missing baseline cases and tests proving loss cooldown behavior is unchanged
 - telemetry-only MTF changes: update `tests/tradingBotTelemetry.test.js` and `tests/systemServer.test.js` before broad runtime tests
 
 Behavior-sensitive areas needing lock coverage:
@@ -26,6 +28,8 @@ Behavior-sensitive areas needing lock coverage:
 - post-loss latch semantics
 - entry gating and open attempt outcomes
 - short-horizon target-distance gating and RSI edge-floor behavior
+- capture-gap cap baseline and explicit policy/config override behavior
+- conservative volatility-aware sizing and win-specific reentry cooldown behavior
 - MTF publish diagnostics and RSI MTF target-distance cap resolution diagnostics
 - historical preload disabled/success/optional-degraded/required-fatal startup behavior
 - market stream REST fallback lifecycle and teardown idempotency

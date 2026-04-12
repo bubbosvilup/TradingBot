@@ -69,6 +69,7 @@ export interface OpenAttemptCoordinatorInstance {
     riskProfile: RiskProfile;
     riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
+    volatilityRisk?: unknown;
   }): PreparedOpenAttempt;
 }
 
@@ -89,6 +90,7 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
     riskProfile: RiskProfile;
     riskOverrides?: RiskOverrides | null;
     state: BotRuntimeState;
+    volatilityRisk?: unknown;
   }): PreparedOpenAttempt {
     const sizing = this.riskManager.calculatePositionSize({
       balanceUsdt: params.balanceUsdt,
@@ -97,7 +99,8 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
       performance: params.performance,
       riskProfile: params.riskProfile,
       riskOverrides: params.riskOverrides,
-      state: params.state
+      state: params.state,
+      volatilityRisk: params.volatilityRisk
     });
 
     if (sizing.quantity <= 0) {

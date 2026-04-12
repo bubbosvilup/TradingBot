@@ -25,13 +25,17 @@ Important repo facts:
 - `src/core/orchestrator.ts` can opt into opening the compact UI at startup through env flags, but this must remain explicit and non-essential to trading behavior.
 - `src/data/bots.config.json` now carries experiment label `quarantined_allow_small_loss_floor05`.
 - `reports/experiments/` still contains historical outputs for the quarantined label.
-- `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`.
+- `src/core/architectService.ts` switch-delta publishing now compares challenger score against the true published incumbent score, not the candidate assessment's incumbent-regime score.
+- `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`, but the close path now takes a defensive position snapshot for planning/lifecycle/telemetry shaping and emits explicit `position_close_rejected` risk telemetry when `closePosition(...)` returns null.
 - `src/strategies/rsiReversion/config.json` now carries conservative short-horizon entry economics: `minExpectedNetEdgePct: 0.0015` and `maxTargetDistancePctForShortHorizon: 0.01`.
+- `src/strategies/rsiReversion/strategy.ts` declares explicit entry economics capabilities through `entryEconomicsPolicy`; shared economics code must use that policy surface instead of strategy-name branching.
 - MTF is enabled in `src/data/bots.config.json` and can be overridden with `MTF_ENABLED=false` / `MTF_ENABLED=true`; when absent or disabled, RSI entry behavior must remain baseline-identical.
 - Historical preload is enabled by default in optional mode through `historicalPreload`; `HISTORICAL_PRELOAD_REQUIRED=true` makes preload failure abort startup before live observation begins.
 - `src/types/mtf.ts` defines internal horizon frame ids (`short`, `medium`, `long`). Raw timeframe labels stay mapped to these ids in MTF frame config / aggregation plumbing, not in downstream policy resolvers.
 - `src/core/architectService.ts` can attach optional MTF publish diagnostics to `ArchitectAssessment.mtf`, including `mtfDominantFrame`, agreement, instability, meta regime, and sufficient-frame status.
 - `src/roles/mtfParamResolver.ts` is the pure RSI MTF parameter resolver. It keeps RSI thresholds at baseline, floors the RSI min edge at `0.0015`, and only widens the target-distance cap under coherent range MTF: `short` = baseline, `medium` = `1.5x`, `long` = `2.0x`.
+- `src/roles/entryEconomicsEstimator.ts` owns the configurable capture-gap cap through strategy economics policy. The baseline default remains `0.03`, and explicit config such as `captureGapCapPct` must be policy/config driven, not symbol-name driven.
+- `src/roles/riskManager.ts` owns conservative volatility-aware sizing and post-trade cooldown nuance. Volatility sizing may only reduce/preserve size; missing or disabled volatility sizing remains baseline-identical. Loss cooldown semantics remain stronger than post-win reentry cooldown.
 - `src/roles/tradingBotTelemetry.ts` now exposes both published MTF diagnostics and entry-side RSI MTF cap-resolution diagnostics in full entry logs and compact `SETUP` / `BLOCK_CHANGE` metadata.
 - `src/core/systemServer.ts` preserves published Architect `mtf` diagnostics through `/api/bots`; it does not interpret or reshape MTF trading policy.
 
@@ -45,7 +49,8 @@ Boundary map:
 - `TradingBot`: per-tick orchestration, coordination, execution handoff
 - `entryCoordinator`, `openAttemptCoordinator`, `entryOutcomeCoordinator`: entry-side flow ownership, including short-horizon target-distance gating
 - `mtfParamResolver`: pure MTF-driven RSI entry hint/cap resolution only; no sizing, cooldown, hold, or gate ownership
-- `entryEconomicsEstimator`: fee-aware edge estimate plus deterministic short-horizon target-distance diagnostics and resolved cap computation
+- `entryEconomicsEstimator`: fee-aware edge estimate plus deterministic capture-gap, short-horizon target-distance diagnostics, and resolved cap computation from explicit strategy economics policy
+- `RiskManager`: drawdown gates, loss-streak policy, volatility-aware sizing penalties, and post-close cooldown timing
 - `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, `recoveryTargetResolver`: exit planning and shaping; managed-recovery invalidation grace and target-vs-invalidation precedence live here
 - `postLossArchitectLatch`: post-loss re-entry defense
 - `tradingBotTelemetry`: operator-facing metadata shaping, including full/compact MTF publish and entry cap-resolution diagnostics
@@ -62,6 +67,7 @@ Hotspots to treat carefully:
 - `src/roles/architectCoordinator.ts`
 - `src/roles/entryCoordinator.ts`
 - `src/roles/entryEconomicsEstimator.ts`
+- `src/roles/riskManager.ts`
 - `src/roles/mtfParamResolver.ts`
 - `src/roles/mtfContextAggregator.ts`
 - `src/core/mtfContextService.ts`

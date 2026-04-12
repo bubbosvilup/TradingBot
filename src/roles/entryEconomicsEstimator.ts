@@ -11,7 +11,10 @@ const {
 } = require("../utils/tradeSide.ts");
 const { resolveRsiReversionMtfParams } = require("./mtfParamResolver.ts");
 
+const DEFAULT_CAPTURE_GAP_CAP_PCT = 0.03;
+
 function deriveEntryEdgeInputs(params: {
+  captureGapCapPct?: unknown;
   context?: Partial<MarketContext> | null;
   price: number;
   side?: TradeDirection | null;
@@ -42,8 +45,12 @@ function deriveEntryEdgeInputs(params: {
   const exitTarget = Number.isFinite(emaSlow)
     ? applyDirectionalOffset(emaSlow, 0.015, side)
     : latestPrice;
+  const configuredCaptureGapCapPct = Number(params.captureGapCapPct);
+  const captureGapCapPct = Number.isFinite(configuredCaptureGapCapPct) && configuredCaptureGapCapPct >= 0
+    ? configuredCaptureGapCapPct
+    : DEFAULT_CAPTURE_GAP_CAP_PCT;
   const captureGapPct = Number.isFinite(emaSlow)
-    ? Math.min(0.03, calculateTargetDistancePct({ latestPrice, targetPrice: exitTarget, side }))
+    ? Math.min(captureGapCapPct, calculateTargetDistancePct({ latestPrice, targetPrice: exitTarget, side }))
     : 0;
 
   return {
@@ -89,6 +96,7 @@ function estimateEntryEconomics(params: {
   mtfDiagnostics?: MtfPublishDiagnostics | null;
 }): EntryEconomicsEstimate {
   const inputs = deriveEntryEdgeInputs({
+    captureGapCapPct: params.strategy?.entryEconomicsPolicy?.captureGapCapPct ?? params.strategy?.config?.captureGapCapPct,
     context: params.context,
     price: params.price,
     side: params.side
@@ -101,21 +109,21 @@ function estimateEntryEconomics(params: {
   const requiredEdgePct = estimatedEntryFeePct + estimatedExitFeePct + params.estimatedSlippagePct + params.profitSafetyBufferPct;
   const expectedNetEdgePct = expectedGrossEdgePct - requiredEdgePct;
   const configuredMinExpectedNetEdgePct = Number(params.strategy?.config?.minExpectedNetEdgePct);
-  const strategyMinExpectedNetEdgePctFloor = params.strategy?.id === "rsiReversion"
-    ? 0.0015
-    : 0;
+  const strategyMinExpectedNetEdgePctFloor = Number(params.strategy?.entryEconomicsPolicy?.minExpectedNetEdgePctFloor);
   const minExpectedNetEdgePct = Math.max(
     Number.isFinite(configuredMinExpectedNetEdgePct)
       ? configuredMinExpectedNetEdgePct
       : params.defaultMinExpectedNetEdgePct,
-    strategyMinExpectedNetEdgePctFloor,
+    Number.isFinite(strategyMinExpectedNetEdgePctFloor)
+      ? strategyMinExpectedNetEdgePctFloor
+      : 0,
     0
   );
   const configuredMaxTargetDistancePctForShortHorizon = Number(params.strategy?.config?.maxTargetDistancePctForShortHorizon);
   const baseMaxTargetDistancePctForShortHorizon = Number.isFinite(configuredMaxTargetDistancePctForShortHorizon)
     ? Math.max(configuredMaxTargetDistancePctForShortHorizon, 0)
     : null;
-  const mtfParamResolution = params.strategy?.id === "rsiReversion"
+  const mtfParamResolution = params.strategy?.entryEconomicsPolicy?.mtfParamPolicy === "range_reversion_target_distance_cap"
     ? resolveRsiReversionMtfParams({
         baseBuyRsi: params.strategy?.config?.buyRsi,
         baseSellRsi: params.strategy?.config?.sellRsi,
@@ -153,6 +161,7 @@ function estimateEntryEconomics(params: {
 }
 
 module.exports = {
+  DEFAULT_CAPTURE_GAP_CAP_PCT,
   deriveEntryEdgeInputs,
   estimateEntryEconomics
 };

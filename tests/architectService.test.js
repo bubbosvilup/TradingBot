@@ -364,6 +364,71 @@ function runArchitectServiceTests() {
     throw new Error("held-cycle log timestamp semantics are incorrect");
   }
 
+  const incumbentBasisStore = new StateStore();
+  const incumbentBasisLogs = [];
+  const incumbentBasisService = new ArchitectService({
+    botArchitect: {
+      assess() {
+        return null;
+      }
+    },
+    logger: {
+      info(event, metadata) {
+        incumbentBasisLogs.push({ event, metadata });
+      }
+    },
+    marketStream: {
+      subscribe() {
+        return () => {};
+      }
+    },
+    publishIntervalMs: 30_000,
+    requiredConfirmations: 2,
+    store: incumbentBasisStore,
+    switchDelta: 0.12
+  });
+  const publishedIncumbent = createAssessment(symbol, "trend", "trend_following", {
+    range: 0.22,
+    trend: 0.7,
+    unclear: 0.11,
+    volatile: 0.14
+  }, 30_000);
+  incumbentBasisStore.setArchitectPublishedAssessment(symbol, publishedIncumbent);
+  incumbentBasisStore.setArchitectPublisherState(symbol, {
+    challengerCount: 0,
+    challengerRegime: null,
+    challengerRequired: 2,
+    hysteresisActive: false,
+    lastObservedAt: 30_000,
+    lastPublishedAt: 30_000,
+    lastPublishedRegime: "trend",
+    lastRegimeSwitchAt: null,
+    lastRegimeSwitchFrom: null,
+    lastRegimeSwitchTo: null,
+    nextPublishAt: 60_000,
+    publishIntervalMs: 30_000,
+    ready: true,
+    symbol,
+    warmupStartedAt: 0
+  });
+  incumbentBasisService.publish(symbol, createAssessment(symbol, "range", "mean_reversion", {
+    range: 0.62,
+    trend: 0.45,
+    unclear: 0.12,
+    volatile: 0.16
+  }, 60_000), 60_000, createContext(symbol, 60_000, true, "range-small"), null);
+  const incumbentBasisPublished = incumbentBasisStore.getArchitectPublishedAssessment(symbol);
+  if (!incumbentBasisPublished || incumbentBasisPublished.marketRegime !== "trend" || incumbentBasisPublished.updatedAt !== 30_000) {
+    throw new Error(`switchDelta should compare against the published incumbent score, not the candidate's incumbent-regime score: ${JSON.stringify(incumbentBasisPublished)}`);
+  }
+  const incumbentBasisBlocked = incumbentBasisLogs.find((entry) => entry.event === "architect_switch_blocked");
+  if (!incumbentBasisBlocked || incumbentBasisBlocked.metadata.incumbentScore !== 0.7 || incumbentBasisBlocked.metadata.candidateScore !== 0.62) {
+    throw new Error(`blocked switch diagnostics should expose the true published incumbent score: ${JSON.stringify(incumbentBasisBlocked)}`);
+  }
+  if (incumbentBasisLogs.find((entry) => entry.event === "architect_changed")) {
+    throw new Error("switchDelta should not publish a weaker challenger by comparing against the candidate's lower trend score");
+  }
+
   store.setContextSnapshot(symbol, createContext(symbol, 90_000, true, "range-small"));
   service.observe(symbol, 90_000);
   published = store.getArchitectPublishedAssessment(symbol);

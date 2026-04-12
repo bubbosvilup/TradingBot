@@ -12,6 +12,9 @@ Current runtime posture:
 - MTF context is optional and behind `mtf.enabled`; current default config enables it, and `MTF_ENABLED=false` disables it at runtime
 - historical preload is optional by default in config; required mode must abort startup on preload failure before market stream/context/Architect/bots start
 - `TradingBot` stays passive for MTF and may only pass published diagnostics through generic context/economics paths
+- `TradingBot` exit handling uses a defensive position snapshot for planning/lifecycle/telemetry, while execution still closes through `ExecutionEngine` and `StateStore`
+- shared entry economics uses explicit strategy policy for RSI economics, MTF cap opt-in, and capture-gap cap configuration; the baseline capture-gap cap remains `0.03`
+- `RiskManager` owns volatility-aware sizing and post-win cooldown controls; volatility sizing cannot increase size and loss cooldown behavior must remain unchanged
 - manual resume for bot-level max-drawdown pauses is explicit through `POST /api/bots/:botId/resume` and must not bypass an active portfolio kill switch
 
 Safe-change rules:
@@ -26,6 +29,9 @@ Safe-change rules:
 - preserve entry blocking during Architect challenger hysteresis
 - preserve baseline-identical RSI entry behavior when MTF diagnostics are absent or disabled
 - keep MTF raw timeframe mapping in frame config / aggregation plumbing, not in `TradingBot` or downstream strategy logic
+- preserve baseline capture-gap cap behavior when `captureGapCapPct` is absent or invalid
+- preserve baseline sizing when volatility sizing is disabled or `volatilityRisk` is missing/invalid
+- preserve stronger post-loss cooldown semantics when adding post-win cooldown nuance
 
 P0-specific guidance:
 

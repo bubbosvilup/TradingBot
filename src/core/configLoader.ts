@@ -13,7 +13,7 @@ const VALID_MARKET_PROVIDERS = new Set(["binance"]);
 const VALID_MARKET_STREAM_TYPES = new Set(["trade", "aggTrade"]);
 const VALID_MTF_HORIZON_FRAMES = new Set(["short", "medium", "long"]);
 const VALID_MTF_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
-const VALID_RISK_OVERRIDE_FIELDS = new Set(["positionPct", "cooldownMs", "emergencyStopPct", "postExitReentryGuardMs", "exitConfirmationTicks", "minHoldMs"]);
+const VALID_RISK_OVERRIDE_FIELDS = new Set(["positionPct", "cooldownMs", "emergencyStopPct", "postExitReentryGuardMs", "exitConfirmationTicks", "minHoldMs", "meaningfulWinUsdt", "winReentryCooldownMs", "volatilitySizingEnabled", "volatilitySizingMultiplier", "volatilitySizingMinPenalty"]);
 const VALID_PORTFOLIO_KILL_SWITCH_MODES = new Set(["block_entries_only"]);
 
 class ConfigLoader {
@@ -86,6 +86,12 @@ class ConfigLoader {
           if (!VALID_RISK_OVERRIDE_FIELDS.has(key)) {
             throw new Error(`${label} has invalid riskOverrides field "${key}"`);
           }
+          if (key === "volatilitySizingEnabled") {
+            if (typeof value !== "boolean") {
+              throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
+            }
+            continue;
+          }
           const numericValue = Number(value);
           if (!Number.isFinite(numericValue)) {
             throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
@@ -93,7 +99,16 @@ class ConfigLoader {
           if ((key === "positionPct" || key === "emergencyStopPct") && !(numericValue > 0)) {
             throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
           }
-          if ((key === "cooldownMs" || key === "postExitReentryGuardMs" || key === "exitConfirmationTicks" || key === "minHoldMs") && !(numericValue >= 1)) {
+          if ((key === "cooldownMs" || key === "postExitReentryGuardMs" || key === "exitConfirmationTicks" || key === "minHoldMs" || key === "winReentryCooldownMs") && !(numericValue >= 1)) {
+            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
+          }
+          if (key === "meaningfulWinUsdt" && !(numericValue >= 0)) {
+            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
+          }
+          if (key === "volatilitySizingMultiplier" && !(numericValue >= 0)) {
+            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
+          }
+          if (key === "volatilitySizingMinPenalty" && !(numericValue > 0 && numericValue <= 1)) {
             throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
           }
         }

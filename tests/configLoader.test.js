@@ -42,6 +42,13 @@ function runConfigLoaderTests() {
         allowedStrategies: ["emaCross", "rsiReversion"],
         enabled: true,
         id: "bot_a",
+        riskOverrides: {
+          meaningfulWinUsdt: 0.1,
+          volatilitySizingEnabled: true,
+          volatilitySizingMinPenalty: 0.5,
+          volatilitySizingMultiplier: 1,
+          winReentryCooldownMs: 5_000
+        },
         riskProfile: "medium",
         strategy: "emaCross",
         symbol: "BTC/USDT"
@@ -81,6 +88,9 @@ function runConfigLoaderTests() {
     const loaded = new ConfigLoader(validRootDir).loadBotsConfig();
     if (!Array.isArray(loaded.bots) || loaded.bots.length !== 1 || loaded.bots[0].strategy !== "emaCross") {
       throw new Error(`valid config should still load normally: ${JSON.stringify(loaded)}`);
+    }
+    if (loaded.bots[0].riskOverrides?.volatilitySizingEnabled !== true || loaded.bots[0].riskOverrides?.volatilitySizingMinPenalty !== 0.5 || loaded.bots[0].riskOverrides?.winReentryCooldownMs !== 5_000) {
+      throw new Error(`valid risk override extensions should load normally: ${JSON.stringify(loaded.bots[0].riskOverrides)}`);
     }
     if (loaded.mtf?.enabled !== true || loaded.mtf?.frames?.[2]?.horizonFrame !== "long") {
       throw new Error(`valid MTF config should load normally: ${JSON.stringify(loaded.mtf)}`);
@@ -259,6 +269,70 @@ function runConfigLoaderTests() {
       }
     ]
   }, "invalid riskOverrides.positionPct");
+
+  expectConfigError({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_volatility_sizing",
+        riskOverrides: {
+          volatilitySizingEnabled: "yes"
+        },
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid riskOverrides.volatilitySizingEnabled");
+
+  expectConfigError({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_volatility_sizing_floor",
+        riskOverrides: {
+          volatilitySizingMinPenalty: 1.2
+        },
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid riskOverrides.volatilitySizingMinPenalty");
+
+  expectConfigError({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_win_cooldown",
+        riskOverrides: {
+          winReentryCooldownMs: 0
+        },
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid riskOverrides.winReentryCooldownMs");
+
+  expectConfigError({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_meaningful_win",
+        riskOverrides: {
+          meaningfulWinUsdt: -0.01
+        },
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid riskOverrides.meaningfulWinUsdt");
 
   expectConfigError({
     bots: [
