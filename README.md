@@ -15,6 +15,7 @@ Il progetto mantiene nel repository alcune fondamenta per lavori futuri come liv
 | Backtest | Adapter moderno sopra il legacy, non ancora parita completa |
 | Short support | Preparazione avviata, non abilitato |
 | MTF | Infrastruttura e diagnostica presenti, abilitato nella config default e spegnibile via env |
+| Historical preload | Preload startup-only da Binance/ccxt REST, opzionale e configurabile |
 
 Nota importante:
 - `execution-mode=live` fallisce esplicitamente in bootstrap.
@@ -24,6 +25,8 @@ Nota importante:
 ## Flusso architetturale
 
 ```text
+startup historical preload
+  -> StateStore
 Binance market data
   -> streams
   -> StateStore
@@ -37,6 +40,7 @@ Binance market data
 
 Responsabilita chiave:
 - `StateStore` e la fonte unica di verita in memoria.
+- `HistoricalBootstrapService` e un bootstrap startup-only: usa lo stesso provider REST di `MarketStream`, normalizza history recente e la inserisce nello store con i path esistenti.
 - `ContextService` costruisce il contesto rolling per simbolo.
 - `ArchitectService` pubblica regime e family consigliata.
 - `MtfContextService` e `mtfContextAggregator` costruiscono diagnostica multi-timeframe opzionale con frame interni `short`, `medium`, `long`.
@@ -99,6 +103,7 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - refresh ristretto ai simboli stale
   - skip dei simboli ancora freschi
   - batch `fetchTickers(...)` quando utile
+- Il teardown di `MarketStream` ora invalida snapshot REST fallback in-flight e impedisce che close WS durante shutdown riattivi fallback, evitando log tardivi dopo la fine dei test.
 
 ### UI e serving
 
@@ -257,6 +262,26 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - `mtfDominantFrame`
 - `/api/bots` preserva `architectPublished.mtf` come diagnostica server-facing.
 
+### Historical startup preload
+
+- Aggiunto `src/core/historicalBootstrapService.ts` come fase di bootstrap startup-only.
+- La sequenza startup rilevante e:
+  - preload storico nello `StateStore`
+  - `marketStream.start(...)`
+  - `contextService.start(...)`
+  - `architectService.start(...)`
+  - `botManager.startAll()`
+- Il preload usa lo stesso exchange/data source gia configurato per `MarketStream` (`binance` via ccxt REST), senza provider esterni.
+- Le candele storiche vengono normalizzate e inserite nello store con i path esistenti:
+  - `store.updatePrice(...)` per la serie price/tick derivata dal timeframe prezzo
+  - `store.updateKline(...)` per la history kline
+- Lo store resta la fonte unica di verita: `ContextService` e `MtfContextService` beneficiano del preload leggendo la history esistente.
+- La copertura minima deriva da `ContextService.maxWindowMs`, `architectWarmupMs` e largest MTF frame `windowMs`.
+- Failure policy:
+  - `required=false`: log degradato e continua live-only warmup
+  - `required=true`: abort startup prima di avviare market stream/context/Architect/bot
+- Questo non cambia threshold, cadence, cooldown, fees, MTF policy, entry/exit o execution routing.
+
 ### Verifica
 
 - Aggiornati test mirati per:
@@ -266,6 +291,9 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - tick-path baseline vs coherent MTF widening
   - telemetry full/compact MTF
   - pass-through `/api/bots` di `architectPublished.mtf`
+  - preload storico disabled/success/optional failure/required failure
+  - readiness iniziale MTF tramite history seedata nello store
+  - teardown `MarketStream` senza log REST fallback tardivi dopo `PASS all`
 - Passano:
   - `npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false`
   - `npm test`
@@ -292,6 +320,15 @@ File: `src/data/bots.config.json`
     "enabled": false,
     "label": "quarantined_allow_small_loss_floor05",
     "summaryIntervalMs": 60000
+  },
+  "historicalPreload": {
+    "enabled": true,
+    "required": false,
+    "priceTimeframe": "1m",
+    "timeframes": ["1m", "5m", "15m", "1h"],
+    "maxHorizonMs": 14400000,
+    "timeoutMs": 15000,
+    "limit": 600
   }
 }
 ```
@@ -315,10 +352,24 @@ Nota MTF:
 - `MTF_ENABLED=false` spegne MTF a runtime; `MTF_ENABLED=true` lo forza acceso anche se il JSON viene spento
 - quando MTF e assente o disabilitato, il comportamento RSI resta baseline-identico
 
+Nota historical preload:
+- la config default corrente abilita `historicalPreload.enabled` in modalita opzionale (`required=false`)
+- env override supportati:
+  - `HISTORICAL_PRELOAD_ENABLED`
+  - `HISTORICAL_PRELOAD_REQUIRED`
+  - `HISTORICAL_PRELOAD_HORIZON_MS`
+  - `HISTORICAL_PRELOAD_MAX_HORIZON_MS`
+  - `HISTORICAL_PRELOAD_TIMEOUT_MS`
+  - `HISTORICAL_PRELOAD_TIMEFRAMES`
+  - `HISTORICAL_PRELOAD_PRICE_TIMEFRAME`
+  - `HISTORICAL_PRELOAD_LIMIT`
+- il preload resta bootstrap-only: non aggiunge fetch storici nel tick path.
+
 ## Cosa fa oggi
 
 - Avvia piu bot indipendenti in parallelo.
 - Riceve market data live da Binance Spot.
+- Prima dell'osservazione runtime, puo seedare history recente via preload storico opzionale.
 - Mantiene in memoria prezzi, posizioni, eventi, performance, contesto e stato Architect.
 - Classifica il regime e pubblica una family consigliata.
 - Se abilitato, calcola diagnostica MTF e la pubblica dentro `ArchitectAssessment.mtf`.

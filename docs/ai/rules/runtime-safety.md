@@ -5,10 +5,12 @@ Current runtime posture:
 - market data path is currently hard-wired toward live input in `src/core/orchestrator.ts`
 - execution is still paper-only and must remain so
 - `StateStore` is the runtime truth source
+- startup historical preload, when enabled, seeds `StateStore` before live observation starts and remains bootstrap-only
 - the dashboard reads server/store state; it should not become a side channel for business logic
 - compact UI is served as a static observability surface; it must stay separate from operator controls and trading decisions
 - managed-recovery invalidation is now intentionally stricter than a single early `family_mismatch`
 - MTF context is optional and behind `mtf.enabled`; current default config enables it, and `MTF_ENABLED=false` disables it at runtime
+- historical preload is optional by default in config; required mode must abort startup on preload failure before market stream/context/Architect/bots start
 - `TradingBot` stays passive for MTF and may only pass published diagnostics through generic context/economics paths
 - manual resume for bot-level max-drawdown pauses is explicit through `POST /api/bots/:botId/resume` and must not bypass an active portfolio kill switch
 
@@ -17,6 +19,8 @@ Safe-change rules:
 - isolate runtime mode changes from strategy logic changes
 - isolate dashboard fixes from risk and execution changes
 - keep config changes explicit; avoid hidden fallback behavior
+- keep historical preload out of `TradingBot`, downstream strategy roles, and per-tick paths
+- seed preload data through existing store update paths where possible; do not create shadow histories
 - preserve startup failures that prevent unsupported live execution
 - preserve protective-stop priority when changing invalidation or recovery ordering
 - preserve entry blocking during Architect challenger hysteresis
@@ -26,6 +30,7 @@ Safe-change rules:
 P0-specific guidance:
 
 - If removing or segregating live-path assumptions, keep the result obvious in config and startup behavior.
+- If changing historical preload, preserve the source boundary: same exchange/data source as `MarketStream`, bounded coverage, explicit degraded/fatal diagnostics.
 - If changing managed recovery, define exact precedence versus target-hit, invalidation, timeout, and protective stop flows.
 - Current managed-recovery precedence is: protective stop, timeout, confirmed target, invalidation.
 - Current non-protective regime invalidation must respect the post-entry grace/confirmation policy.

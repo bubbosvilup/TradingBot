@@ -20,6 +20,7 @@ Preserve behavior unless the task explicitly asks for semantic changes.
 
 ## Current role boundaries
 - `Context*` services: produce market/context inputs
+- `HistoricalBootstrapService`: startup-only history preload into `StateStore`
 - `MtfContextService` / `mtfContextAggregator`: optional multi-timeframe context construction and internal horizon-frame diagnostics
 - `Architect*` services/coordinators: interpret/publish regime-family-usability state
 - `TradingBot`: top-level tick orchestration and execution coordination
@@ -43,11 +44,13 @@ Avoid putting these back into `TradingBot`:
 - MTF interpretation, raw timeframe mapping, or strategy-specific MTF branching
 - open-attempt outcome shaping
 - close-outcome shaping
+- startup history preload or REST history fetch policy
 
 ## Safe refactor rules
 - Prefer minimal, behavior-preserving extraction
 - Do not silently change thresholds, debounce rules, lifecycle semantics, or risk behavior
 - Reuse existing store/runtime state; do not invent parallel persistence unless required
+- Keep historical preload startup-only and store-centered; do not add per-tick history fetches
 - Keep operator-facing log names/fields stable unless explicitly asked to change them
 - Add tests for extracted roles when behavior is non-trivial
 - Run:

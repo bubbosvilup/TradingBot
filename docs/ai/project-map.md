@@ -17,6 +17,8 @@ Important repo facts:
 - `src/core/orchestrator.ts` currently rejects `execution-mode=live`; execution remains paper-only.
 - `src/core/stateStore.ts` now evicts stale symbol-scoped state conservatively while preserving registered symbols and open-position symbols.
 - `src/streams/marketStream.ts` now narrows REST fallback fetches to stale symbols and uses batch ticker fetches when possible.
+- `src/core/historicalBootstrapService.ts` owns startup-only historical preload. It uses the same `MarketStream`/ccxt Binance REST source, seeds `StateStore` through existing price/kline update paths, and runs before market stream/context/Architect/bots start.
+- `src/streams/marketStream.ts` guards shutdown so WS close during teardown cannot start REST fallback, and in-flight fallback snapshots are invalidated after stop; this keeps test teardown clean without muting production logs.
 - `src/engines/backtestEngine.ts` is now a modern adapter over legacy backtest modules, not a full replay runtime.
 - `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, and provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses.
 - `src/core/systemServer.ts` serves both the full dashboard and the dedicated compact monitor. The compact route is UI/API-facing only and must not become a control plane.
@@ -26,6 +28,7 @@ Important repo facts:
 - `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`.
 - `src/strategies/rsiReversion/config.json` now carries conservative short-horizon entry economics: `minExpectedNetEdgePct: 0.0015` and `maxTargetDistancePctForShortHorizon: 0.01`.
 - MTF is enabled in `src/data/bots.config.json` and can be overridden with `MTF_ENABLED=false` / `MTF_ENABLED=true`; when absent or disabled, RSI entry behavior must remain baseline-identical.
+- Historical preload is enabled by default in optional mode through `historicalPreload`; `HISTORICAL_PRELOAD_REQUIRED=true` makes preload failure abort startup before live observation begins.
 - `src/types/mtf.ts` defines internal horizon frame ids (`short`, `medium`, `long`). Raw timeframe labels stay mapped to these ids in MTF frame config / aggregation plumbing, not in downstream policy resolvers.
 - `src/core/architectService.ts` can attach optional MTF publish diagnostics to `ArchitectAssessment.mtf`, including `mtfDominantFrame`, agreement, instability, meta regime, and sufficient-frame status.
 - `src/roles/mtfParamResolver.ts` is the pure RSI MTF parameter resolver. It keeps RSI thresholds at baseline, floors the RSI min edge at `0.0015`, and only widens the target-distance cap under coherent range MTF: `short` = baseline, `medium` = `1.5x`, `long` = `2.0x`.
@@ -35,6 +38,7 @@ Important repo facts:
 Boundary map:
 
 - `ContextService` and `ContextBuilder`: rolling feature inputs only
+- `HistoricalBootstrapService`: startup-only historical preload into `StateStore`; no tick-path fetches and no trading policy ownership
 - `MtfContextService`: optional MTF frame snapshot construction behind `mtf.enabled`
 - `mtfContextAggregator`: MTF frame aggregation and dominant internal frame diagnostics
 - `ArchitectService`, `BotArchitect`, `architectCoordinator`: regime/family/usability publish and apply flow; `architectCoordinator` owns entry blocking for pending challenger hysteresis
