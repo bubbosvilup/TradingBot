@@ -227,7 +227,6 @@ export interface StrategySwitcherLike {
   evaluate(params: {
     architect: ArchitectAssessment | null;
     availableStrategies: string[];
-    botConfig: BotConfig;
     now: number;
     positionOpen?: boolean;
     state: BotRuntimeState;

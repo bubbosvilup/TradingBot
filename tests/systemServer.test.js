@@ -42,6 +42,21 @@ function createPublishedArchitect(now, overrides = {}) {
   };
 }
 
+function createResponseRecorder() {
+  return {
+    body: null,
+    headers: null,
+    statusCode: null,
+    end(payload) {
+      this.body = payload;
+    },
+    writeHead(statusCode, headers) {
+      this.statusCode = statusCode;
+      this.headers = headers;
+    }
+  };
+}
+
 function runSystemServerTests() {
   const now = Date.now();
   const store = new StateStore();
@@ -506,6 +521,104 @@ function runSystemServerTests() {
   if (pausedBots[0].portfolioKillSwitch.triggered !== false) {
     throw new Error(`bot payload should keep bot-level drawdown pause distinct from portfolio kill switch state: ${JSON.stringify(pausedBots[0])}`);
   }
+  const resumeLogs = [];
+  const resumeServer = new SystemServer({
+    architectWarmupMs: 20_000,
+    executionMode: "paper",
+    feedMode: "live",
+    logger: {
+      info(message, metadata) {
+        resumeLogs.push({ message, metadata });
+      }
+    },
+    port: 3107,
+    startedAt: now - 1000,
+    store: pausedStore
+  });
+  const resumeResponse = createResponseRecorder();
+  resumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3107" },
+    method: "POST",
+    url: "/api/bots/bot_paused/resume"
+  }, resumeResponse);
+  const resumedState = pausedStore.getBotState("bot_paused");
+  const resumePayload = JSON.parse(String(resumeResponse.body || "{}"));
+  if (resumeResponse.statusCode !== 200 || resumePayload.ok !== true || resumedState.status !== "running" || resumedState.pausedReason !== null) {
+    throw new Error(`manual resume API should explicitly resume drawdown-paused bots: ${JSON.stringify({ resumeResponse, resumePayload, resumedState })}`);
+  }
+  if (!resumeLogs.find((entry) => entry.message === "bot_manual_resume" && entry.metadata?.botId === "bot_paused")) {
+    throw new Error(`manual resume API should log the explicit operator action: ${JSON.stringify(resumeLogs)}`);
+  }
+  const repeatResumeResponse = createResponseRecorder();
+  resumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3107" },
+    method: "POST",
+    url: "/api/bots/bot_paused/resume"
+  }, repeatResumeResponse);
+  if (repeatResumeResponse.statusCode !== 409 || JSON.parse(String(repeatResumeResponse.body || "{}")).error !== "manual_resume_not_required") {
+    throw new Error(`manual resume API should reject bots that do not require manual resume: ${JSON.stringify(repeatResumeResponse)}`);
+  }
+
+  const killSwitchResumeStore = new StateStore();
+  killSwitchResumeStore.registerBot({
+    allowedStrategies: ["emaCross"],
+    enabled: true,
+    id: "bot_kill_paused",
+    riskProfile: "medium",
+    strategy: "emaCross",
+    symbol: "ADA/USDT"
+  });
+  killSwitchResumeStore.updateBotState("bot_kill_paused", {
+    availableBalanceUsdt: 80,
+    pausedReason: "max_drawdown_reached",
+    realizedPnl: -20,
+    status: "paused"
+  });
+  killSwitchResumeStore.setPortfolioKillSwitchConfig({
+    enabled: true,
+    maxDrawdownPct: 1,
+    mode: "block_entries_only"
+  });
+  killSwitchResumeStore.updatePrice({
+    price: 1,
+    receivedAt: now,
+    source: "mock",
+    symbol: "ADA/USDT",
+    timestamp: now
+  });
+  killSwitchResumeStore.setPerformance("bot_kill_paused", {
+    avgTradePnlUsdt: -20,
+    botId: "bot_kill_paused",
+    currentEquity: 80,
+    drawdown: 20,
+    grossLoss: 20,
+    grossProfit: 0,
+    losses: 1,
+    peakEquity: 100,
+    pnl: -20,
+    profitFactor: 0,
+    recentNetPnl: [-20],
+    tradesCount: 1,
+    winRate: 0,
+    wins: 0
+  });
+  const killSwitchResumeServer = new SystemServer({
+    executionMode: "paper",
+    feedMode: "live",
+    logger: { info() {} },
+    port: 3108,
+    startedAt: now - 1000,
+    store: killSwitchResumeStore
+  });
+  const killSwitchResumeResponse = createResponseRecorder();
+  killSwitchResumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3108" },
+    method: "POST",
+    url: "/api/bots/bot_kill_paused/resume"
+  }, killSwitchResumeResponse);
+  if (killSwitchResumeResponse.statusCode !== 423 || killSwitchResumeStore.getBotState("bot_kill_paused").status !== "paused") {
+    throw new Error(`manual resume API must not bypass an active portfolio kill switch: ${JSON.stringify(killSwitchResumeResponse)}`);
+  }
 
   const publicDir = fs.mkdtempSync(path.join(os.tmpdir(), "tradingbot-public-"));
   try {
@@ -528,21 +641,6 @@ function runSystemServerTests() {
       startedAt: now - 1000,
       store
     });
-
-    function createResponseRecorder() {
-      return {
-        body: null,
-        headers: null,
-        statusCode: null,
-        end(payload) {
-          this.body = payload;
-        },
-        writeHead(statusCode, headers) {
-          this.statusCode = statusCode;
-          this.headers = headers;
-        }
-      };
-    }
 
     const jsResponse = createResponseRecorder();
     assetServer.handleRequest({

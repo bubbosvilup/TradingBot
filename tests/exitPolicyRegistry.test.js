@@ -11,6 +11,14 @@ function runExitPolicyRegistryTests() {
     throw new Error(`resolved RSI_REVERSION_PRO shape mismatch: ${JSON.stringify(rsiReversionPro)}`);
   }
 
+  const fastTimeout = resolveExitPolicy({ exitPolicyId: "RSI_REVERSION_FAST_TIMEOUT" });
+  if (!fastTimeout || fastTimeout.id !== "RSI_REVERSION_FAST_TIMEOUT" || fastTimeout.recovery.timeoutMs !== 15_000) {
+    throw new Error(`RSI_REVERSION_FAST_TIMEOUT should be a genuinely shorter timeout policy: ${JSON.stringify(fastTimeout)}`);
+  }
+  if (fastTimeout.qualification.minTickProfit !== rsiReversionPro.qualification.minTickProfit || fastTimeout.recovery.targetSource !== rsiReversionPro.recovery.targetSource) {
+    throw new Error(`fast timeout policy should only narrow timeout semantics: ${JSON.stringify(fastTimeout)}`);
+  }
+
   const overridden = resolveExitPolicy({
     exitPolicy: {
       invalidation: {

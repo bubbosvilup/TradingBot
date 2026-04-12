@@ -32,7 +32,7 @@ export type PreparedOpenAttempt =
 
 export type ExecutedOpenAttempt =
   | {
-      blockReason: "execution_quantity_below_minimum" | "execution_notional_below_minimum" | "execution_open_rejected";
+      blockReason: "execution_quantity_below_minimum" | "execution_notional_below_minimum" | "execution_open_rejected" | "execution_short_unsupported";
       executionDiagnostics: {
         minNotionalUsdt: number;
         minQuantity: number;
@@ -144,20 +144,34 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
       strategyId: params.strategyId,
       symbol: params.symbol
     };
+    const executionConstraints = this.getExecutionConstraints();
+    const validation = validateTradeConstraints({
+      minNotionalUsdt: executionConstraints.minNotionalUsdt,
+      minQuantity: executionConstraints.minQuantity,
+      price: params.price,
+      quantity: params.quantity
+    });
+
+    if (side === "short" && typeof this.executionEngine.openPosition !== "function" && typeof this.executionEngine.openShort !== "function") {
+      return {
+        blockReason: "execution_short_unsupported",
+        executionDiagnostics: {
+          minNotionalUsdt: Number(validation.minNotionalUsdt.toFixed(4)),
+          minQuantity: Number(validation.minQuantity.toFixed(8)),
+          notionalUsdt: Number(validation.notionalUsdt.toFixed(4)),
+          quantity: Number(validation.quantity.toFixed(8))
+        },
+        kind: "execution_rejected"
+      };
+    }
+
     const opened = typeof this.executionEngine.openPosition === "function"
       ? this.executionEngine.openPosition({ ...openParams, side })
-      : side === "short" && typeof this.executionEngine.openShort === "function"
+      : side === "short"
         ? this.executionEngine.openShort(openParams)
         : this.executionEngine.openLong(openParams);
 
     if (!opened) {
-      const executionConstraints = this.getExecutionConstraints();
-      const validation = validateTradeConstraints({
-        minNotionalUsdt: executionConstraints.minNotionalUsdt,
-        minQuantity: executionConstraints.minQuantity,
-        price: params.price,
-        quantity: params.quantity
-      });
       const blockReason = validation.quantity < executionConstraints.minQuantity
         ? "execution_quantity_below_minimum"
         : validation.notionalUsdt < executionConstraints.minNotionalUsdt

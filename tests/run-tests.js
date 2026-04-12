@@ -19,6 +19,7 @@ const { runExitPolicyRegistryTests } = require("./exitPolicyRegistry.test");
 const { runExitLifecycleReportTests } = require("./exitLifecycleReport.test");
 const { runLoggerTests } = require("./logger.test");
 const { runOpenAttemptCoordinatorTests } = require("./openAttemptCoordinator.test");
+const { runPerformanceMonitorTests } = require("./performanceMonitor.test");
 const { runOrchestratorTests } = require("./orchestrator.test");
 const { runPositionLifecycleManagerTests } = require("./positionLifecycleManager.test");
 const { runPostLossArchitectLatchTests } = require("./postLossArchitectLatch.test");
@@ -67,6 +68,7 @@ async function main() {
     { name: "mtfContextService", run: async () => runMtfContextServiceTests() },
     { name: "mtfParamResolver", run: async () => runMtfParamResolverTests() },
     { name: "openAttemptCoordinator", run: async () => runOpenAttemptCoordinatorTests() },
+    { name: "performanceMonitor", run: async () => runPerformanceMonitorTests() },
     { name: "orchestrator", run: async () => runOrchestratorTests() },
     { name: "postLossArchitectLatch", run: async () => runPostLossArchitectLatchTests() },
     { name: "positionLifecycleManager", run: async () => runPositionLifecycleManagerTests() },

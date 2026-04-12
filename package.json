@@ -7,8 +7,8 @@
   "scripts": {
     "backtest": "node scripts/backtest.js",
     "start": "node bot.js",
-    "start:orchestrator": "node --experimental-strip-types src/core/orchestrator.ts",
-    "test": "node --experimental-strip-types tests/run-tests.js"
+    "start:orchestrator": "node --disable-warning=ExperimentalWarning --experimental-strip-types src/core/orchestrator.ts",
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/run-tests.js"
   },
   "keywords": [
     "trading",

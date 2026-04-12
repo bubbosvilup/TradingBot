@@ -106,6 +106,40 @@ function runMtfContextServiceTests() {
     if (result[1].horizonFrame !== "long") throw new Error("second horizon frame mismatch");
   }
 
+  {
+    let requestedSince = null;
+    const ticks = [
+      makeTick(now - 600_000, 99),
+      makeTick(now - 300_000, 100),
+      makeTick(now - 60_000, 101),
+    ];
+    const sinceStore = {
+      getPriceHistory() {
+        throw new Error("getPriceHistory should not be used when getPriceHistorySince is available");
+      },
+      getPriceHistorySince(_symbol, sinceTimestamp) {
+        requestedSince = sinceTimestamp;
+        return ticks.filter((tick) => Number(tick.timestamp) >= sinceTimestamp);
+      }
+    };
+    const service = new MtfContextService({
+      store: sinceStore,
+      contextBuilder: makeContextBuilder({ warmupComplete: true }),
+      architect: makeArchitect({ sufficientData: true }),
+    });
+    const result = service.buildMtfSnapshots({
+      symbol: "BTC/USDT",
+      now,
+      frames: [
+        { id: "1m", horizonFrame: "short", windowMs: 60_000 },
+        { id: "5m", horizonFrame: "short", windowMs: 300_000 },
+      ],
+    });
+    if (requestedSince !== now - 300_000 || result.length !== 2) {
+      throw new Error(`MTF should narrow history reads to the oldest needed frame window: ${JSON.stringify({ requestedSince, result })}`);
+    }
+  }
+
   // ── null history ⇒ same as empty ──
 
   {

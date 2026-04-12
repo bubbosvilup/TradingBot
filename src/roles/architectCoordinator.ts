@@ -336,7 +336,6 @@ class ArchitectCoordinator implements ArchitectCoordinatorInstance {
     const switchPlan = this.strategySwitcher.evaluate({
       architect: published,
       availableStrategies: this.allowedStrategies,
-      botConfig: this.botConfig,
       now: Number.isFinite(Number(params.timestamp)) ? Number(params.timestamp) : now(),
       positionOpen: Boolean(position),
       state

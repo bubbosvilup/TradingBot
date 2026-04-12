@@ -18,7 +18,7 @@ Important repo facts:
 - `src/core/stateStore.ts` now evicts stale symbol-scoped state conservatively while preserving registered symbols and open-position symbols.
 - `src/streams/marketStream.ts` now narrows REST fallback fetches to stale symbols and uses batch ticker fetches when possible.
 - `src/engines/backtestEngine.ts` is now a modern adapter over legacy backtest modules, not a full replay runtime.
-- `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup and exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch.
+- `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, and provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses.
 - `src/core/systemServer.ts` serves both the full dashboard and the dedicated compact monitor. The compact route is UI/API-facing only and must not become a control plane.
 - `src/core/orchestrator.ts` can opt into opening the compact UI at startup through env flags, but this must remain explicit and non-essential to trading behavior.
 - `src/data/bots.config.json` now carries experiment label `quarantined_allow_small_loss_floor05`.

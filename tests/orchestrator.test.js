@@ -1,6 +1,8 @@
 "use strict";
 
 async function runOrchestratorTests() {
+  const fs = require("node:fs");
+  const path = require("node:path");
   const { FakeWebSocket } = require("./fakeWebSocket");
   const originalWebSocket = global.WebSocket;
   global.WebSocket = FakeWebSocket;
@@ -33,6 +35,11 @@ async function runOrchestratorTests() {
   }
   if (camelArgs.durationMs !== 2300 || camelArgs.summaryEveryMs !== 1100) {
     throw new Error("camelCase duration/summary CLI args are not parsed correctly");
+  }
+
+  const bootstrapSource = fs.readFileSync(path.join(process.cwd(), "bot.js"), "utf8");
+  if (!bootstrapSource.includes("--disable-warning=ExperimentalWarning") || !bootstrapSource.includes("--experimental-strip-types")) {
+    throw new Error("production bootstrap should isolate Node strip-types warning while preserving npm start compatibility");
   }
 
   const mtfFromConfig = resolveMtfRuntimeConfig({ mtf: { enabled: true, frames: [{ id: "1m", horizonFrame: "short", windowMs: 60_000 }] } }, {});

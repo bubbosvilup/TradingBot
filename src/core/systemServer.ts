@@ -67,6 +67,7 @@ interface SystemServerStore {
   getSymbolStateSnapshot(options?: {
     now?: number;
   }): SymbolStateRetentionSnapshot;
+  updateBotState(botId: string, patch: Partial<BotRuntimeState>): void;
   getRecentEvents(limit?: number): SystemEvent[];
   getSystemSnapshot(): SystemSnapshotLike;
   getWsConnections(): WsConnectionSnapshotLike[];
@@ -197,8 +198,8 @@ class SystemServer {
     this.server = null;
   }
 
-  json(response: any, payload: unknown) {
-    response.writeHead(200, {
+  json(response: any, payload: unknown, statusCode: number = 200) {
+    response.writeHead(statusCode, {
       "Cache-Control": "no-store",
       "Content-Type": "application/json; charset=utf-8"
     });
@@ -206,8 +207,7 @@ class SystemServer {
   }
 
   notFound(response: any) {
-    response.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
-    response.end(JSON.stringify({ error: "Not found" }));
+    this.json(response, { error: "Not found" }, 404);
   }
 
   serveFile(response: any, filePath: string) {
@@ -284,6 +284,55 @@ class SystemServer {
 
   isManualResumeRequired(state: BotRuntimeState | null | undefined) {
     return state?.status === "paused" && state?.pausedReason === "max_drawdown_reached";
+  }
+
+  handleManualResumeRequest(botId: string, response: any) {
+    const state = this.store.getBotState(botId);
+    if (!state) {
+      this.json(response, {
+        botId,
+        error: "bot_not_found",
+        ok: false
+      }, 404);
+      return;
+    }
+
+    if (!this.isManualResumeRequired(state)) {
+      this.json(response, {
+        botId,
+        error: "manual_resume_not_required",
+        ok: false,
+        pausedReason: state.pausedReason,
+        status: state.status
+      }, 409);
+      return;
+    }
+
+    const portfolioKillSwitch = this.store.getPortfolioKillSwitchState({ feeRate: this.feeRate });
+    if (portfolioKillSwitch.blockingEntries || portfolioKillSwitch.triggered) {
+      this.json(response, {
+        botId,
+        error: "portfolio_kill_switch_active",
+        ok: false,
+        portfolioKillSwitchReason: portfolioKillSwitch.reason
+      }, 423);
+      return;
+    }
+
+    this.store.updateBotState(botId, {
+      pausedReason: null,
+      status: "running"
+    });
+    this.logger.info("bot_manual_resume", {
+      botId,
+      reason: "max_drawdown_manual_resume"
+    });
+    this.json(response, {
+      botId,
+      ok: true,
+      pausedReason: null,
+      status: "running"
+    });
   }
 
   decorateArchitectAssessment(assessment: any, publisher: any, context: any, source: "published" | "observed") {
@@ -666,6 +715,13 @@ class SystemServer {
   handleRequest(request: any, response: any) {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${this.host}:${this.port}`}`);
     const pathname = url.pathname;
+    const method = String(request.method || "GET").toUpperCase();
+
+    const resumeMatch = pathname.match(/^\/api\/bots\/([^/]+)\/resume$/);
+    if (method === "POST" && resumeMatch) {
+      this.handleManualResumeRequest(decodeURIComponent(resumeMatch[1]), response);
+      return;
+    }
 
     if (pathname === "/api/system") {
       this.json(response, this.buildSystemPayload());

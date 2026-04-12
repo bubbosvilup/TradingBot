@@ -10,6 +10,11 @@ function runExperimentReporterTests() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tradingbot-experiment-reporter-"));
   const originalReportDir = process.env.EXPERIMENT_REPORT_DIR;
   const originalDisableDesktop = process.env.EXPERIMENT_REPORT_DISABLE_DESKTOP;
+  const originalConsoleError = console.error;
+  const stderrLines = [];
+  console.error = (...args) => {
+    stderrLines.push(args.join(" "));
+  };
 
   process.env.EXPERIMENT_REPORT_DIR = tempRoot;
   process.env.EXPERIMENT_REPORT_DISABLE_DESKTOP = "1";
@@ -109,6 +114,9 @@ function runExperimentReporterTests() {
     }
 
     reporter.logFinalSummary();
+    if (stderrLines.some((line) => line.includes("Report written to"))) {
+      throw new Error(`successful experiment report writes should not use stderr: ${JSON.stringify(stderrLines)}`);
+    }
     const files = fs.readdirSync(tempRoot).filter((entry) =>
       entry === "tradingbot_experiment_ctrlc_report_latest.txt"
       || /^tradingbot_experiment_ctrlc_report_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.txt$/.test(entry)
@@ -133,6 +141,7 @@ function runExperimentReporterTests() {
       throw new Error("toxic allow_small_loss_floor05 experiment label should be quarantined out of active use");
     }
   } finally {
+    console.error = originalConsoleError;
     if (originalReportDir === undefined) {
       delete process.env.EXPERIMENT_REPORT_DIR;
     } else {

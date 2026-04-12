@@ -4,7 +4,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 
 const orchestratorPath = path.join(__dirname, "src", "core", "orchestrator.ts");
-const child = spawn(process.execPath, ["--experimental-strip-types", orchestratorPath, ...process.argv.slice(2)], {
+const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--experimental-strip-types", orchestratorPath, ...process.argv.slice(2)], {
   stdio: "inherit"
 });
 

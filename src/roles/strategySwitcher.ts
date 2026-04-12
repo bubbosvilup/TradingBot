@@ -1,7 +1,7 @@
 // Module responsibility: resolve published architect family into an executable strategy with only light execution-side guards.
 
 import type { ArchitectAssessment, RecommendedFamily } from "../types/architect.ts";
-import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
+import type { BotRuntimeState } from "../types/bot.ts";
 
 class StrategySwitcher {
   maxDecisionAgeMs: number;
@@ -17,13 +17,10 @@ class StrategySwitcher {
   evaluate(params: {
     availableStrategies: string[];
     architect: ArchitectAssessment | null;
-    botConfig: BotConfig;
     now: number;
     positionOpen?: boolean;
     state: BotRuntimeState;
   }) {
-    void params.botConfig;
-
     const allowedStrategies = this.getRoutableStrategies(params.availableStrategies);
     if (allowedStrategies.length <= 1) return null;
     if (params.positionOpen) return null;

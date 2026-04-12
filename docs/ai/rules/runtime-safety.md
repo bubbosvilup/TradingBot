@@ -10,6 +10,7 @@ Current runtime posture:
 - managed-recovery invalidation is now intentionally stricter than a single early `family_mismatch`
 - MTF context is optional and behind `mtf.enabled`; current default config enables it, and `MTF_ENABLED=false` disables it at runtime
 - `TradingBot` stays passive for MTF and may only pass published diagnostics through generic context/economics paths
+- manual resume for bot-level max-drawdown pauses is explicit through `POST /api/bots/:botId/resume` and must not bypass an active portfolio kill switch
 
 Safe-change rules:
 

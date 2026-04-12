@@ -48,6 +48,9 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
   if (message === "post_loss_architect_latch_activated" || message === "post_loss_architect_latch_publish_counted" || message === "post_loss_architect_latch_released") {
     return "risk_change";
   }
+  if (message === "bot_manual_resume") {
+    return "risk_change";
+  }
 
   if (message === "started" || message === "system_ready" || message === "market_stream_started" || message === "context_ready" || message === "dashboard_ready" || message === "execution_mode_forced_paper" || message === "non_routable_allowed_strategies") {
     return "startup";
@@ -70,7 +73,7 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
   if (message === "tick_pipeline_latency" || message === "tick_pipeline_latency_high") {
     return "evaluation";
   }
-  if (message === "experiment_summary" || message === "experiment_final_summary") {
+  if (message === "experiment_summary" || message === "experiment_final_summary" || message === "experiment_report_written") {
     return "experiment_summary";
   }
   if (message === "architect_published") {
@@ -157,6 +160,20 @@ function compactArchitectMetadata(metadata?: Record<string, unknown>) {
   };
 }
 
+function omitUndefinedMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => omitUndefinedMetadata(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .map(([key, entryValue]) => [key, omitUndefinedMetadata(entryValue)])
+  );
+}
+
 function shouldSuppressNoisy(message: string, metadata?: Record<string, unknown>): boolean {
   if (!NOISY_MESSAGES.has(message)) return false;
   const key = makeDedupeKey(message, metadata);
@@ -191,8 +208,9 @@ function createLogger(scope: string, options: { eventSink?: ((event: any) => voi
       compactMetadata = compactArchitectMetadata(metadata);
     }
 
-    const suffix = compactMetadata && Object.keys(compactMetadata).length > 0
-      ? ` | ${Object.entries(compactMetadata).map(([key, value]) => `${key}=${String(value)}`).join(" | ")}`
+    const sanitizedMetadata = omitUndefinedMetadata(compactMetadata) as Record<string, unknown> | undefined;
+    const suffix = sanitizedMetadata && Object.keys(sanitizedMetadata).length > 0
+      ? ` | ${Object.entries(sanitizedMetadata).map(([key, value]) => `${key}=${String(value)}`).join(" | ")}`
       : "";
     console.log(`[${new Date(time).toISOString()}] ${scope} | ${level} | ${message}${suffix}`);
     if (typeof options.eventSink === "function" && message !== "heartbeat") {
@@ -201,7 +219,7 @@ function createLogger(scope: string, options: { eventSink?: ((event: any) => voi
         category,
         level,
         message,
-        metadata: compactMetadata || {},
+        metadata: sanitizedMetadata || {},
         scope,
         time
       });

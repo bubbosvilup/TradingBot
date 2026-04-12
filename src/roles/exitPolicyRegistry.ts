@@ -29,7 +29,7 @@ const RSI_REVERSION_FAST_TIMEOUT: ExitPolicy = {
   id: "RSI_REVERSION_FAST_TIMEOUT",
   recovery: {
     ...RSI_REVERSION_PRO.recovery,
-    timeoutMs: 30_000
+    timeoutMs: 15_000
   }
 };
 

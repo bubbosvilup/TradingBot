@@ -12,7 +12,7 @@ class PerformanceMonitor {
     const grossLoss = snapshot.grossLoss + (trade.netPnl < 0 ? Math.abs(trade.netPnl) : 0);
     const pnl = snapshot.pnl + trade.netPnl;
     const currentEquity = snapshot.currentEquity + trade.netPnl;
-    const peakEquity = Math.max(snapshot.peakEquity, currentEquity);
+    const peakEquity = Math.max(snapshot.peakEquity, snapshot.currentEquity, currentEquity);
     const drawdown = peakEquity > 0 ? ((peakEquity - currentEquity) / peakEquity) * 100 : 0;
     const recentNetPnl = [...snapshot.recentNetPnl, trade.netPnl].slice(-20);
 

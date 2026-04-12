@@ -193,6 +193,40 @@ async function runOpenAttemptCoordinatorTests() {
   if (openedShortResult.kind !== "opened" || openedShortResult.opened.side !== "short" || openedShortParams.side !== "short") {
     throw new Error(`open attempt coordinator should pass short side into execution: ${JSON.stringify({ openedShortParams, openedShortResult })}`);
   }
+
+  let fallbackLongCalled = false;
+  const unsupportedShortCoordinator = createCoordinator({
+    executionEngine: {
+      openLong() {
+        fallbackLongCalled = true;
+        return {
+          botId: "bot_test",
+          entryPrice: 100,
+          id: "wrong-long",
+          openedAt: 5_000,
+          quantity: 1,
+          strategyId: "emaCross",
+          symbol: "BTC/USDT"
+        };
+      }
+    }
+  });
+  const unsupportedShortResult = unsupportedShortCoordinator.execute({
+    availableBalanceUsdt: 1000,
+    botId: "bot_test",
+    confidence: 0.91,
+    entryDebounceTicks: 2,
+    price: 100,
+    quantity: 2,
+    reason: ["bearish_cross_confirmed"],
+    recordedAt: 5_500,
+    side: "short",
+    strategyId: "emaCross",
+    symbol: "BTC/USDT"
+  });
+  if (fallbackLongCalled || unsupportedShortResult.kind !== "execution_rejected" || unsupportedShortResult.blockReason !== "execution_short_unsupported") {
+    throw new Error(`unsupported short execution should reject explicitly instead of falling back to long: ${JSON.stringify({ fallbackLongCalled, unsupportedShortResult })}`);
+  }
 }
 
 module.exports = {

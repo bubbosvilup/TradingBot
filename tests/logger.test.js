@@ -74,6 +74,25 @@ function runLoggerTests() {
     }
 
     lines.length = 0;
+    const eventSinkEvents = [];
+    const undefinedLogger = createLogger("test:sanitize", {
+      eventSink: (event) => eventSinkEvents.push(event),
+      logType: "verbose"
+    });
+    undefinedLogger.info("architect_published", {
+      nested: {
+        kept: "value",
+        omitted: undefined
+      },
+      publishedMarketRegime: "range",
+      symbol: "BTC/USDT",
+      undefinedField: undefined
+    });
+    if (lines[0].includes("undefinedField") || lines[0].includes("undefined") || eventSinkEvents[0].metadata.undefinedField !== undefined || eventSinkEvents[0].metadata.nested.omitted !== undefined) {
+      throw new Error(`logger should omit undefined metadata fields from console and event sink: ${JSON.stringify({ lines, eventSinkEvents })}`);
+    }
+
+    lines.length = 0;
     const blockDedupeLogger = createLogger("test:block-dedupe", { logType: "minimal" });
     blockDedupeLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "architect_stale" });
     blockDedupeLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "target_distance_exceeds_short_horizon" });

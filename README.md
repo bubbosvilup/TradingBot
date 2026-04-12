@@ -355,7 +355,7 @@ Nota MTF:
   - il reject finale resta `target_distance_exceeds_short_horizon` in `entryCoordinator`
 - Max drawdown pause per bot:
   - lascia il bot in `paused`
-  - richiede resume manuale
+  - richiede resume manuale esplicito via `POST /api/bots/:botId/resume`
 - Portfolio kill switch:
   - blocca nuovi ingressi a livello di sistema
   - non forza ancora flatten globale
@@ -380,6 +380,9 @@ Endpoint principali:
 - `GET /api/trades`
 - `GET /api/chart`
 - `GET /api/analytics`
+- `POST /api/bots/:botId/resume`
+
+`POST /api/bots/:botId/resume` e intenzionalmente stretto: funziona solo per bot in pausa con `pausedReason=max_drawdown_reached`, non riprende bot che non richiedono resume manuale e non bypassa un portfolio kill switch attivo.
 
 Campi diagnostici rilevanti ora esposti:
 - stato portfolio kill switch
@@ -432,7 +435,7 @@ npm start
 Smoke test rapido:
 
 ```bash
-node --experimental-strip-types src/core/orchestrator.ts --duration-ms=5000 --summary-ms=1000
+npm start -- --duration-ms=5000 --summary-ms=1000
 ```
 
 Nota operativa:
@@ -460,7 +463,6 @@ npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false
 - Nessuna live readiness end-to-end.
 - Nessuna parita completa del backtest moderno con il runtime attivo.
 - Nessun supporto short completo.
-- Nessun comando/API dedicato per resume manuale del bot dopo max drawdown.
 
 ## Struttura repository
 

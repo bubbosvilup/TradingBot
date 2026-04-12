@@ -72,10 +72,6 @@ function runStrategySwitcherTests() {
   const switched = switcher.evaluate({
     architect: createArchitect(),
     availableStrategies: ["emaCross", "rsiReversion"],
-    botConfig: {
-      id: "bot_a",
-      symbol: "BTC/USDT"
-    },
     now: Date.now(),
     positionOpen: false,
     state: baseState
@@ -87,10 +83,6 @@ function runStrategySwitcherTests() {
   const blockedByPosition = switcher.evaluate({
     architect: createArchitect(),
     availableStrategies: ["emaCross", "rsiReversion"],
-    botConfig: {
-      id: "bot_a",
-      symbol: "BTC/USDT"
-    },
     now: Date.now(),
     positionOpen: true,
     state: baseState
@@ -105,10 +97,6 @@ function runStrategySwitcherTests() {
       recommendedFamily: "no_trade"
     }),
     availableStrategies: ["emaCross", "rsiReversion"],
-    botConfig: {
-      id: "bot_a",
-      symbol: "BTC/USDT"
-    },
     now: Date.now(),
     positionOpen: false,
     state: baseState
@@ -123,10 +111,6 @@ function runStrategySwitcherTests() {
       recommendedFamily: "mean_reversion"
     }),
     availableStrategies: ["emaCross", "rsiReversion"],
-    botConfig: {
-      id: "bot_a",
-      symbol: "BTC/USDT"
-    },
     now: Date.now(),
     positionOpen: false,
     state: {
@@ -140,10 +124,6 @@ function runStrategySwitcherTests() {
   const breakoutRoute = switcher.evaluate({
     architect: createArchitect(),
     availableStrategies: ["breakout", "rsiReversion"],
-    botConfig: {
-      id: "bot_a",
-      symbol: "BTC/USDT"
-    },
     now: Date.now(),
     positionOpen: false,
     state: baseState
@@ -158,10 +138,6 @@ function runStrategySwitcherTests() {
       recommendedFamily: "mean_reversion"
     }),
     availableStrategies: ["breakout", "emaCross"],
-    botConfig: {
-      id: "bot_a",
-      symbol: "BTC/USDT"
-    },
     now: Date.now(),
     positionOpen: false,
     state: {

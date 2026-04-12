@@ -342,7 +342,11 @@ class ExperimentReporter implements ExperimentReporterInstance {
       return;
     }
 
-    console.error(`[experiment] Report written to: ${writtenPaths.join(" ; ")}`);
+    if (!this.isSilent()) {
+      this.logger.info("experiment_report_written", {
+        paths: writtenPaths.join(" ; ")
+      });
+    }
   }
 
   private collectMetrics(): Record<string, unknown> {

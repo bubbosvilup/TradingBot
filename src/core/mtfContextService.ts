@@ -34,7 +34,13 @@ class MtfContextService {
     frames: MtfFrameConfig[];
   }): MtfFrameSnapshot[] {
     const { symbol, now, frames } = params;
-    const fullHistory: MarketTick[] | null = this.store.getPriceHistory(symbol);
+    const oldestWindowStart = frames.reduce((oldest: number, frame: MtfFrameConfig) => {
+      const windowStart = now - frame.windowMs;
+      return windowStart < oldest ? windowStart : oldest;
+    }, now);
+    const fullHistory: MarketTick[] | null = typeof this.store.getPriceHistorySince === "function"
+      ? this.store.getPriceHistorySince(symbol, oldestWindowStart)
+      : this.store.getPriceHistory(symbol);
 
     if (!Array.isArray(fullHistory) || fullHistory.length === 0) {
       return frames.map(frame => this.createEmptyFrame(frame.id, frame.horizonFrame, now));
