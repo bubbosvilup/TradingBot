@@ -10,6 +10,10 @@ function runLoggerTests() {
   };
 
   try {
+    if (require("../src/utils/logger.ts").resolveLogType(null) !== "minimal") {
+      throw new Error("default log type should be minimal for operator-facing runtime logs");
+    }
+
     const verboseLogger = createLogger("test:verbose", { logType: "verbose" });
     verboseLogger.info("heartbeat");
     verboseLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "entry_evaluated", { outcome: "blocked" });
@@ -27,6 +31,54 @@ function runLoggerTests() {
     minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BUY", { latestPrice: 100 });
     if (lines.length !== 4 || lines.some((line) => line.includes("entry_evaluated"))) {
       throw new Error(`minimal mode should suppress evaluation spam and keep essential events: ${JSON.stringify(lines)}`);
+    }
+
+    lines.length = 0;
+    const compactArchitectLogger = createLogger("test:architect", { logType: "minimal" });
+    compactArchitectLogger.info("architect_published", {
+      candidateMarketRegime: "range",
+      candidateRecommendedFamily: "mean_reversion",
+      contextBreakoutQuality: 0.7,
+      contextDataQuality: 0.92,
+      publishedDecisionStrength: 0.2,
+      publishedMarketRegime: "range",
+      publishedMtfAgreement: 0.8,
+      publishedMtfDominantFrame: "medium",
+      publishedMtfEnabled: true,
+      publishedMtfInstability: 0.2,
+      publishedMtfMetaRegime: "range",
+      publishedMtfSufficientFrames: true,
+      publishedRecommendedFamily: "mean_reversion",
+      symbol: "BTC/USDT",
+      updatedAt: 123
+    });
+    compactArchitectLogger.info("architect_changed", {
+      candidateMarketRegime: "trend",
+      candidateRecommendedFamily: "trend_following",
+      contextDataQuality: 0.88,
+      previousRegime: "range",
+      publishedMarketRegime: "trend",
+      publishedRecommendedFamily: "trend_following",
+      symbol: "BTC/USDT",
+      via: "switch_delta"
+    });
+    if (lines.length !== 2
+      || !lines[0].includes("publishedMarketRegime=range")
+      || !lines[0].includes("publishedMtfDominantFrame=medium")
+      || lines[0].includes("contextDataQuality")
+      || lines[0].includes("contextBreakoutQuality")) {
+      throw new Error(`minimal architect publish should keep compact MTF state and drop feature dumps: ${JSON.stringify(lines)}`);
+    }
+    if (!lines[1].includes("architect_changed") || lines[1].includes("contextDataQuality")) {
+      throw new Error(`minimal architect changed should also drop feature dumps: ${JSON.stringify(lines)}`);
+    }
+
+    lines.length = 0;
+    const blockDedupeLogger = createLogger("test:block-dedupe", { logType: "minimal" });
+    blockDedupeLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "architect_stale" });
+    blockDedupeLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "target_distance_exceeds_short_horizon" });
+    if (lines.length !== 2) {
+      throw new Error(`minimal BLOCK_CHANGE dedupe should not suppress distinct block reasons: ${JSON.stringify(lines)}`);
     }
 
     lines.length = 0;

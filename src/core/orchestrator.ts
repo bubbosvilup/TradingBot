@@ -26,6 +26,29 @@ const { resolveFeeRateFromEnv } = require("../utils/executionConfig.ts");
 const { formatDuration, now, sleep } = require("../utils/time.ts");
 const { ExperimentReporter } = require("./experimentReporter.ts");
 
+function parseOptionalBooleanFlag(value: string | undefined | null, name: string) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error(`${name}=${value} is invalid; expected true/false, 1/0, yes/no, or on/off`);
+}
+
+function resolveMtfRuntimeConfig(config: any, env: NodeJS.ProcessEnv = process.env) {
+  const baseMtfConfig = config?.mtf || {};
+  const envEnabled = parseOptionalBooleanFlag(env.MTF_ENABLED, "MTF_ENABLED");
+  const configEnabled = baseMtfConfig.enabled === undefined ? false : Boolean(baseMtfConfig.enabled);
+  return {
+    config: {
+      ...baseMtfConfig,
+      enabled: envEnabled === null ? configEnabled : envEnabled
+    },
+    enabledSource: envEnabled === null
+      ? (baseMtfConfig.enabled === undefined ? "default_disabled" : "config")
+      : "env"
+  };
+}
+
 function parseArgs(argv: string[]) {
   const args = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 1) {
@@ -166,7 +189,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const regimeDetector = new RegimeDetector();
   const contextBuilder = new ContextBuilder({ indicatorEngine });
   const botArchitect = new BotArchitect();
-  const mtfConfig = botConfig.mtf || {};
+  const resolvedMtf = resolveMtfRuntimeConfig(botConfig);
+  const mtfConfig = resolvedMtf.config;
   const executionEngine = new ExecutionEngine({
     executionMode,
     feeRate: executionFee.feeRate,
@@ -293,6 +317,9 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       portfolioKillSwitchEnabled: portfolioKillSwitch.enabled,
       portfolioKillSwitchMaxDrawdownPct: portfolioKillSwitch.maxDrawdownPct,
       portfolioKillSwitchMode: portfolioKillSwitch.mode,
+      mtfEnabled: Boolean(mtfConfig.enabled),
+      mtfEnabledSource: resolvedMtf.enabledSource,
+      mtfFrameCount: Array.isArray(mtfConfig.frames) ? mtfConfig.frames.length : 0,
       postLossLatchMinFreshPublications,
       symbolStateRetentionMs,
       userStreamRuntime: "paper_simulated_events_only",
@@ -469,5 +496,7 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs,
+  parseOptionalBooleanFlag,
+  resolveMtfRuntimeConfig,
   startOrchestrator
 };

@@ -15,6 +15,13 @@ export interface MtfFrameConfig {
   windowMs: number;
 }
 
+/** Runtime switch plus raw-timeframe to internal-horizon frame mapping. */
+export interface MtfRuntimeConfig {
+  enabled?: boolean;
+  frames?: MtfFrameConfig[];
+  instabilityThreshold?: number;
+}
+
 /** Per-timeframe normalized snapshot fed into the MTF aggregator. */
 export interface MtfFrameSnapshot {
   timeframe: MtfTimeframeId;

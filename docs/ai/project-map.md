@@ -25,7 +25,7 @@ Important repo facts:
 - `reports/experiments/` still contains historical outputs for the quarantined label.
 - `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`.
 - `src/strategies/rsiReversion/config.json` now carries conservative short-horizon entry economics: `minExpectedNetEdgePct: 0.0015` and `maxTargetDistancePctForShortHorizon: 0.01`.
-- MTF remains disabled by default in `src/data/bots.config.json`; when absent or disabled, RSI entry behavior must remain baseline-identical.
+- MTF is enabled in `src/data/bots.config.json` and can be overridden with `MTF_ENABLED=false` / `MTF_ENABLED=true`; when absent or disabled, RSI entry behavior must remain baseline-identical.
 - `src/types/mtf.ts` defines internal horizon frame ids (`short`, `medium`, `long`). Raw timeframe labels stay mapped to these ids in MTF frame config / aggregation plumbing, not in downstream policy resolvers.
 - `src/core/architectService.ts` can attach optional MTF publish diagnostics to `ArchitectAssessment.mtf`, including `mtfDominantFrame`, agreement, instability, meta regime, and sufficient-frame status.
 - `src/roles/mtfParamResolver.ts` is the pure RSI MTF parameter resolver. It keeps RSI thresholds at baseline, floors the RSI min edge at `0.0015`, and only widens the target-distance cap under coherent range MTF: `short` = baseline, `medium` = `1.5x`, `long` = `2.0x`.

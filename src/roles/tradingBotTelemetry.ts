@@ -226,7 +226,8 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       rsi: metadata.strategyRsi ?? null,
       strategy: metadata.strategy || strategyId,
       symbol: this.symbol,
-      targetDistancePct: metadata.targetDistancePct ?? null
+      targetDistancePct: metadata.targetDistancePct ?? null,
+      targetFamily: metadata.targetFamily || null
     };
   }
 
@@ -297,10 +298,13 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       mtfParamFallbackReason: metadata.mtfParamFallbackReason ?? null,
       mtfParamResolutionReason: metadata.mtfParamResolutionReason ?? null,
       mtfResolvedTargetDistanceCapPct: metadata.mtfResolvedTargetDistanceCapPct ?? null,
+      publishedFamily: metadata.publishedFamily || null,
+      publishedRegime: metadata.publishedRegime || null,
       riskReason: metadata.riskReason || null,
       strategy: metadata.strategy || strategyId,
       symbol: this.symbol,
-      targetDistancePct: metadata.targetDistancePct ?? null
+      targetDistancePct: metadata.targetDistancePct ?? null,
+      targetFamily: metadata.targetFamily || null
     };
 
     return {

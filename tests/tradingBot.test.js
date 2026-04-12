@@ -300,6 +300,8 @@ function createPosition(overrides = {}) {
 function runTradingBotTests() {
   const originalNow = Date.now;
   const originalLogType = process.env.LOG_TYPE;
+  const testDefaultLogType = "verbose";
+  process.env.LOG_TYPE = testDefaultLogType;
   let clock = 1_000_000;
   Date.now = () => clock;
 
@@ -780,11 +782,7 @@ function runTradingBotTests() {
     if (strategyDebugBlockChanges.length !== 1) {
       throw new Error(`strategy_debug should dedupe identical BLOCK_CHANGE logs, found ${strategyDebugBlockChanges.length}`);
     }
-    if (originalLogType === undefined) {
-      delete process.env.LOG_TYPE;
-    } else {
-      process.env.LOG_TYPE = originalLogType;
-    }
+    process.env.LOG_TYPE = testDefaultLogType;
 
     process.env.LOG_TYPE = "strategy_debug";
     clock += 10_000;
@@ -841,11 +839,7 @@ function runTradingBotTests() {
     if (strategyDebugSellLog.metadata.closeClassification !== "confirmed_exit") {
       throw new Error(`profitable RSI exit should remain a normal confirmed exit: ${JSON.stringify(strategyDebugSellLog)}`);
     }
-    if (originalLogType === undefined) {
-      delete process.env.LOG_TYPE;
-    } else {
-      process.env.LOG_TYPE = originalLogType;
-    }
+    process.env.LOG_TYPE = testDefaultLogType;
 
     process.env.LOG_TYPE = "strategy_debug";
     clock += 10_000;
@@ -910,11 +904,7 @@ function runTradingBotTests() {
     if (!failedRsiExitHarness.botLogs.find((entry) => entry.message === "post_loss_architect_latch_activated")) {
       throw new Error("negative RSI exit should activate the same post-loss defensive latch flow");
     }
-    if (originalLogType === undefined) {
-      delete process.env.LOG_TYPE;
-    } else {
-      process.env.LOG_TYPE = originalLogType;
-    }
+    process.env.LOG_TYPE = testDefaultLogType;
 
     process.env.LOG_TYPE = "strategy_debug";
     clock += 10_000;
@@ -964,11 +954,7 @@ function runTradingBotTests() {
     if (managedRecoveryHarness.botLogs.find((entry) => entry.message === "rsi_exit_deferred")) {
       throw new Error("below-floor RSI exit should no longer emit managed recovery defer logs");
     }
-    if (originalLogType === undefined) {
-      delete process.env.LOG_TYPE;
-    } else {
-      process.env.LOG_TYPE = originalLogType;
-    }
+    process.env.LOG_TYPE = testDefaultLogType;
 
     const managedRecoveryTargetHarness = createHarness(() => ({
       action: "hold",
@@ -1284,11 +1270,7 @@ function runTradingBotTests() {
     if (!postLossLatchHarness.botLogs.find((entry) => entry.message === "post_loss_architect_latch_activated")) {
       throw new Error("missing post_loss_architect_latch_activated log on losing close");
     }
-    if (originalLogType === undefined) {
-      delete process.env.LOG_TYPE;
-    } else {
-      process.env.LOG_TYPE = originalLogType;
-    }
+    process.env.LOG_TYPE = testDefaultLogType;
 
     clock += 80_000;
     postLossLatchHarness.store.updateBotState("bot_test", {
@@ -2673,11 +2655,7 @@ function runTradingBotTests() {
       strategyId: compactDedupDiagnosticsHarness.bot.strategy.id,
       tick: compactDedupTick
     });
-    if (originalLogType === undefined) {
-      delete process.env.LOG_TYPE;
-    } else {
-      process.env.LOG_TYPE = originalLogType;
-    }
+    process.env.LOG_TYPE = testDefaultLogType;
     if (compactDedupDiagnosticsCalls !== 0) {
       throw new Error(`compact deduped entry evaluation should skip full diagnostics construction: ${compactDedupDiagnosticsCalls}`);
     }
@@ -2815,11 +2793,7 @@ function runTradingBotTests() {
       strategyId: dedupDiagnosticsHarness.bot.strategy.id,
       tick: dedupTick
     });
-    if (originalLogType === undefined) {
-      delete process.env.LOG_TYPE;
-    } else {
-      process.env.LOG_TYPE = originalLogType;
-    }
+    process.env.LOG_TYPE = testDefaultLogType;
     if (dedupDiagnosticsCalls !== 1) {
       throw new Error(`deduped verbose entry evaluation should skip rebuilding diagnostics on unchanged repeats: ${dedupDiagnosticsCalls}`);
     }

@@ -4,12 +4,13 @@ async function runOrchestratorTests() {
   const { FakeWebSocket } = require("./fakeWebSocket");
   const originalWebSocket = global.WebSocket;
   global.WebSocket = FakeWebSocket;
-  const { parseArgs, startOrchestrator } = require("../src/core/orchestrator.ts");
+  const { parseArgs, resolveMtfRuntimeConfig, startOrchestrator } = require("../src/core/orchestrator.ts");
   const { UserStream } = require("../src/streams/userStream.ts");
   const originalMarketMode = process.env.MARKET_MODE;
   const originalExecutionMode = process.env.EXECUTION_MODE;
   const originalFeeBps = process.env.FEE_BPS;
   const originalLogType = process.env.LOG_TYPE;
+  const originalMtfEnabled = process.env.MTF_ENABLED;
   const originalPaperTrading = process.env.PAPER_TRADING;
   const originalUserStreamStart = UserStream.prototype.start;
   let userStreamStartCalls = 0;
@@ -34,6 +35,19 @@ async function runOrchestratorTests() {
     throw new Error("camelCase duration/summary CLI args are not parsed correctly");
   }
 
+  const mtfFromConfig = resolveMtfRuntimeConfig({ mtf: { enabled: true, frames: [{ id: "1m", horizonFrame: "short", windowMs: 60_000 }] } }, {});
+  if (mtfFromConfig.config.enabled !== true || mtfFromConfig.enabledSource !== "config") {
+    throw new Error(`MTF should default to config when env override is absent: ${JSON.stringify(mtfFromConfig)}`);
+  }
+  const mtfEnvOff = resolveMtfRuntimeConfig({ mtf: { enabled: true } }, { MTF_ENABLED: "false" });
+  if (mtfEnvOff.config.enabled !== false || mtfEnvOff.enabledSource !== "env") {
+    throw new Error(`MTF env override should disable config-enabled MTF: ${JSON.stringify(mtfEnvOff)}`);
+  }
+  const mtfEnvOn = resolveMtfRuntimeConfig({ mtf: { enabled: false } }, { MTF_ENABLED: "true" });
+  if (mtfEnvOn.config.enabled !== true || mtfEnvOn.enabledSource !== "env") {
+    throw new Error(`MTF env override should enable config-disabled MTF: ${JSON.stringify(mtfEnvOn)}`);
+  }
+
   const captured = [];
   const originalLog = console.log;
   console.log = (...args) => {
@@ -41,6 +55,7 @@ async function runOrchestratorTests() {
   };
   process.env.FEE_BPS = "17";
   process.env.LOG_TYPE = "verbose";
+  delete process.env.MTF_ENABLED;
 
   try {
     await startOrchestrator({ durationMs: 2200, serverEnabled: false, summaryEveryMs: 1000 });
@@ -55,6 +70,11 @@ async function runOrchestratorTests() {
       delete process.env.LOG_TYPE;
     } else {
       process.env.LOG_TYPE = originalLogType;
+    }
+    if (originalMtfEnabled === undefined) {
+      delete process.env.MTF_ENABLED;
+    } else {
+      process.env.MTF_ENABLED = originalMtfEnabled;
     }
   }
 
@@ -99,6 +119,11 @@ async function runOrchestratorTests() {
     || !transcript.includes("portfolioKillSwitchMode=block_entries_only")
     || !transcript.includes("portfolioKillSwitchMaxDrawdownPct=8")) {
     throw new Error(`orchestrator did not log portfolio kill switch readiness clearly\n${transcript}`);
+  }
+  if (!transcript.includes("mtfEnabled=true")
+    || !transcript.includes("mtfEnabledSource=config")
+    || !transcript.includes("mtfFrameCount=4")) {
+    throw new Error(`orchestrator did not log MTF readiness clearly\n${transcript}`);
   }
   if (!transcript.includes("architectWarmupMs=20000")
     || !transcript.includes("architectPublishIntervalMs=15000")

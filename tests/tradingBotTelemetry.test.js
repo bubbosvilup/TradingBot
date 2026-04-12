@@ -251,7 +251,10 @@ function runTradingBotTelemetryTests() {
     || compactBlockDescriptor.metadata.maxTargetDistancePctForShortHorizon !== 0.01
     || compactBlockDescriptor.metadata.mtfAdjustmentApplied !== false
     || compactBlockDescriptor.metadata.mtfParamFallbackReason !== "mtf_instability_above_threshold"
-    || compactBlockDescriptor.metadata.mtfResolvedTargetDistanceCapPct !== 0.01) {
+    || compactBlockDescriptor.metadata.mtfResolvedTargetDistanceCapPct !== 0.01
+    || compactBlockDescriptor.metadata.publishedFamily !== "mean_reversion"
+    || compactBlockDescriptor.metadata.publishedRegime !== "range"
+    || compactBlockDescriptor.metadata.targetFamily !== "mean_reversion") {
     throw new Error(`compact BLOCK_CHANGE metadata should carry MTF fallback target-distance fields: ${JSON.stringify(compactBlockDescriptor)}`);
   }
 

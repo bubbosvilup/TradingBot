@@ -14,7 +14,7 @@ Il progetto mantiene nel repository alcune fondamenta per lavori futuri come liv
 | Dashboard | Frontend statico servito da `public/` con asset JS browser-ready |
 | Backtest | Adapter moderno sopra il legacy, non ancora parita completa |
 | Short support | Preparazione avviata, non abilitato |
-| MTF | Infrastruttura e diagnostica presenti, disabilitato di default |
+| MTF | Infrastruttura e diagnostica presenti, abilitato nella config default e spegnibile via env |
 
 Nota importante:
 - `execution-mode=live` fallisce esplicitamente in bootstrap.
@@ -207,7 +207,7 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - `mtfMetaRegime`
   - `mtfReadyFrameCount`
   - `mtfSufficientFrames`
-- `mtf.enabled` non e abilitato nella config default corrente.
+- `mtf.enabled` e abilitato nella config default corrente; `MTF_ENABLED=false` lo spegne senza cambiare il JSON.
 
 ### RSI MTF cap resolution
 
@@ -311,7 +311,8 @@ Config rilevante per `rsiReversion`:
 ```
 
 Nota MTF:
-- la config default corrente non abilita `mtf.enabled`
+- la config default corrente abilita `mtf.enabled`
+- `MTF_ENABLED=false` spegne MTF a runtime; `MTF_ENABLED=true` lo forza acceso anche se il JSON viene spento
 - quando MTF e assente o disabilitato, il comportamento RSI resta baseline-identico
 
 ## Cosa fa oggi
@@ -415,6 +416,8 @@ LOG_TYPE=verbose|minimal|only_trades|strategy_debug
 ```
 
 Nota:
+- il default e `minimal`, orientato a log operativi compatti
+- `LOG_TYPE=verbose` mantiene i dump completi di contesto/feature per debug approfondito
 - gli eventi di rischio critici per max drawdown non vengono piu persi in `verbose`
 - il runtime continua a emettere metadata strutturati per stato, blocchi e chiusure
 

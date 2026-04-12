@@ -37,7 +37,7 @@ Priority notes:
 - P0 safety and quarantine work outranks convenience refactors.
 - Dashboard work should stay decoupled from core trading logic where possible.
 - Compact monitor work should stay read-only and separate from operator controls.
-- MTF work should remain behind `mtf.enabled`; raw timeframe mapping belongs in MTF frame config, not in downstream strategy/economics roles.
+- MTF work should remain behind `mtf.enabled` / `MTF_ENABLED`; raw timeframe mapping belongs in MTF frame config, not in downstream strategy/economics roles.
 - RSI target-distance permissiveness may only come from coherent MTF medium/long internal frames and must remain observable in telemetry.
 - Avoid broad rewrites while the runtime is under active refactor.
 - Treat short support as an audit-and-prep area until entry/exit/risk/UI semantics are explicitly upgraded end-to-end.

@@ -22,6 +22,16 @@
     "klineIntervals": ["1m", "5m", "1h"],
     "liveEmitIntervalMs": 250
   },
+  "mtf": {
+    "enabled": true,
+    "instabilityThreshold": 0.5,
+    "frames": [
+      { "id": "1m", "horizonFrame": "short", "windowMs": 60000 },
+      { "id": "5m", "horizonFrame": "short", "windowMs": 300000 },
+      { "id": "15m", "horizonFrame": "medium", "windowMs": 900000 },
+      { "id": "1h", "horizonFrame": "long", "windowMs": 3600000 }
+    ]
+  },
   "bots": [
     {
       "id": "bot_btc_trend",

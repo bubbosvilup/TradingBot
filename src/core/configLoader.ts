@@ -2,6 +2,7 @@
 
 import type { BotConfig } from "../types/bot.ts";
 import type { MarketStreamConfig, MarketMode } from "../types/market.ts";
+import type { MtfFrameConfig, MtfRuntimeConfig } from "../types/mtf.ts";
 import type { PortfolioKillSwitchConfig, RuntimeTuningConfig } from "../types/runtime.ts";
 
 const fs = require("node:fs");
@@ -10,6 +11,8 @@ const path = require("node:path");
 const VALID_RISK_PROFILES = new Set(["low", "medium", "high"]);
 const VALID_MARKET_PROVIDERS = new Set(["binance"]);
 const VALID_MARKET_STREAM_TYPES = new Set(["trade", "aggTrade"]);
+const VALID_MTF_HORIZON_FRAMES = new Set(["short", "medium", "long"]);
+const VALID_MTF_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 const VALID_RISK_OVERRIDE_FIELDS = new Set(["positionPct", "cooldownMs", "emergencyStopPct", "postExitReentryGuardMs", "exitConfirmationTicks", "minHoldMs"]);
 const VALID_PORTFOLIO_KILL_SWITCH_MODES = new Set(["block_entries_only"]);
 
@@ -32,6 +35,7 @@ class ConfigLoader {
     executionMode?: "paper" | "live";
     marketMode?: MarketMode;
     market?: MarketStreamConfig;
+    mtf?: MtfRuntimeConfig;
     portfolioKillSwitch?: PortfolioKillSwitchConfig;
     postLossLatchMinFreshPublications?: number;
     symbolStateRetentionMs?: number;
@@ -128,6 +132,7 @@ class ConfigLoader {
     marketMode?: string;
     market?: MarketStreamConfig | unknown;
     portfolioKillSwitch?: PortfolioKillSwitchConfig | unknown;
+    mtf?: MtfRuntimeConfig | unknown;
     postLossLatchMinFreshPublications?: number;
   }) {
     if (config.executionMode !== undefined) {
@@ -198,7 +203,52 @@ class ConfigLoader {
       }
     }
 
+    this.validateMtfConfig(config.mtf);
+
     this.validateRuntimeTuningConfig(config);
+  }
+
+  validateMtfConfig(mtfConfig?: MtfRuntimeConfig | unknown) {
+    if (mtfConfig === undefined) return;
+    if (!mtfConfig || typeof mtfConfig !== "object" || Array.isArray(mtfConfig)) {
+      throw new Error("bots.config.json has invalid mtf; expected an object");
+    }
+
+    const mtf = mtfConfig as MtfRuntimeConfig;
+    if (mtf.enabled !== undefined && typeof mtf.enabled !== "boolean") {
+      throw new Error(`bots.config.json has invalid mtf.enabled "${String(mtf.enabled)}"`);
+    }
+
+    if (mtf.instabilityThreshold !== undefined) {
+      const threshold = Number(mtf.instabilityThreshold);
+      if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+        throw new Error(`bots.config.json has invalid mtf.instabilityThreshold "${String(mtf.instabilityThreshold)}"`);
+      }
+    }
+
+    if (mtf.frames !== undefined) {
+      if (!Array.isArray(mtf.frames) || mtf.frames.length <= 0) {
+        throw new Error("bots.config.json has invalid mtf.frames; expected a non-empty array");
+      }
+
+      for (let index = 0; index < mtf.frames.length; index += 1) {
+        const frame = mtf.frames[index] as MtfFrameConfig;
+        const label = `bots.config.json mtf.frames[${index}]`;
+        if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+          throw new Error(`${label} is invalid; expected an object`);
+        }
+        if (!VALID_MTF_TIMEFRAMES.has(String(frame.id || "").trim())) {
+          throw new Error(`${label} has invalid id "${String(frame.id || "")}"`);
+        }
+        if (!VALID_MTF_HORIZON_FRAMES.has(String(frame.horizonFrame || "").trim())) {
+          throw new Error(`${label} has invalid horizonFrame "${String(frame.horizonFrame || "")}"`);
+        }
+        const windowMs = Number(frame.windowMs);
+        if (!Number.isFinite(windowMs) || windowMs < 5_000) {
+          throw new Error(`${label} has invalid windowMs "${String(frame.windowMs)}"`);
+        }
+      }
+    }
   }
 
   validateRuntimeTuningConfig(config: RuntimeTuningConfig) {

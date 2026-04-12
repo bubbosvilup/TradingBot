@@ -55,6 +55,15 @@ function runConfigLoaderTests() {
       provider: "binance",
       streamType: "trade",
       wsBaseUrl: "wss://stream.binance.com:9443"
+    },
+    mtf: {
+      enabled: true,
+      instabilityThreshold: 0.5,
+      frames: [
+        { id: "1m", horizonFrame: "short", windowMs: 60_000 },
+        { id: "15m", horizonFrame: "medium", windowMs: 900_000 },
+        { id: "1h", horizonFrame: "long", windowMs: 3_600_000 }
+      ]
     }
   });
 
@@ -62,6 +71,9 @@ function runConfigLoaderTests() {
     const loaded = new ConfigLoader(validRootDir).loadBotsConfig();
     if (!Array.isArray(loaded.bots) || loaded.bots.length !== 1 || loaded.bots[0].strategy !== "emaCross") {
       throw new Error(`valid config should still load normally: ${JSON.stringify(loaded)}`);
+    }
+    if (loaded.mtf?.enabled !== true || loaded.mtf?.frames?.[2]?.horizonFrame !== "long") {
+      throw new Error(`valid MTF config should load normally: ${JSON.stringify(loaded.mtf)}`);
     }
   } finally {
     fs.rmSync(validRootDir, { force: true, recursive: true });
@@ -124,6 +136,41 @@ function runConfigLoaderTests() {
       }
     ]
   }, "invalid market.provider");
+
+  expectConfigError({
+    mtf: {
+      enabled: "true"
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_mtf_enabled",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid mtf.enabled");
+
+  expectConfigError({
+    mtf: {
+      enabled: true,
+      frames: [
+        { id: "1m", horizonFrame: "intraday", windowMs: 60_000 }
+      ]
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_mtf_frame",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid horizonFrame");
 
   expectConfigError({
     bots: [

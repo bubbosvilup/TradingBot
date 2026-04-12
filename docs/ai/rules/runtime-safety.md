@@ -8,7 +8,7 @@ Current runtime posture:
 - the dashboard reads server/store state; it should not become a side channel for business logic
 - compact UI is served as a static observability surface; it must stay separate from operator controls and trading decisions
 - managed-recovery invalidation is now intentionally stricter than a single early `family_mismatch`
-- MTF context is optional and behind `mtf.enabled`; default config does not enable it
+- MTF context is optional and behind `mtf.enabled`; current default config enables it, and `MTF_ENABLED=false` disables it at runtime
 - `TradingBot` stays passive for MTF and may only pass published diagnostics through generic context/economics paths
 
 Safe-change rules:

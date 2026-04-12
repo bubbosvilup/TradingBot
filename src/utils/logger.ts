@@ -22,11 +22,12 @@ type LogCategory =
   | "other";
 
 function resolveLogType(value?: string | null): LogType {
-  const normalized = String(value || process.env.LOG_TYPE || "verbose").trim().replace(/^["']|["']$/g, "").toLowerCase();
+  const normalized = String(value || process.env.LOG_TYPE || "minimal").trim().replace(/^["']|["']$/g, "").toLowerCase();
   if (normalized === "minimal" || normalized === "only_trades" || normalized === "strategy_debug" || normalized === "silent") {
     return normalized;
   }
-  return "verbose";
+  if (normalized === "verbose") return "verbose";
+  return "minimal";
 }
 
 function categorizeEvent(scope: string, level: string, message: string): LogCategory {
@@ -110,7 +111,7 @@ const lastNoisyEmit = new Map<string, number>();
 
 function makeDedupeKey(message: string, metadata?: Record<string, unknown>): string {
   if (message === "BLOCK_CHANGE") {
-    return `BLOCK_CHANGE|${metadata?.botId || ""}|${metadata?.reason || ""}`;
+    return `BLOCK_CHANGE|${metadata?.botId || ""}|${metadata?.blockReason || metadata?.reason || ""}`;
   }
   if (message === "entry_blocked") {
     return `entry_blocked|${metadata?.botId || ""}|${metadata?.reason || ""}`;
@@ -119,9 +120,41 @@ function makeDedupeKey(message: string, metadata?: Record<string, unknown>): str
     return `managed_recovery_updated|${metadata?.botId || ""}|${metadata?.status || ""}`;
   }
   if (message === "architect_published") {
-    return `architect_published|${metadata?.botId || ""}|${metadata?.strategy || ""}`;
+    return `architect_published|${metadata?.symbol || ""}|${metadata?.publishedMarketRegime || metadata?.marketRegime || ""}|${metadata?.publishedRecommendedFamily || metadata?.recommendedFamily || ""}`;
   }
   return `${message}|${JSON.stringify(metadata || {})}`;
+}
+
+function compactArchitectMetadata(metadata?: Record<string, unknown>) {
+  if (!metadata) return metadata;
+  return {
+    candidateMarketRegime: metadata.candidateMarketRegime ?? null,
+    candidateRecommendedFamily: metadata.candidateRecommendedFamily ?? null,
+    candidateMtfAgreement: metadata.candidateMtfAgreement ?? null,
+    candidateMtfDominantFrame: metadata.candidateMtfDominantFrame ?? null,
+    candidateMtfEnabled: metadata.candidateMtfEnabled ?? false,
+    candidateMtfInstability: metadata.candidateMtfInstability ?? null,
+    candidateMtfMetaRegime: metadata.candidateMtfMetaRegime ?? null,
+    candidateMtfSufficientFrames: metadata.candidateMtfSufficientFrames ?? false,
+    previousRegime: metadata.previousRegime ?? null,
+    publishOutcome: metadata.publishOutcome ?? null,
+    publishedMarketRegime: metadata.publishedMarketRegime ?? null,
+    publishedRecommendedFamily: metadata.publishedRecommendedFamily ?? null,
+    publishedDecisionStrength: metadata.publishedDecisionStrength ?? null,
+    publishedMtfAgreement: metadata.publishedMtfAgreement ?? null,
+    publishedMtfDominantFrame: metadata.publishedMtfDominantFrame ?? null,
+    publishedMtfEnabled: metadata.publishedMtfEnabled ?? false,
+    publishedMtfInstability: metadata.publishedMtfInstability ?? null,
+    publishedMtfMetaRegime: metadata.publishedMtfMetaRegime ?? null,
+    publishedMtfSufficientFrames: metadata.publishedMtfSufficientFrames ?? false,
+    publisherChallengerCount: metadata.publisherChallengerCount ?? 0,
+    publisherChallengerRegime: metadata.publisherChallengerRegime ?? null,
+    publisherChallengerRequired: metadata.publisherChallengerRequired ?? null,
+    publisherHysteresisActive: metadata.publisherHysteresisActive ?? false,
+    symbol: metadata.symbol ?? null,
+    updatedAt: metadata.updatedAt ?? null,
+    via: metadata.via ?? null
+  };
 }
 
 function shouldSuppressNoisy(message: string, metadata?: Record<string, unknown>): boolean {
@@ -152,15 +185,10 @@ function createLogger(scope: string, options: { eventSink?: ((event: any) => voi
 
     const time = Date.now();
 
-    // Compact architect_published payload in minimal mode
+    // Keep full Architect feature/context dumps behind verbose logging.
     let compactMetadata = metadata;
-    if (logType === "minimal" && message === "architect_published" && metadata) {
-      compactMetadata = {
-        botId: metadata.botId,
-        strategy: metadata.strategy,
-        family: metadata.family,
-        confidence: metadata.confidence
-      };
+    if (logType !== "verbose" && (message === "architect_published" || message === "architect_changed")) {
+      compactMetadata = compactArchitectMetadata(metadata);
     }
 
     const suffix = compactMetadata && Object.keys(compactMetadata).length > 0
@@ -173,7 +201,7 @@ function createLogger(scope: string, options: { eventSink?: ((event: any) => voi
         category,
         level,
         message,
-        metadata: metadata || {},
+        metadata: compactMetadata || {},
         scope,
         time
       });
