@@ -20,9 +20,11 @@ Preserve behavior unless the task explicitly asks for semantic changes.
 
 ## Current role boundaries
 - `Context*` services: produce market/context inputs
+- `MtfContextService` / `mtfContextAggregator`: optional multi-timeframe context construction and internal horizon-frame diagnostics
 - `Architect*` services/coordinators: interpret/publish regime-family-usability state
 - `TradingBot`: top-level tick orchestration and execution coordination
-- `entryEconomicsEstimator`: strategy-specific entry edge formulas
+- `mtfParamResolver`: pure MTF-driven RSI entry hint/cap resolution from published internal frame diagnostics
+- `entryEconomicsEstimator`: strategy-specific entry edge formulas and resolved economics diagnostics
 - `postLossArchitectLatch`: post-loss re-entry defense
 - `architectCoordinator`: published Architect sync/usability/apply logic
 - `tradingBotTelemetry`: log/diagnostic metadata shaping
@@ -38,6 +40,7 @@ Avoid putting these back into `TradingBot`:
 - latch state machine logic
 - telemetry/log payload builders
 - entry debounce/gating reasoning
+- MTF interpretation, raw timeframe mapping, or strategy-specific MTF branching
 - open-attempt outcome shaping
 - close-outcome shaping
 

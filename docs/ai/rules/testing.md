@@ -12,6 +12,8 @@ Test expectations by change type:
 - `StateStore` changes: update `tests/stateStore.test.js`
 - dashboard/API changes: update `tests/systemServer.test.js` when behavior is observable through the server surface
 - runtime/bootstrap changes: update `tests/orchestrator.test.js`, `tests/runtime.test.js`, or stream/server tests as needed
+- MTF parameter resolution: update `tests/mtfParamResolver.test.js`, `tests/entryEconomicsEstimator.test.js`, and tick-path coverage only when runtime behavior is observable
+- telemetry-only MTF changes: update `tests/tradingBotTelemetry.test.js` and `tests/systemServer.test.js` before broad runtime tests
 
 Behavior-sensitive areas needing lock coverage:
 
@@ -22,6 +24,7 @@ Behavior-sensitive areas needing lock coverage:
 - post-loss latch semantics
 - entry gating and open attempt outcomes
 - short-horizon target-distance gating and RSI edge-floor behavior
+- MTF publish diagnostics and RSI MTF target-distance cap resolution diagnostics
 - exit reason shaping and lifecycle reporting
 - operator-facing telemetry fields consumed by dashboard/API
 
@@ -29,10 +32,15 @@ Current tests that should move with these behaviors:
 
 - `tests/architectCoordinator.test.js`: `architect_challenger_pending`
 - `tests/entryCoordinator.test.js`: `target_distance_exceeds_short_horizon`
+- `tests/entryEconomicsEstimator.test.js`: RSI MTF cap resolution into economics without moving gate ownership
 - `tests/exitDecisionCoordinator.test.js`: post-entry invalidation grace and `rsi_exit_floor_failed`
 - `tests/managedRecoveryExitResolver.test.js`: confirmed target beats invalidation
+- `tests/mtfParamResolver.test.js`: pure RSI MTF resolution and baseline fallback policy
+- `tests/mtfContextAggregator.test.js`: dominant internal MTF frame aggregation
+- `tests/mtfContextService.test.js`: optional MTF frame snapshot construction
+- `tests/tradingBotTelemetry.test.js`: compact/full telemetry field shape, including MTF entry diagnostics
 - `tests/tradingBot.test.js`: full tick-path coverage for the same runtime behaviors
-- `tests/systemServer.test.js`: compact monitor/API payload behavior
+- `tests/systemServer.test.js`: compact monitor/API payload behavior and published Architect diagnostics pass-through
 
 Do not:
 

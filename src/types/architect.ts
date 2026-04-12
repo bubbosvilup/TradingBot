@@ -1,5 +1,7 @@
 // Module responsibility: market-context labels and published architect decisions.
 
+import type { MtfPublishDiagnostics } from "./mtf.ts";
+
 export type MarketRegime = "trend" | "range" | "volatile" | "unclear";
 export type TrendBias = "bullish" | "bearish" | "neutral";
 export type VolatilityState = "compressed" | "normal" | "expanding";
@@ -41,6 +43,7 @@ export interface ArchitectAssessment {
   sufficientData: boolean;
   sampleSize: number;
   updatedAt: number;
+  mtf?: MtfPublishDiagnostics | null;
 }
 
 export interface ArchitectPublisherState {

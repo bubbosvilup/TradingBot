@@ -10,6 +10,7 @@ const { WSManager } = require("./wsManager.ts");
 const { IndicatorEngine } = require("../engines/indicatorEngine.ts");
 const { ExecutionEngine } = require("../engines/executionEngine.ts");
 const { ContextService } = require("./contextService.ts");
+const { MtfContextService } = require("./mtfContextService.ts");
 const { ArchitectService } = require("./architectService.ts");
 const { MarketStream } = require("../streams/marketStream.ts");
 const { UserStream } = require("../streams/userStream.ts");
@@ -165,6 +166,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const regimeDetector = new RegimeDetector();
   const contextBuilder = new ContextBuilder({ indicatorEngine });
   const botArchitect = new BotArchitect();
+  const mtfConfig = botConfig.mtf || {};
   const executionEngine = new ExecutionEngine({
     executionMode,
     feeRate: executionFee.feeRate,
@@ -205,10 +207,19 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     store,
     warmupMs: architectWarmupMs
   });
+  const mtfContextService = mtfConfig.enabled
+    ? new MtfContextService({
+        architect: botArchitect,
+        contextBuilder,
+        store
+      })
+    : null;
   const architectService = new ArchitectService({
     botArchitect,
     logger: logger.child("architect"),
     marketStream,
+    mtfConfig,
+    mtfContextService,
     publishIntervalMs: architectPublishIntervalMs,
     requiredConfirmations: 2,
     store,

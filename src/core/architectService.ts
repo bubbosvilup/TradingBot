@@ -1,9 +1,19 @@
 // Module responsibility: observe rolling context continuously and publish stable architect decisions on cadence.
 
-import type { ArchitectAssessment, ArchitectPublisherState, MarketRegime } from "../types/architect.ts";
+import type { ArchitectAssessment, ArchitectPublisherState, MarketRegime, RecommendedFamily } from "../types/architect.ts";
 import type { MarketTick } from "../types/market.ts";
+import type { MtfFrameConfig, MtfPublishDiagnostics, MtfSnapshot } from "../types/mtf.ts";
 
+const { aggregateMtfSnapshots } = require("../roles/mtfContextAggregator.ts");
 const { elapsedMs, startTimer } = require("../utils/timing.ts");
+
+const DEFAULT_MTF_FRAMES: MtfFrameConfig[] = [
+  { id: "1m", horizonFrame: "short", windowMs: 60_000 },
+  { id: "5m", horizonFrame: "short", windowMs: 300_000 },
+  { id: "15m", horizonFrame: "medium", windowMs: 900_000 },
+];
+const DEFAULT_MTF_INSTABILITY_THRESHOLD = 0.5;
+const MTF_MIN_READY_FRAMES = 2;
 
 class ArchitectService {
   store: any;
@@ -15,6 +25,10 @@ class ArchitectService {
   requiredConfirmations: number;
   subscriptions: Array<() => void>;
   warmupMs: number;
+  mtfEnabled: boolean;
+  mtfContextService: any;
+  mtfFrames: MtfFrameConfig[];
+  mtfInstabilityThreshold: number;
 
   constructor(deps: {
     store: any;
@@ -25,6 +39,12 @@ class ArchitectService {
     switchDelta?: number;
     requiredConfirmations?: number;
     warmupMs?: number;
+    mtfContextService?: any;
+    mtfConfig?: {
+      enabled?: boolean;
+      frames?: MtfFrameConfig[];
+      instabilityThreshold?: number;
+    };
   }) {
     this.store = deps.store;
     this.marketStream = deps.marketStream;
@@ -35,6 +55,10 @@ class ArchitectService {
     this.requiredConfirmations = Math.max(deps.requiredConfirmations || 2, 1);
     this.warmupMs = Math.max(deps.warmupMs || 30_000, 5_000);
     this.subscriptions = [];
+    this.mtfEnabled = Boolean(deps.mtfConfig?.enabled) && Boolean(deps.mtfContextService);
+    this.mtfContextService = deps.mtfContextService || null;
+    this.mtfFrames = deps.mtfConfig?.frames || DEFAULT_MTF_FRAMES;
+    this.mtfInstabilityThreshold = deps.mtfConfig?.instabilityThreshold ?? DEFAULT_MTF_INSTABILITY_THRESHOLD;
   }
 
   start(symbols: string[]) {
@@ -127,11 +151,11 @@ class ArchitectService {
     }
 
     const assessTimer = startTimer();
-    const assessment = this.botArchitect.assess(context);
+    const rawAssessment = this.botArchitect.assess(context);
     const architectAssessMs = elapsedMs(assessTimer);
-    this.store.setArchitectObservedAssessment(symbol, assessment);
+    this.store.setArchitectObservedAssessment(symbol, rawAssessment);
     const minPublishMaturity = Math.max(Number(this.botArchitect?.minMaturity) || 0, 0);
-    if (assessment.contextMaturity < minPublishMaturity) {
+    if (rawAssessment.contextMaturity < minPublishMaturity) {
       if (typeof this.store.recordTickLatencySample === "function") {
         this.store.recordTickLatencySample(symbol, {
           architectAssessMs,
@@ -139,11 +163,24 @@ class ArchitectService {
           architectPublishMs: 0
         }, observedAt);
       }
-      return assessment;
+      return rawAssessment;
+    }
+
+    // MTF consolidation: build multi-timeframe context and override candidate when enabled.
+    let assessment = rawAssessment;
+    let lastMtfSnapshot: MtfSnapshot | null = null;
+    if (this.mtfEnabled && this.mtfContextService) {
+      const frameSnapshots = this.mtfContextService.buildMtfSnapshots({
+        symbol,
+        now: observedAt,
+        frames: this.mtfFrames,
+      });
+      lastMtfSnapshot = aggregateMtfSnapshots(frameSnapshots, observedAt);
+      assessment = this.consolidateWithMtf(rawAssessment, lastMtfSnapshot);
     }
 
     const publishTimer = startTimer();
-    this.publish(symbol, assessment, observedAt, context);
+    this.publish(symbol, assessment, observedAt, context, lastMtfSnapshot);
     const architectPublishMs = elapsedMs(publishTimer);
     if (typeof this.store.recordTickLatencySample === "function") {
       this.store.recordTickLatencySample(symbol, {
@@ -155,12 +192,110 @@ class ArchitectService {
     return assessment;
   }
 
-  publish(symbol: string, candidate: ArchitectAssessment, observedAt: number, context: any) {
+  resolveRegimeFamily(regime: MarketRegime): RecommendedFamily {
+    if (regime === "trend") return "trend_following";
+    if (regime === "range") return "mean_reversion";
+    return "no_trade";
+  }
+
+  /**
+   * Consolidate a single-frame assessment with multi-timeframe consensus.
+   *
+   * Rules (in precedence order):
+   * 1. Insufficient ready frames → return baseline unchanged.
+   * 2. High instability (>= threshold) → force "unclear" / "no_trade", penalize confidence.
+   * 3. MTF metaRegime is "unclear" → force "unclear" / "no_trade", penalize confidence.
+   * 4. MTF metaRegime disagrees with candidate → override to MTF metaRegime, penalize confidence.
+   * 5. MTF agrees → keep candidate, apply small confidence penalty proportional to instability.
+   *
+   * MTF never makes a candidate more aggressive; it can only hold or degrade.
+   */
+  consolidateWithMtf(candidate: ArchitectAssessment, mtf: MtfSnapshot): ArchitectAssessment {
+    if (mtf.readyFrameCount < MTF_MIN_READY_FRAMES) {
+      return candidate;
+    }
+
+    const instability = mtf.instability;
+
+    // High instability → force unclear regardless of agreement.
+    if (instability >= this.mtfInstabilityThreshold) {
+      return {
+        ...candidate,
+        marketRegime: "unclear" as MarketRegime,
+        recommendedFamily: "no_trade" as RecommendedFamily,
+        confidence: Number((candidate.confidence * Math.max(0, 1 - instability)).toFixed(4)),
+        reasonCodes: [...new Set([...candidate.reasonCodes, "mtf_instability_override"])],
+      };
+    }
+
+    // MTF consensus is unclear → force unclear conservatively.
+    if (mtf.metaRegime === "unclear") {
+      return {
+        ...candidate,
+        marketRegime: "unclear" as MarketRegime,
+        recommendedFamily: "no_trade" as RecommendedFamily,
+        confidence: Number((candidate.confidence * Math.max(0, 1 - instability * 0.5)).toFixed(4)),
+        reasonCodes: [...new Set([...candidate.reasonCodes, "mtf_unclear_override"])],
+      };
+    }
+
+    // MTF disagrees with single-frame → override to MTF consensus.
+    if (mtf.metaRegime !== candidate.marketRegime) {
+      return {
+        ...candidate,
+        marketRegime: mtf.metaRegime,
+        recommendedFamily: this.resolveRegimeFamily(mtf.metaRegime),
+        confidence: Number((candidate.confidence * Math.max(0, 1 - instability * 0.5)).toFixed(4)),
+        reasonCodes: [...new Set([...candidate.reasonCodes, "mtf_regime_override"])],
+      };
+    }
+
+    // Agreement → slight confidence penalty proportional to residual instability.
+    if (instability > 0) {
+      return {
+        ...candidate,
+        confidence: Number((candidate.confidence * (1 - instability * 0.3)).toFixed(4)),
+        reasonCodes: [...new Set([...candidate.reasonCodes, "mtf_agreement_partial"])],
+      };
+    }
+
+    return candidate;
+  }
+
+  buildMtfDiagnostics(mtf: MtfSnapshot | null): MtfPublishDiagnostics | null {
+    if (!mtf) {
+      if (!this.mtfEnabled) {
+        return null;
+      }
+      return {
+        mtfEnabled: this.mtfEnabled,
+        mtfAgreement: null,
+        mtfDominantFrame: null,
+        mtfDominantTimeframe: null,
+        mtfInstability: null,
+        mtfMetaRegime: null,
+        mtfReadyFrameCount: 0,
+        mtfSufficientFrames: false,
+      };
+    }
+    return {
+      mtfEnabled: true,
+      mtfAgreement: Number((1 - mtf.instability).toFixed(4)),
+      mtfDominantFrame: mtf.dominantFrame,
+      mtfDominantTimeframe: mtf.dominantTimeframe,
+      mtfInstability: Number(mtf.instability.toFixed(4)),
+      mtfMetaRegime: mtf.metaRegime,
+      mtfReadyFrameCount: mtf.readyFrameCount,
+      mtfSufficientFrames: mtf.readyFrameCount >= MTF_MIN_READY_FRAMES,
+    };
+  }
+
+  publish(symbol: string, candidate: ArchitectAssessment, observedAt: number, context: any, mtfSnapshot?: MtfSnapshot | null) {
     const currentPublished = this.store.getArchitectPublishedAssessment(symbol);
     const currentPublisher = this.ensurePublisherState(symbol);
 
     if (!currentPublished) {
-      const baseline = this.createPublishedAssessment(candidate, observedAt);
+      const baseline = this.createPublishedAssessment(candidate, observedAt, mtfSnapshot || null);
       const nextPublisher = {
         ...currentPublisher,
         challengerCount: 0,
@@ -191,7 +326,7 @@ class ArchitectService {
     }
 
     if (candidate.marketRegime === currentPublished.marketRegime) {
-      const published = this.createPublishedAssessment(candidate, observedAt);
+      const published = this.createPublishedAssessment(candidate, observedAt, mtfSnapshot || null);
       const nextPublisher = {
         ...currentPublisher,
         challengerCount: 0,
@@ -228,7 +363,7 @@ class ArchitectService {
     const challengerCount = sameChallenger ? currentPublisher.challengerCount + 1 : 1;
 
     if (canImmediateSwitch || challengerCount >= this.requiredConfirmations) {
-      const published = this.createPublishedAssessment(candidate, observedAt);
+      const published = this.createPublishedAssessment(candidate, observedAt, mtfSnapshot || null);
       const nextPublisher = {
         ...currentPublisher,
         challengerCount: 0,
@@ -300,9 +435,11 @@ class ArchitectService {
     }));
   }
 
-  createPublishedAssessment(assessment: ArchitectAssessment, publishedAt: number): ArchitectAssessment {
+  createPublishedAssessment(assessment: ArchitectAssessment, publishedAt: number, mtfSnapshot?: MtfSnapshot | null): ArchitectAssessment {
+    const mtfDiagnostics = this.buildMtfDiagnostics(mtfSnapshot || null);
     return {
       ...assessment,
+      ...(mtfDiagnostics ? { mtf: mtfDiagnostics } : {}),
       summary: assessment.summary,
       updatedAt: publishedAt,
       confidence: Number(assessment.confidence.toFixed(4))
@@ -330,6 +467,8 @@ class ArchitectService {
     const features = params.context?.features || {};
     const candidate = params.candidate;
     const published = params.published;
+    const candidateMtf = candidate.mtf || null;
+    const publishedMtf = published.mtf || null;
     return {
       candidateAbsoluteConviction: this.roundMetric(candidate.absoluteConviction),
       candidateContextMaturity: this.roundMetric(candidate.contextMaturity),
@@ -342,6 +481,14 @@ class ArchitectService {
       candidateSummary: candidate.summary,
       candidateTrendScore: this.roundMetric(candidate.regimeScores?.trend),
       candidateVolatileScore: this.roundMetric(candidate.regimeScores?.volatile),
+      candidateMtfAgreement: candidateMtf ? candidateMtf.mtfAgreement : null,
+      candidateMtfDominantFrame: candidateMtf ? candidateMtf.mtfDominantFrame : null,
+      candidateMtfDominantTimeframe: candidateMtf ? candidateMtf.mtfDominantTimeframe : null,
+      candidateMtfEnabled: candidateMtf ? candidateMtf.mtfEnabled : false,
+      candidateMtfInstability: candidateMtf ? candidateMtf.mtfInstability : null,
+      candidateMtfMetaRegime: candidateMtf ? candidateMtf.mtfMetaRegime : null,
+      candidateMtfReadyFrameCount: candidateMtf ? candidateMtf.mtfReadyFrameCount : 0,
+      candidateMtfSufficientFrames: candidateMtf ? candidateMtf.mtfSufficientFrames : false,
       contextBreakoutInstability: this.roundMetric(features.breakoutInstability),
       contextBreakoutQuality: this.roundMetric(features.breakoutQuality),
       contextChopiness: this.roundMetric(features.chopiness),
@@ -372,6 +519,14 @@ class ArchitectService {
       publishedSummary: published.summary,
       publishedTrendScore: this.roundMetric(published.regimeScores?.trend),
       publishedVolatileScore: this.roundMetric(published.regimeScores?.volatile),
+      publishedMtfAgreement: publishedMtf ? publishedMtf.mtfAgreement : null,
+      publishedMtfDominantFrame: publishedMtf ? publishedMtf.mtfDominantFrame : null,
+      publishedMtfDominantTimeframe: publishedMtf ? publishedMtf.mtfDominantTimeframe : null,
+      publishedMtfEnabled: publishedMtf ? publishedMtf.mtfEnabled : false,
+      publishedMtfInstability: publishedMtf ? publishedMtf.mtfInstability : null,
+      publishedMtfMetaRegime: publishedMtf ? publishedMtf.mtfMetaRegime : null,
+      publishedMtfReadyFrameCount: publishedMtf ? publishedMtf.mtfReadyFrameCount : 0,
+      publishedMtfSufficientFrames: publishedMtf ? publishedMtf.mtfSufficientFrames : false,
       publisherChallengerCount: params.publisher.challengerCount,
       publisherChallengerRegime: params.publisher.challengerRegime || null,
       publisherChallengerRequired: params.publisher.challengerRequired,

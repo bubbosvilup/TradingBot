@@ -25,7 +25,8 @@ Default operating assumptions:
   - entry blocks on pending challenger hysteresis
   - managed-recovery invalidation has post-entry grace/confirmation
   - confirmed recovery target beats invalidation
-  - RSI entry economics include the short-horizon target-distance gate
+  - RSI entry economics can resolve the target-distance cap, but `entryCoordinator` owns the final target-distance gate
+  - MTF-disabled or absent diagnostics keep RSI behavior baseline-identical
 
 Primary use cases:
 

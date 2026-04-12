@@ -17,6 +17,8 @@ Do not do these regressions:
 - Do not move compact monitor shaping into trading decision modules.
 - Do not put managed-recovery invalidation confirmation policy into strategy modules.
 - Do not put short-horizon target-distance gating into individual signal formulas.
+- Do not put MTF interpretation, raw timeframe-label mapping, or strategy-specific MTF branching into `TradingBot`.
+- Do not let `mtfParamResolver` interpret raw market timeframe labels such as `1m`, `5m`, `15m`, or `1h`; it consumes only internal horizon frame ids.
 
 Expected ownership:
 
@@ -29,7 +31,11 @@ Expected ownership:
 Current ownership notes:
 
 - `architectCoordinator` owns published Architect usability, including entry blocking during pending challenger hysteresis.
-- `entryEconomicsEstimator` owns fee-aware edge estimates and target-distance diagnostics.
+- `MtfContextService` owns optional MTF frame snapshot construction behind `mtf.enabled`.
+- `mtfContextAggregator` owns MTF aggregation and dominant internal horizon-frame diagnostics.
+- MTF raw-to-internal frame mapping belongs in MTF frame configuration / aggregation plumbing.
+- `mtfParamResolver` owns pure MTF-driven RSI entry hint/cap resolution only.
+- `entryEconomicsEstimator` owns fee-aware edge estimates, resolved cap computation, and target-distance diagnostics.
 - `entryCoordinator` owns final entry gates, including `target_distance_exceeds_short_horizon`.
 - `exitDecisionCoordinator` owns managed-recovery invalidation confirmation/grace policy.
 - `managedRecoveryExitResolver` owns managed-recovery exit precedence.

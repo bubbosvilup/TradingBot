@@ -279,6 +279,213 @@ async function runArchitectCoordinatorTests() {
   if (raceState.activeStrategyId !== "emaCross" || raceResult.syncUpdate?.state?.architectSyncStatus !== "waiting_flat") {
     throw new Error(`position-open race should preserve waiting_flat sync state: ${JSON.stringify({ raceResult, raceState })}`);
   }
+
+  // ══════════════════════════════════════════════════════════
+  //  MTF usability integration tests
+  // ══════════════════════════════════════════════════════════
+
+  // ── MTF disabled: usability unchanged ──
+
+  {
+    const mtfOffClock = Date.now();
+    const mtfOffHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({ updatedAt: mtfOffClock }),
+      publisherState: { lastPublishedAt: mtfOffClock }
+    });
+    const mtfOffUsability = mtfOffHarness.coordinator.evaluateUsability({
+      activeStrategyId: "rsiReversion",
+      timestamp: mtfOffClock
+      // No MTF params → disabled
+    });
+    if (!mtfOffUsability.usable) {
+      throw new Error(`MTF-disabled: usability should be unchanged, blockReason: ${mtfOffUsability.blockReason}`);
+    }
+  }
+
+  // ── MTF enabled: low instability does NOT block ──
+
+  {
+    const mtfLowClock = Date.now();
+    const mtfLowHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({ updatedAt: mtfLowClock }),
+      publisherState: { lastPublishedAt: mtfLowClock }
+    });
+    const mtfLowUsability = mtfLowHarness.coordinator.evaluateUsability({
+      activeStrategyId: "rsiReversion",
+      timestamp: mtfLowClock,
+      mtfEnabled: true,
+      mtfSufficientFrames: true,
+      mtfInstability: 0.2,
+      mtfAgreement: 0.8,
+      mtfDominantTimeframe: "5m"
+    });
+    if (!mtfLowUsability.usable || mtfLowUsability.blockReason !== null) {
+      throw new Error(`MTF low instability: should still be usable, blockReason: ${mtfLowUsability.blockReason}`);
+    }
+  }
+
+  // ── MTF enabled: high instability blocks usability ──
+
+  {
+    const mtfHighClock = Date.now();
+    const mtfHighHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({ updatedAt: mtfHighClock }),
+      publisherState: { lastPublishedAt: mtfHighClock }
+    });
+    const mtfHighUsability = mtfHighHarness.coordinator.evaluateUsability({
+      activeStrategyId: "rsiReversion",
+      timestamp: mtfHighClock,
+      mtfEnabled: true,
+      mtfSufficientFrames: true,
+      mtfInstability: 0.7,
+      mtfAgreement: 0.3,
+      mtfDominantTimeframe: null
+    });
+    if (mtfHighUsability.usable || mtfHighUsability.blockReason !== "mtf_instability_high") {
+      throw new Error(`MTF high instability: should block with mtf_instability_high, got: ${mtfHighUsability.blockReason}`);
+    }
+  }
+
+  // ── MTF enabled but insufficient frames: does NOT block ──
+
+  {
+    const mtfFewClock = Date.now();
+    const mtfFewHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({ updatedAt: mtfFewClock }),
+      publisherState: { lastPublishedAt: mtfFewClock }
+    });
+    const mtfFewUsability = mtfFewHarness.coordinator.evaluateUsability({
+      activeStrategyId: "rsiReversion",
+      timestamp: mtfFewClock,
+      mtfEnabled: true,
+      mtfSufficientFrames: false,
+      mtfInstability: 0.9
+    });
+    if (!mtfFewUsability.usable || mtfFewUsability.blockReason !== null) {
+      throw new Error(`MTF insufficient frames: should not block even with high instability, got: ${mtfFewUsability.blockReason}`);
+    }
+  }
+
+  // ── MTF enabled=false: high instability does NOT block ──
+
+  {
+    const mtfDisClock = Date.now();
+    const mtfDisHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({ updatedAt: mtfDisClock }),
+      publisherState: { lastPublishedAt: mtfDisClock }
+    });
+    const mtfDisUsability = mtfDisHarness.coordinator.evaluateUsability({
+      activeStrategyId: "rsiReversion",
+      timestamp: mtfDisClock,
+      mtfEnabled: false,
+      mtfSufficientFrames: true,
+      mtfInstability: 0.9
+    });
+    if (!mtfDisUsability.usable || mtfDisUsability.blockReason !== null) {
+      throw new Error(`MTF disabled flag: should not block, got: ${mtfDisUsability.blockReason}`);
+    }
+  }
+
+  // ── Precedence: architect_challenger_pending wins over mtf_instability_high ──
+
+  {
+    const precClock = Date.now();
+    const precHarness = createCoordinatorHarness({
+      strategy: "rsiReversion",
+      publishedArchitect: createPublishedArchitect({
+        recommendedFamily: "mean_reversion",
+        updatedAt: precClock
+      }),
+      publisherState: {
+        challengerCount: 1,
+        challengerRegime: "trend",
+        hysteresisActive: true,
+        lastPublishedAt: precClock
+      }
+    });
+    const precUsability = precHarness.coordinator.evaluateUsability({
+      activeStrategyId: "rsiReversion",
+      timestamp: precClock,
+      mtfEnabled: true,
+      mtfSufficientFrames: true,
+      mtfInstability: 0.9
+    });
+    if (precUsability.blockReason !== "architect_challenger_pending") {
+      throw new Error(`Precedence: architect_challenger_pending should win over MTF, got: ${precUsability.blockReason}`);
+    }
+  }
+
+  // ── Precedence: architect_stale wins over mtf_instability_high ──
+
+  {
+    const staleMtfClock = Date.now();
+    const staleMtfHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: staleMtfClock - 180_000
+      }),
+      publisherState: {
+        lastPublishedAt: staleMtfClock - 180_000,
+        publishIntervalMs: 30_000
+      }
+    });
+    const staleMtfUsability = staleMtfHarness.coordinator.evaluateUsability({
+      activeStrategyId: "emaCross",
+      timestamp: staleMtfClock,
+      mtfEnabled: true,
+      mtfSufficientFrames: true,
+      mtfInstability: 0.9
+    });
+    if (staleMtfUsability.blockReason !== "architect_stale") {
+      throw new Error(`Precedence: architect_stale should win over MTF, got: ${staleMtfUsability.blockReason}`);
+    }
+  }
+
+  // ── Precedence: architect_unclear wins over mtf_instability_high ──
+
+  {
+    const unclearMtfClock = Date.now();
+    const unclearMtfHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({
+        marketRegime: "unclear",
+        recommendedFamily: "no_trade",
+        updatedAt: unclearMtfClock
+      }),
+      publisherState: { lastPublishedAt: unclearMtfClock }
+    });
+    const unclearMtfUsability = unclearMtfHarness.coordinator.evaluateUsability({
+      activeStrategyId: "emaCross",
+      timestamp: unclearMtfClock,
+      mtfEnabled: true,
+      mtfSufficientFrames: true,
+      mtfInstability: 0.9
+    });
+    if (unclearMtfUsability.blockReason !== "architect_unclear") {
+      throw new Error(`Precedence: architect_unclear should win over MTF, got: ${unclearMtfUsability.blockReason}`);
+    }
+  }
+
+  // ── Precedence: architect_low_maturity wins over mtf_instability_high ──
+
+  {
+    const matMtfClock = Date.now();
+    const matMtfHarness = createCoordinatorHarness({
+      publishedArchitect: createPublishedArchitect({
+        contextMaturity: 0.1,
+        updatedAt: matMtfClock
+      }),
+      publisherState: { lastPublishedAt: matMtfClock }
+    });
+    const matMtfUsability = matMtfHarness.coordinator.evaluateUsability({
+      activeStrategyId: "emaCross",
+      timestamp: matMtfClock,
+      mtfEnabled: true,
+      mtfSufficientFrames: true,
+      mtfInstability: 0.9
+    });
+    if (matMtfUsability.blockReason !== "architect_low_maturity") {
+      throw new Error(`Precedence: architect_low_maturity should win over MTF, got: ${matMtfUsability.blockReason}`);
+    }
+  }
 }
 
 module.exports = {

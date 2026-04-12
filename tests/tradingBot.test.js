@@ -2292,6 +2292,103 @@ function runTradingBotTests() {
       throw new Error(`entry gate should enforce the configured strategy-specific net edge threshold: ${JSON.stringify(strictThresholdGate.diagnostics)}`);
     }
 
+    clock += 10_000;
+    const targetDistanceIndicatorSnapshot = {
+      emaBaseline: 100,
+      emaFast: 99.9,
+      emaSlow: 99.7,
+      momentum: 0.02,
+      rsi: 24,
+      volatility: 0.01
+    };
+    const baselineTargetDistanceHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"],
+      side: "long"
+    }), {
+      indicatorSnapshot: targetDistanceIndicatorSnapshot,
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion"
+    });
+    baselineTargetDistanceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    baselineTargetDistanceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const baselineTargetDistanceLog = baselineTargetDistanceHarness.botLogs.find((entry) =>
+      entry.message === "entry_gate_blocked"
+      && entry.metadata.blockReason === "target_distance_exceeds_short_horizon"
+    );
+    if (baselineTargetDistanceHarness.store.getPosition("bot_test") || !baselineTargetDistanceLog || baselineTargetDistanceLog.metadata.maxTargetDistancePctForShortHorizon !== 0.01) {
+      throw new Error(`non-MTF RSI path should keep baseline target-distance blocking: ${JSON.stringify(baselineTargetDistanceLog)}`);
+    }
+
+    clock += 10_000;
+    const mtfMediumTargetDistanceHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"],
+      side: "long"
+    }), {
+      indicatorSnapshot: targetDistanceIndicatorSnapshot,
+      publishedArchitect: createPublishedArchitect({
+        mtf: {
+          mtfAgreement: 0.8,
+          mtfDominantFrame: "medium",
+          mtfDominantTimeframe: "15m",
+          mtfEnabled: true,
+          mtfInstability: 0.2,
+          mtfMetaRegime: "range",
+          mtfReadyFrameCount: 3,
+          mtfSufficientFrames: true
+        },
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion"
+    });
+    mtfMediumTargetDistanceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    mtfMediumTargetDistanceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const mtfMediumAllowedLog = mtfMediumTargetDistanceHarness.botLogs.find((entry) => entry.message === "entry_gate_allowed");
+    if (!mtfMediumTargetDistanceHarness.store.getPosition("bot_test") || !mtfMediumAllowedLog || mtfMediumAllowedLog.metadata.maxTargetDistancePctForShortHorizon !== 0.015 || mtfMediumAllowedLog.metadata.mtfAdjustmentApplied !== true) {
+      throw new Error(`coherent medium MTF should widen the cap enough for the same entry: ${JSON.stringify(mtfMediumAllowedLog)}`);
+    }
+
+    clock += 10_000;
+    const mtfUnstableTargetDistanceHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.95,
+      reason: ["buy_signal"],
+      side: "long"
+    }), {
+      indicatorSnapshot: targetDistanceIndicatorSnapshot,
+      publishedArchitect: createPublishedArchitect({
+        mtf: {
+          mtfAgreement: 0.9,
+          mtfDominantFrame: "medium",
+          mtfDominantTimeframe: "15m",
+          mtfEnabled: true,
+          mtfInstability: 0.26,
+          mtfMetaRegime: "range",
+          mtfReadyFrameCount: 3,
+          mtfSufficientFrames: true
+        },
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion"
+    });
+    mtfUnstableTargetDistanceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    mtfUnstableTargetDistanceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const mtfUnstableBlockedLog = mtfUnstableTargetDistanceHarness.botLogs.find((entry) =>
+      entry.message === "entry_gate_blocked"
+      && entry.metadata.blockReason === "target_distance_exceeds_short_horizon"
+    );
+    if (mtfUnstableTargetDistanceHarness.store.getPosition("bot_test") || !mtfUnstableBlockedLog || mtfUnstableBlockedLog.metadata.maxTargetDistancePctForShortHorizon !== 0.01 || mtfUnstableBlockedLog.metadata.mtfParamFallbackReason !== "mtf_instability_above_threshold") {
+      throw new Error(`below-coherence MTF should keep baseline target-distance blocking: ${JSON.stringify(mtfUnstableBlockedLog)}`);
+    }
+
     const boundedReversionEconomics = edgeHarness.bot.estimateEntryEconomics({
       context: {
         indicators: {

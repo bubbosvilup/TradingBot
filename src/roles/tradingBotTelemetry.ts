@@ -216,10 +216,17 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       expectedNetEdgePct: metadata.expectedNetEdgePct ?? null,
       family: metadata.publishedFamily || metadata.targetFamily || null,
       latestPrice: metadata.latestPrice ?? null,
+      maxTargetDistancePctForShortHorizon: metadata.maxTargetDistancePctForShortHorizon ?? null,
+      mtfAdjustmentApplied: metadata.mtfAdjustmentApplied ?? null,
+      mtfDominantFrame: metadata.mtfDominantFrame ?? null,
+      mtfParamFallbackReason: metadata.mtfParamFallbackReason ?? null,
+      mtfParamResolutionReason: metadata.mtfParamResolutionReason ?? null,
+      mtfResolvedTargetDistanceCapPct: metadata.mtfResolvedTargetDistanceCapPct ?? null,
       regime: metadata.publishedRegime || null,
       rsi: metadata.strategyRsi ?? null,
       strategy: metadata.strategy || strategyId,
-      symbol: this.symbol
+      symbol: this.symbol,
+      targetDistancePct: metadata.targetDistancePct ?? null
     };
   }
 
@@ -284,9 +291,16 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       entrySignalStreak: metadata.entrySignalStreak ?? 0,
       expectedNetEdgePct: metadata.expectedNetEdgePct ?? null,
       latestPrice: metadata.latestPrice ?? null,
+      maxTargetDistancePctForShortHorizon: metadata.maxTargetDistancePctForShortHorizon ?? null,
+      mtfAdjustmentApplied: metadata.mtfAdjustmentApplied ?? null,
+      mtfDominantFrame: metadata.mtfDominantFrame ?? null,
+      mtfParamFallbackReason: metadata.mtfParamFallbackReason ?? null,
+      mtfParamResolutionReason: metadata.mtfParamResolutionReason ?? null,
+      mtfResolvedTargetDistanceCapPct: metadata.mtfResolvedTargetDistanceCapPct ?? null,
       riskReason: metadata.riskReason || null,
       strategy: metadata.strategy || strategyId,
-      symbol: this.symbol
+      symbol: this.symbol,
+      targetDistancePct: metadata.targetDistancePct ?? null
     };
 
     return {
@@ -377,6 +391,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     const strategyRsi = Number.isFinite(Number(strategyRsiRaw))
       ? Number(Number(strategyRsiRaw).toFixed(4))
       : null;
+    const mtfParamResolution = params.economics.mtfParamResolution || null;
 
     return {
       allowReason: params.allowReason || null,
@@ -390,12 +405,19 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       expectedGrossEdgePct: Number(params.economics.expectedGrossEdgePct.toFixed(4)),
       expectedNetEdgePct: Number(params.economics.expectedNetEdgePct.toFixed(4)),
       latestPrice: Number(Number(params.tick?.price || 0).toFixed(4)),
+      maxTargetDistancePctForShortHorizon: this.toFixedNumberOrNull(params.economics.maxTargetDistancePctForShortHorizon, 4),
+      mtfAdjustmentApplied: mtfParamResolution?.mtfAdjustmentApplied ?? null,
+      mtfDominantFrame: mtfParamResolution?.dominantTimeframe ?? null,
+      mtfParamFallbackReason: mtfParamResolution?.fallbackReason ?? null,
+      mtfParamResolutionReason: mtfParamResolution?.coherenceReason ?? null,
+      mtfResolvedTargetDistanceCapPct: this.toFixedNumberOrNull(mtfParamResolution?.resolvedTargetDistanceCapPct, 4),
       outcome: params.outcome,
       publishedFamily: architect?.recommendedFamily || null,
       publishedRegime: architect?.marketRegime || null,
       riskReason: params.riskGate?.reason || null,
       strategy: params.strategyId,
       strategyRsi,
+      targetDistancePct: this.toFixedNumberOrNull(params.economics.targetDistancePct, 4),
       targetFamily: params.architectState.actionableFamily || null
     };
   }
@@ -470,6 +492,8 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     const tickSymbolMatch = tickSymbol ? tickSymbol === this.symbol : null;
     const debounceRequired = params.profile?.entryDebounceTicks ?? null;
     const entrySignalStreak = signalState?.entrySignalStreak ?? state.entrySignalStreak ?? 0;
+    const mtfParamResolution = params.economics.mtfParamResolution || null;
+    const publishedMtf = architect?.mtf || null;
 
     return {
       architectAuthoritative: Boolean(architect),
@@ -519,6 +543,15 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       maxTargetDistancePctForShortHorizon: Number.isFinite(Number(params.economics.maxTargetDistancePctForShortHorizon))
         ? Number(Number(params.economics.maxTargetDistancePctForShortHorizon).toFixed(4))
         : null,
+      mtfAdjustmentApplied: mtfParamResolution?.mtfAdjustmentApplied ?? null,
+      mtfDominantFrame: mtfParamResolution?.dominantTimeframe ?? null,
+      mtfParamFallbackReason: mtfParamResolution?.fallbackReason ?? null,
+      mtfParamResolutionReason: mtfParamResolution?.coherenceReason ?? null,
+      mtfResolvedTargetDistanceCapPct: Number.isFinite(Number(mtfParamResolution?.resolvedTargetDistanceCapPct))
+        ? Number(Number(mtfParamResolution?.resolvedTargetDistanceCapPct).toFixed(4))
+        : null,
+      mtfTargetDistanceProfile: mtfParamResolution?.targetDistanceProfile ?? null,
+      mtfDominantTimeframe: mtfParamResolution?.dominantTimeframe ?? null,
       minExpectedNetEdgePct: Number(params.economics.minExpectedNetEdgePct.toFixed(4)),
       minNotionalUsdt: Number(params.tradeConstraints.minNotionalUsdt.toFixed(4)),
       minQuantity: Number(params.tradeConstraints.minQuantity.toFixed(8)),
@@ -535,6 +568,13 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       publisherLastObservedAt: params.architectState.publisher?.lastObservedAt || null,
       publisherLastPublishedAt: params.architectState.publisher?.lastPublishedAt || null,
       publishedFamily: architect?.recommendedFamily || null,
+      publishedMtfAgreement: publishedMtf ? publishedMtf.mtfAgreement : null,
+      publishedMtfDominantFrame: publishedMtf ? publishedMtf.mtfDominantFrame : null,
+      publishedMtfDominantTimeframe: publishedMtf ? publishedMtf.mtfDominantTimeframe : null,
+      publishedMtfEnabled: publishedMtf ? publishedMtf.mtfEnabled : false,
+      publishedMtfInstability: publishedMtf ? publishedMtf.mtfInstability : null,
+      publishedMtfMetaRegime: publishedMtf ? publishedMtf.mtfMetaRegime : null,
+      publishedMtfSufficientFrames: publishedMtf ? publishedMtf.mtfSufficientFrames : false,
       publishedRegime: architect?.marketRegime || null,
       publishedUpdatedAt: architect?.updatedAt || null,
       quantity: Number.isFinite(Number(params.quantity)) ? Number(Number(params.quantity).toFixed(8)) : 0,

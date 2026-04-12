@@ -8,6 +8,8 @@ Current runtime posture:
 - the dashboard reads server/store state; it should not become a side channel for business logic
 - compact UI is served as a static observability surface; it must stay separate from operator controls and trading decisions
 - managed-recovery invalidation is now intentionally stricter than a single early `family_mismatch`
+- MTF context is optional and behind `mtf.enabled`; default config does not enable it
+- `TradingBot` stays passive for MTF and may only pass published diagnostics through generic context/economics paths
 
 Safe-change rules:
 
@@ -17,6 +19,8 @@ Safe-change rules:
 - preserve startup failures that prevent unsupported live execution
 - preserve protective-stop priority when changing invalidation or recovery ordering
 - preserve entry blocking during Architect challenger hysteresis
+- preserve baseline-identical RSI entry behavior when MTF diagnostics are absent or disabled
+- keep MTF raw timeframe mapping in frame config / aggregation plumbing, not in `TradingBot` or downstream strategy logic
 
 P0-specific guidance:
 

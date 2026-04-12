@@ -16,6 +16,8 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: realign runtime telemetry and fee-aware economics.
 - Completed: add a portfolio-wide kill switch.
 - Completed: add deterministic short-horizon entry sanity for RSI target distance.
+- Completed: add MTF-aware RSI target-distance cap resolution with baseline-identical disabled behavior.
+- Completed: expose MTF publish and RSI entry cap-resolution diagnostics in full and compact telemetry.
 - Continue: reduce architect/latch/publish cadence rigidity where evidence shows churn remains.
 
 ## P2
@@ -35,5 +37,7 @@ Priority notes:
 - P0 safety and quarantine work outranks convenience refactors.
 - Dashboard work should stay decoupled from core trading logic where possible.
 - Compact monitor work should stay read-only and separate from operator controls.
+- MTF work should remain behind `mtf.enabled`; raw timeframe mapping belongs in MTF frame config, not in downstream strategy/economics roles.
+- RSI target-distance permissiveness may only come from coherent MTF medium/long internal frames and must remain observable in telemetry.
 - Avoid broad rewrites while the runtime is under active refactor.
 - Treat short support as an audit-and-prep area until entry/exit/risk/UI semantics are explicitly upgraded end-to-end.

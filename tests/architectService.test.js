@@ -378,6 +378,256 @@ function runArchitectServiceTests() {
   if (!switchedAudit || switchedAudit.metadata.publisherLastRegimeSwitchAt !== 90_000 || switchedAudit.metadata.publisherLastRegimeSwitchFrom !== "trend" || switchedAudit.metadata.publisherLastRegimeSwitchTo !== "range") {
     throw new Error("architect_changed diagnostics are missing published regime switch metadata");
   }
+
+  // ══════════════════════════════════════════════════════════
+  //  MTF integration tests
+  // ══════════════════════════════════════════════════════════
+
+  // ── MTF disabled: baseline behavior unchanged ──
+
+  {
+    const mtfOffStore = new StateStore();
+    const mtfOffLogs = [];
+    const mtfOffService = new ArchitectService({
+      botArchitect: {
+        assess(context) {
+          return createAssessment(context.symbol, "trend", "trend_following", {
+            range: 0.24, trend: 0.67, unclear: 0.11, volatile: 0.15
+          }, context.observedAt);
+        }
+      },
+      logger: { info(event, metadata) { mtfOffLogs.push({ event, metadata }); } },
+      marketStream: { subscribe() { return () => {}; } },
+      publishIntervalMs: 30_000,
+      requiredConfirmations: 2,
+      store: mtfOffStore,
+      switchDelta: 0.12,
+      // No mtfConfig or mtfContextService → MTF disabled
+    });
+    mtfOffStore.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "trend"));
+    mtfOffService.observe(symbol, 30_000);
+    const mtfOffPublished = mtfOffStore.getArchitectPublishedAssessment(symbol);
+    if (!mtfOffPublished || mtfOffPublished.marketRegime !== "trend") {
+      throw new Error("MTF-disabled: baseline publish should be unchanged (trend)");
+    }
+    if (mtfOffPublished.recommendedFamily !== "trend_following") {
+      throw new Error("MTF-disabled: baseline family should be unchanged (trend_following)");
+    }
+  }
+
+  // ── MTF enabled with stable aligned frames: consolidated publish keeps regime ──
+
+  {
+    const mtfAlignedStore = new StateStore();
+    const mtfAlignedLogs = [];
+    const mtfAlignedService = new ArchitectService({
+      botArchitect: {
+        assess(context) {
+          return createAssessment(context.symbol, "trend", "trend_following", {
+            range: 0.24, trend: 0.67, unclear: 0.11, volatile: 0.15
+          }, context.observedAt);
+        }
+      },
+      logger: { info(event, metadata) { mtfAlignedLogs.push({ event, metadata }); } },
+      marketStream: { subscribe() { return () => {}; } },
+      publishIntervalMs: 30_000,
+      requiredConfirmations: 2,
+      store: mtfAlignedStore,
+      switchDelta: 0.12,
+      mtfContextService: {
+        buildMtfSnapshots() {
+          return [
+            { timeframe: "1m", horizonFrame: "short", regime: "trend", trendBias: "bullish", volatilityState: "normal", structureState: "trending", confidence: 0.7, ready: true, observedAt: 30_000 },
+            { timeframe: "5m", horizonFrame: "short", regime: "trend", trendBias: "bullish", volatilityState: "normal", structureState: "trending", confidence: 0.8, ready: true, observedAt: 30_000 },
+            { timeframe: "15m", horizonFrame: "medium", regime: "trend", trendBias: "bullish", volatilityState: "normal", structureState: "trending", confidence: 0.75, ready: true, observedAt: 30_000 },
+          ];
+        }
+      },
+      mtfConfig: { enabled: true },
+    });
+    mtfAlignedStore.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "trend"));
+    mtfAlignedService.observe(symbol, 30_000);
+    const mtfAlignedPublished = mtfAlignedStore.getArchitectPublishedAssessment(symbol);
+    if (!mtfAlignedPublished || mtfAlignedPublished.marketRegime !== "trend") {
+      throw new Error("MTF aligned: stable agreement should keep trend regime");
+    }
+    if (mtfAlignedPublished.recommendedFamily !== "trend_following") {
+      throw new Error("MTF aligned: stable agreement should keep trend_following family");
+    }
+    if (mtfAlignedPublished.mtf?.mtfDominantFrame !== "short" || mtfAlignedLogs[0]?.metadata?.publishedMtfDominantFrame !== "short") {
+      throw new Error(`MTF aligned: publish should expose dominant internal frame: ${JSON.stringify(mtfAlignedPublished.mtf)}`);
+    }
+  }
+
+  // ── MTF enabled with conflicting frames: instability forces unclear ──
+
+  {
+    const mtfConflictStore = new StateStore();
+    const mtfConflictLogs = [];
+    const mtfConflictService = new ArchitectService({
+      botArchitect: {
+        assess(context) {
+          return createAssessment(context.symbol, "trend", "trend_following", {
+            range: 0.24, trend: 0.67, unclear: 0.11, volatile: 0.15
+          }, context.observedAt);
+        }
+      },
+      logger: { info(event, metadata) { mtfConflictLogs.push({ event, metadata }); } },
+      marketStream: { subscribe() { return () => {}; } },
+      publishIntervalMs: 30_000,
+      requiredConfirmations: 2,
+      store: mtfConflictStore,
+      switchDelta: 0.12,
+      mtfContextService: {
+        buildMtfSnapshots() {
+          // 1 trend, 1 range, 1 volatile → tied, instability = 1
+          return [
+            { timeframe: "1m", horizonFrame: "short", regime: "trend", trendBias: "bullish", volatilityState: "normal", structureState: "trending", confidence: 0.6, ready: true, observedAt: 30_000 },
+            { timeframe: "5m", horizonFrame: "short", regime: "range", trendBias: "neutral", volatilityState: "normal", structureState: "choppy", confidence: 0.5, ready: true, observedAt: 30_000 },
+            { timeframe: "15m", horizonFrame: "medium", regime: "volatile", trendBias: "bearish", volatilityState: "expanding", structureState: "choppy", confidence: 0.4, ready: true, observedAt: 30_000 },
+          ];
+        }
+      },
+      mtfConfig: { enabled: true, instabilityThreshold: 0.5 },
+    });
+    mtfConflictStore.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "trend"));
+    mtfConflictService.observe(symbol, 30_000);
+    const mtfConflictPublished = mtfConflictStore.getArchitectPublishedAssessment(symbol);
+    if (!mtfConflictPublished || mtfConflictPublished.marketRegime !== "unclear") {
+      throw new Error(`MTF conflict: high instability should force unclear, got ${mtfConflictPublished?.marketRegime}`);
+    }
+    if (mtfConflictPublished.recommendedFamily !== "no_trade") {
+      throw new Error(`MTF conflict: high instability should force no_trade, got ${mtfConflictPublished?.recommendedFamily}`);
+    }
+  }
+
+  // ── MTF enabled with disagreement (not high instability): regime override ──
+
+  {
+    const mtfOverrideStore = new StateStore();
+    const mtfOverrideLogs = [];
+    const mtfOverrideService = new ArchitectService({
+      botArchitect: {
+        assess(context) {
+          return createAssessment(context.symbol, "trend", "trend_following", {
+            range: 0.24, trend: 0.67, unclear: 0.11, volatile: 0.15
+          }, context.observedAt);
+        }
+      },
+      logger: { info(event, metadata) { mtfOverrideLogs.push({ event, metadata }); } },
+      marketStream: { subscribe() { return () => {}; } },
+      publishIntervalMs: 30_000,
+      requiredConfirmations: 2,
+      store: mtfOverrideStore,
+      switchDelta: 0.12,
+      mtfContextService: {
+        buildMtfSnapshots() {
+          // 2 range, 1 trend → majority is range, instability = 1/3 (~0.33, below 0.5)
+          return [
+            { timeframe: "1m", horizonFrame: "short", regime: "trend", trendBias: "bullish", volatilityState: "normal", structureState: "trending", confidence: 0.6, ready: true, observedAt: 30_000 },
+            { timeframe: "5m", horizonFrame: "short", regime: "range", trendBias: "neutral", volatilityState: "normal", structureState: "choppy", confidence: 0.7, ready: true, observedAt: 30_000 },
+            { timeframe: "15m", horizonFrame: "medium", regime: "range", trendBias: "neutral", volatilityState: "normal", structureState: "choppy", confidence: 0.75, ready: true, observedAt: 30_000 },
+          ];
+        }
+      },
+      mtfConfig: { enabled: true, instabilityThreshold: 0.5 },
+    });
+    mtfOverrideStore.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "trend"));
+    mtfOverrideService.observe(symbol, 30_000);
+    const mtfOverridePublished = mtfOverrideStore.getArchitectPublishedAssessment(symbol);
+    if (!mtfOverridePublished || mtfOverridePublished.marketRegime !== "range") {
+      throw new Error(`MTF override: MTF majority range should override single-frame trend, got ${mtfOverridePublished?.marketRegime}`);
+    }
+    if (mtfOverridePublished.recommendedFamily !== "mean_reversion") {
+      throw new Error(`MTF override: should recommend mean_reversion, got ${mtfOverridePublished?.recommendedFamily}`);
+    }
+    if (mtfOverridePublished.mtf?.mtfDominantFrame !== "medium") {
+      throw new Error(`MTF override: should publish medium dominant frame, got ${JSON.stringify(mtfOverridePublished.mtf)}`);
+    }
+  }
+
+  // ── MTF enabled with insufficient ready frames: baseline preserved ──
+
+  {
+    const mtfInsufficientStore = new StateStore();
+    const mtfInsufficientService = new ArchitectService({
+      botArchitect: {
+        assess(context) {
+          return createAssessment(context.symbol, "trend", "trend_following", {
+            range: 0.24, trend: 0.67, unclear: 0.11, volatile: 0.15
+          }, context.observedAt);
+        }
+      },
+      logger: { info() {} },
+      marketStream: { subscribe() { return () => {}; } },
+      publishIntervalMs: 30_000,
+      requiredConfirmations: 2,
+      store: mtfInsufficientStore,
+      switchDelta: 0.12,
+      mtfContextService: {
+        buildMtfSnapshots() {
+          return [
+            { timeframe: "1m", horizonFrame: "short", regime: "range", trendBias: "neutral", volatilityState: "normal", structureState: "choppy", confidence: 0.5, ready: true, observedAt: 30_000 },
+            { timeframe: "5m", horizonFrame: "short", regime: "trend", trendBias: "bullish", volatilityState: "normal", structureState: "trending", confidence: 0.0, ready: false, observedAt: 30_000 },
+            { timeframe: "15m", horizonFrame: "medium", regime: "trend", trendBias: "bullish", volatilityState: "normal", structureState: "trending", confidence: 0.0, ready: false, observedAt: 30_000 },
+          ];
+        }
+      },
+      mtfConfig: { enabled: true },
+    });
+    mtfInsufficientStore.setContextSnapshot(symbol, createContext(symbol, 30_000, true, "trend"));
+    mtfInsufficientService.observe(symbol, 30_000);
+    const mtfInsufficientPublished = mtfInsufficientStore.getArchitectPublishedAssessment(symbol);
+    if (!mtfInsufficientPublished || mtfInsufficientPublished.marketRegime !== "trend") {
+      throw new Error("MTF insufficient: with < 2 ready frames, baseline trend should be preserved");
+    }
+  }
+
+  // ── MTF cannot bypass publish cadence ──
+
+  {
+    const mtfCadenceStore = new StateStore();
+    let mtfCadenceAssessCalls = 0;
+    const mtfCadenceService = new ArchitectService({
+      botArchitect: {
+        assess(context) {
+          mtfCadenceAssessCalls += 1;
+          return createAssessment(context.symbol, "trend", "trend_following", {
+            range: 0.24, trend: 0.67, unclear: 0.11, volatile: 0.15
+          }, context.observedAt);
+        }
+      },
+      logger: { info() {} },
+      marketStream: { subscribe() { return () => {}; } },
+      publishIntervalMs: 15_000,
+      requiredConfirmations: 2,
+      store: mtfCadenceStore,
+      switchDelta: 0.12,
+      mtfContextService: {
+        buildMtfSnapshots() {
+          return [
+            { timeframe: "1m", horizonFrame: "short", regime: "range", trendBias: "neutral", volatilityState: "normal", structureState: "choppy", confidence: 0.7, ready: true, observedAt: 30_000 },
+            { timeframe: "5m", horizonFrame: "short", regime: "range", trendBias: "neutral", volatilityState: "normal", structureState: "choppy", confidence: 0.8, ready: true, observedAt: 30_000 },
+          ];
+        }
+      },
+      mtfConfig: { enabled: true },
+    });
+    mtfCadenceStore.setContextSnapshot(symbol, {
+      ...createContext(symbol, 15_000, true, "trend"),
+      windowStartedAt: 0, effectiveWindowStartedAt: 0
+    });
+    mtfCadenceService.observe(symbol, 15_000);
+    if (mtfCadenceAssessCalls !== 1) throw new Error("MTF cadence: first eligible tick should assess");
+    mtfCadenceStore.setContextSnapshot(symbol, {
+      ...createContext(symbol, 20_000, true, "trend"),
+      windowStartedAt: 0, effectiveWindowStartedAt: 0
+    });
+    mtfCadenceService.observe(symbol, 20_000);
+    if (mtfCadenceAssessCalls !== 1) {
+      throw new Error("MTF cadence: MTF presence must not bypass publish interval gating");
+    }
+  }
 }
 
 module.exports = {

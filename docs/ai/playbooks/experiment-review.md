@@ -13,7 +13,8 @@ Checklist:
    - `architect_challenger_pending`
    - managed-recovery invalidation grace/confirmation
    - confirmed recovery target precedence over invalidation
-   - RSI short-horizon target-distance gate
+   - RSI target-distance gate in `entryCoordinator`
+   - MTF coherence thresholds for RSI cap widening
 
 Current standing:
 
@@ -24,4 +25,5 @@ Reject changes that:
 
 - make the experiment the implicit default
 - remove the ability to distinguish experiment telemetry from baseline telemetry
+- remove the ability to distinguish baseline RSI target-distance blocking from coherent MTF cap widening
 - blur the line between experiment code and baseline risk controls

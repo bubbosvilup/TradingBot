@@ -7,7 +7,7 @@ const path = require("node:path");
 const { StateStore } = require("../src/core/stateStore.ts");
 const { SystemServer } = require("../src/core/systemServer.ts");
 
-function createPublishedArchitect(now) {
+function createPublishedArchitect(now, overrides = {}) {
   return {
     absoluteConviction: 0.73,
     confidence: 0.7,
@@ -37,7 +37,8 @@ function createPublishedArchitect(now) {
     symbol: "BTC/USDT",
     trendBias: "bullish",
     updatedAt: now,
-    volatilityState: "normal"
+    volatilityState: "normal",
+    ...overrides
   };
 }
 
@@ -124,7 +125,18 @@ function runSystemServerTests() {
     windowSpanMs: 240_000,
     windowStartedAt: now - 240_000
   });
-  store.setArchitectPublishedAssessment("BTC/USDT", createPublishedArchitect(now));
+  store.setArchitectPublishedAssessment("BTC/USDT", createPublishedArchitect(now, {
+    mtf: {
+      mtfAgreement: 0.8,
+      mtfDominantFrame: "medium",
+      mtfDominantTimeframe: "15m",
+      mtfEnabled: true,
+      mtfInstability: 0.2,
+      mtfMetaRegime: "range",
+      mtfReadyFrameCount: 3,
+      mtfSufficientFrames: true
+    }
+  }));
   store.setArchitectObservedAssessment("BTC/USDT", createPublishedArchitect(now - 1000));
   store.setArchitectPublisherState("BTC/USDT", {
     challengerCount: 1,
@@ -244,6 +256,12 @@ function runSystemServerTests() {
   }
   if (bots[0].architectPublished?.recommendedFamily !== "trend_following") {
     throw new Error("bots payload missing authoritative architectPublished");
+  }
+  if (bots[0].architectPublished?.mtf?.mtfDominantFrame !== "medium"
+    || bots[0].architectPublished?.mtf?.mtfAgreement !== 0.8
+    || bots[0].architectPublished?.mtf?.mtfInstability !== 0.2
+    || bots[0].architectPublished?.mtf?.mtfSufficientFrames !== true) {
+    throw new Error(`bots payload should preserve published MTF diagnostics: ${JSON.stringify(bots[0].architectPublished?.mtf)}`);
   }
   if (bots[0].architectObserved?.source !== "observed" || bots[0].architectObserved?.authoritative !== false) {
     throw new Error("bots payload missing observed architect distinction");

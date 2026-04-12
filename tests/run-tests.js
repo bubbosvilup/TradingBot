@@ -20,8 +20,8 @@ const { runExitLifecycleReportTests } = require("./exitLifecycleReport.test");
 const { runLoggerTests } = require("./logger.test");
 const { runOpenAttemptCoordinatorTests } = require("./openAttemptCoordinator.test");
 const { runOrchestratorTests } = require("./orchestrator.test");
-const { runPostLossArchitectLatchTests } = require("./postLossArchitectLatch.test");
 const { runPositionLifecycleManagerTests } = require("./positionLifecycleManager.test");
+const { runPostLossArchitectLatchTests } = require("./postLossArchitectLatch.test");
 const { runRiskManagerTests } = require("./riskManager.test");
 const { runRecoveryTargetResolverTests } = require("./recoveryTargetResolver.test");
 const { runRegimeDetectorTests } = require("./regimeDetector.test");
@@ -37,6 +37,9 @@ const { runUserStreamTests } = require("./userStream.test");
 const { runWsManagerTests } = require("./wsManager.test");
 const { runMarketStreamTests, runMarketStreamLiveEmitIntervalTests } = require("./marketStream.test");
 const { runManagedRecoveryExitResolverTests } = require("./managedRecoveryExitResolver.test");
+const { runMtfContextAggregatorTests } = require("./mtfContextAggregator.test");
+const { runMtfContextServiceTests } = require("./mtfContextService.test");
+const { runMtfParamResolverTests } = require("./mtfParamResolver.test");
 const { runTradingBotTelemetryTests } = require("./tradingBotTelemetry.test");
 
 async function main() {
@@ -60,6 +63,9 @@ async function main() {
     { name: "exitPolicyRegistry", run: async () => runExitPolicyRegistryTests() },
     { name: "logger", run: async () => runLoggerTests() },
     { name: "managedRecoveryExitResolver", run: async () => runManagedRecoveryExitResolverTests() },
+    { name: "mtfContextAggregator", run: async () => runMtfContextAggregatorTests() },
+    { name: "mtfContextService", run: async () => runMtfContextServiceTests() },
+    { name: "mtfParamResolver", run: async () => runMtfParamResolverTests() },
     { name: "openAttemptCoordinator", run: async () => runOpenAttemptCoordinatorTests() },
     { name: "orchestrator", run: async () => runOrchestratorTests() },
     { name: "postLossArchitectLatch", run: async () => runPostLossArchitectLatchTests() },

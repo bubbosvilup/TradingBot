@@ -269,6 +269,7 @@ class TradingBot extends BaseBot {
       latestPrice: tick.price,
       localRegimeHint: regime,
       metadata: {
+        architectMtf: this.getPublishedArchitectAssessment()?.mtf || null,
         positionEntryPrice: position?.entryPrice ?? null,
         positionSide: position ? normalizeTradeSide(position.side) : null,
         updatedAt: tick.timestamp
@@ -917,6 +918,11 @@ class TradingBot extends BaseBot {
       architect: params.architect,
       contextSnapshot: params.contextSnapshot,
       currentFamily: params.currentFamily !== undefined ? params.currentFamily : undefined,
+      mtfAgreement: params.architect?.mtf?.mtfAgreement ?? null,
+      mtfDominantTimeframe: params.architect?.mtf?.mtfDominantTimeframe ?? null,
+      mtfEnabled: params.architect?.mtf?.mtfEnabled ?? false,
+      mtfInstability: params.architect?.mtf?.mtfInstability ?? null,
+      mtfSufficientFrames: params.architect?.mtf?.mtfSufficientFrames ?? false,
       publisher: params.publisher,
       timestamp: params.timestamp
     });
@@ -1002,6 +1008,7 @@ class TradingBot extends BaseBot {
     price: number;
     quantity: number | null;
     side?: "long" | "short" | null;
+    mtfDiagnostics?: ArchitectAssessment["mtf"] | null;
   }): EntryEconomicsEstimate {
     const resolvedFeeRate = Number(this.deps.executionEngine?.feeRate);
     const feeRate = Math.max(Number.isFinite(resolvedFeeRate) ? resolvedFeeRate : 0, 0);
@@ -1014,7 +1021,8 @@ class TradingBot extends BaseBot {
       profitSafetyBufferPct: this.entryProfitSafetyBufferPct,
       quantity: params.quantity,
       side: params.side,
-      strategy: this.resolveEntryEconomicsStrategy(params.context)
+      strategy: this.resolveEntryEconomicsStrategy(params.context),
+      mtfDiagnostics: params.mtfDiagnostics || ((params.context?.metadata as any)?.architectMtf as ArchitectAssessment["mtf"] | null | undefined) || null
     });
   }
 
@@ -1078,7 +1086,8 @@ class TradingBot extends BaseBot {
       context: params.context,
       price: params.tick.price,
       quantity: params.quantity,
-      side: entrySide
+      side: entrySide,
+      mtfDiagnostics: architectState.architect?.mtf || null
     });
     const tradeConstraints = this.deps.riskManager.getTradeConstraints();
     const tradeConstraintValidation = validateTradeConstraints({
@@ -1219,7 +1228,8 @@ class TradingBot extends BaseBot {
     const shortCircuitEconomics = this.estimateEntryEconomics({
       context: null,
       price: snapshot.tick.price,
-      quantity: null
+      quantity: null,
+      mtfDiagnostics: snapshot.architectState?.architect?.mtf || null
     });
     this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, now());
     this.deps.store.updateBotState(
@@ -1306,7 +1316,8 @@ class TradingBot extends BaseBot {
       context: snapshot.context,
       price: snapshot.tick.price,
       quantity: null,
-      side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action)
+      side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action),
+      mtfDiagnostics: currentArchitectState.architect?.mtf || null
     });
     const evaluationState = snapshot.state;
     const entryAttempt = this.entryCoordinator.resolveEntryAttempt({
@@ -1332,7 +1343,8 @@ class TradingBot extends BaseBot {
           context: snapshot.context,
           price: snapshot.tick.price,
           quantity: preparedOpenAttempt.quantity,
-          side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action)
+          side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action),
+          mtfDiagnostics: currentArchitectState.architect?.mtf || null
         });
         this.applyEntryOutcome(this.entryOutcomeCoordinator.buildSkippedOutcome({
           architectState: currentArchitectState,

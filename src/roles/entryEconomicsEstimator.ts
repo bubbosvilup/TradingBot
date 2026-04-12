@@ -1,6 +1,7 @@
 // Module responsibility: strategy-aware entry economics estimation with shared cost normalization.
 
 import type { EntryEconomicsEstimate, IndicatorSnapshot, MarketContext, Strategy, StrategyEntryEdgeInputs } from "../types/strategy.ts";
+import type { MtfPublishDiagnostics } from "../types/mtf.ts";
 import type { TradeDirection } from "../types/trade.ts";
 
 const {
@@ -8,6 +9,7 @@ const {
   calculateTargetDistancePct,
   normalizeTradeSide
 } = require("../utils/tradeSide.ts");
+const { resolveRsiReversionMtfParams } = require("./mtfParamResolver.ts");
 
 function deriveEntryEdgeInputs(params: {
   context?: Partial<MarketContext> | null;
@@ -84,6 +86,7 @@ function estimateEntryEconomics(params: {
   quantity: number | null;
   side?: TradeDirection | null;
   strategy?: Strategy | null;
+  mtfDiagnostics?: MtfPublishDiagnostics | null;
 }): EntryEconomicsEstimate {
   const inputs = deriveEntryEdgeInputs({
     context: params.context,
@@ -109,9 +112,24 @@ function estimateEntryEconomics(params: {
     0
   );
   const configuredMaxTargetDistancePctForShortHorizon = Number(params.strategy?.config?.maxTargetDistancePctForShortHorizon);
-  const maxTargetDistancePctForShortHorizon = Number.isFinite(configuredMaxTargetDistancePctForShortHorizon)
+  const baseMaxTargetDistancePctForShortHorizon = Number.isFinite(configuredMaxTargetDistancePctForShortHorizon)
     ? Math.max(configuredMaxTargetDistancePctForShortHorizon, 0)
     : null;
+  const mtfParamResolution = params.strategy?.id === "rsiReversion"
+    ? resolveRsiReversionMtfParams({
+        baseBuyRsi: params.strategy?.config?.buyRsi,
+        baseSellRsi: params.strategy?.config?.sellRsi,
+        baseMinExpectedNetEdgePct: minExpectedNetEdgePct,
+        baseTargetDistanceCapPct: baseMaxTargetDistancePctForShortHorizon,
+        mtfDiagnostics: params.mtfDiagnostics || ((params.context?.metadata as any)?.architectMtf as MtfPublishDiagnostics | null | undefined) || null
+      })
+    : null;
+  const maxTargetDistancePctForShortHorizon = mtfParamResolution
+    ? mtfParamResolution.resolvedTargetDistanceCapPct
+    : baseMaxTargetDistancePctForShortHorizon;
+  const resolvedMinExpectedNetEdgePct = mtfParamResolution
+    ? mtfParamResolution.resolvedMinExpectedNetEdgePct
+    : minExpectedNetEdgePct;
   const quantity = Number.isFinite(Number(params.quantity)) ? Number(params.quantity) : 0;
   const notionalUsdt = inputs.latestPrice * Math.max(quantity, 0);
 
@@ -124,7 +142,8 @@ function estimateEntryEconomics(params: {
     expectedGrossEdgeUsdt: notionalUsdt * expectedGrossEdgePct,
     expectedNetEdgePct,
     maxTargetDistancePctForShortHorizon,
-    minExpectedNetEdgePct,
+    mtfParamResolution,
+    minExpectedNetEdgePct: resolvedMinExpectedNetEdgePct,
     notionalUsdt,
     profitSafetyBufferPct: params.profitSafetyBufferPct,
     requiredEdgePct,

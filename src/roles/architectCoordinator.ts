@@ -67,6 +67,11 @@ export interface EvaluateArchitectUsabilityParams {
   currentFamily?: RecommendedFamily | "other" | null;
   publisher?: ArchitectPublisherState | null;
   timestamp?: number;
+  mtfEnabled?: boolean;
+  mtfInstability?: number | null;
+  mtfAgreement?: number | null;
+  mtfDominantTimeframe?: string | null;
+  mtfSufficientFrames?: boolean;
 }
 
 export interface ArchitectSyncParams extends EvaluateArchitectUsabilityParams {
@@ -84,6 +89,7 @@ export interface ArchitectCoordinatorParams {
   store: BotStateStoreLike;
   strategyRegistry: StrategyRegistryLike;
   strategySwitcher: StrategySwitcherLike;
+  mtfInstabilityThreshold?: number;
 }
 
 export interface ArchitectCoordinatorInstance {
@@ -99,12 +105,15 @@ export interface ArchitectCoordinatorInstance {
   updateSyncState(position: PositionRecord | null, params?: ArchitectSyncParams): ArchitectSyncUpdateResult | null;
 }
 
+const DEFAULT_MTF_USABILITY_INSTABILITY_THRESHOLD = 0.5;
+
 class ArchitectCoordinator implements ArchitectCoordinatorInstance {
   allowedStrategies: string[];
   botConfig: BotConfig;
   maxArchitectStateAgeMs: number;
   minEntryContextMaturity: number;
   minPostSwitchEntryContextMaturity: number;
+  mtfInstabilityThreshold: number;
   store: BotStateStoreLike;
   strategyRegistry: StrategyRegistryLike;
   strategySwitcher: StrategySwitcherLike;
@@ -115,6 +124,7 @@ class ArchitectCoordinator implements ArchitectCoordinatorInstance {
     this.maxArchitectStateAgeMs = params.maxArchitectStateAgeMs;
     this.minEntryContextMaturity = params.minEntryContextMaturity;
     this.minPostSwitchEntryContextMaturity = params.minPostSwitchEntryContextMaturity;
+    this.mtfInstabilityThreshold = params.mtfInstabilityThreshold ?? DEFAULT_MTF_USABILITY_INSTABILITY_THRESHOLD;
     this.store = params.store;
     this.strategyRegistry = params.strategyRegistry;
     this.strategySwitcher = params.strategySwitcher;
@@ -206,6 +216,13 @@ class ArchitectCoordinator implements ArchitectCoordinatorInstance {
       && challengerFamily !== currentFamily
     ) {
       blockReason = "architect_challenger_pending";
+    } else if (
+      params.mtfEnabled
+      && params.mtfSufficientFrames
+      && typeof params.mtfInstability === "number"
+      && params.mtfInstability >= this.mtfInstabilityThreshold
+    ) {
+      blockReason = "mtf_instability_high";
     }
 
     const familyMatch = actionableFamily ? currentFamily === actionableFamily : null;
