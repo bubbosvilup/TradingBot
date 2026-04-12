@@ -25,6 +25,8 @@ class MarketStream {
   fallbackRestUrl: string;
   fallbackIntervalMs: number;
   fallbackStaleAfterMs: number;
+  stopping: boolean;
+  restSnapshotGeneration: number;
   highLatencyWarnMs: number;
   latencyLogIntervalMs: number;
   lastLatencyLogAtBySymbol: Map<string, number>;
@@ -61,6 +63,8 @@ class MarketStream {
     this.fallbackRestUrl = deps.restExchangeId || "binance";
     this.fallbackIntervalMs = 5_000;
     this.fallbackStaleAfterMs = Math.max(this.fallbackIntervalMs, this.liveEmitIntervalMs * 4);
+    this.stopping = false;
+    this.restSnapshotGeneration = 0;
     this.highLatencyWarnMs = 1000;
     this.latencyLogIntervalMs = 30_000;
     this.lastLatencyLogAtBySymbol = new Map();
@@ -68,6 +72,7 @@ class MarketStream {
 
   start(symbols: string[]) {
     this.stop();
+    this.stopping = false;
     this.symbols = [...new Set(symbols)];
     if (this.symbols.length <= 0) {
       this.logger.warn("market_stream_skipped", {
@@ -86,6 +91,8 @@ class MarketStream {
   }
 
   stop() {
+    this.stopping = true;
+    this.restSnapshotGeneration += 1;
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
@@ -153,6 +160,11 @@ class MarketStream {
       reconnectAttempt: status.reconnectAttempt || 0,
       status: status.status || "unknown"
     });
+
+    if (this.stopping) {
+      this.stopRestFallback();
+      return;
+    }
 
     if (status.status === "connected") {
       this.stopRestFallback();
@@ -307,6 +319,7 @@ class MarketStream {
   }
 
   async fetchRestSnapshot(options: { observedAt?: number } = {}) {
+    const generation = this.restSnapshotGeneration;
     const observedAt = Number.isFinite(Number(options.observedAt)) ? Number(options.observedAt) : now();
     const targetSymbols = this.getFallbackTargetSymbols(observedAt);
     if (targetSymbols.length <= 0) {
@@ -321,6 +334,14 @@ class MarketStream {
     try {
       const exchange = this.getFallbackExchange();
       const { method, ticks } = await this.fetchFallbackTicks(exchange, targetSymbols, observedAt);
+      if (this.stopping || generation !== this.restSnapshotGeneration) {
+        return {
+          method: "stopped",
+          requestedSymbols: targetSymbols,
+          skippedFreshSymbols: Math.max(this.symbols.length - targetSymbols.length, 0),
+          tickCount: 0
+        };
+      }
 
       for (const tick of ticks) {
         this.handleTick(tick);
@@ -476,7 +497,7 @@ class MarketStream {
   }
 
   startRestFallback() {
-    if (this.fallbackTimer || this.mode !== "live") return;
+    if (this.stopping || this.fallbackTimer || this.mode !== "live") return;
     this.store.updateWsConnection("market-stream", {
       connectionId: "market-stream",
       fallbackActive: true
