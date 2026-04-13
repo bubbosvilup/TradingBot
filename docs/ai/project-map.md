@@ -7,7 +7,7 @@ Current runtime shape:
 - `src/bots/`: bot classes; `tradingBot.ts` is the top-level runtime orchestrator
 - `src/engines/`: execution, indicators, backtest engine adapter
 - `src/streams/`: market and user stream integration
-- `src/ui/` and `public/`: dashboard adapters and static frontend, including the separate compact monitor route
+- `src/ui/` and `public/`: dashboard adapters and static frontend; the active operator UI is the single Pulse entry point
 - `tests/`: behavior lock for runtime, roles, store, server, and stream flows
 - `legacy/`: isolated old code, not the target architecture
 
@@ -21,8 +21,9 @@ Important repo facts:
 - `src/streams/marketStream.ts` guards shutdown so WS close during teardown cannot start REST fallback, and in-flight fallback snapshots are invalidated after stop; this keeps test teardown clean without muting production logs.
 - `src/engines/backtestEngine.ts` is now a modern adapter over legacy backtest modules, not a full replay runtime.
 - `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, and provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses.
-- `src/core/systemServer.ts` serves both the full dashboard and the dedicated compact monitor. The compact route is UI/API-facing only and must not become a control plane.
-- `src/core/orchestrator.ts` can opt into opening the compact UI at startup through env flags, but this must remain explicit and non-essential to trading behavior.
+- `src/core/systemServer.ts` serves the single Pulse dashboard entry point and static UI assets. The dashboard remains UI/API-facing only and must not become a control plane.
+- `src/core/systemServer.ts` exposes additive `/api/pulse` server-side projection and `/api/pulse/stream` SSE for the operator-facing Pulse contract; chart data, filtered events/trades, and legacy API endpoints remain available separately.
+- `src/core/orchestrator.ts` can opt into opening the Pulse UI at startup through env flags, but this must remain explicit and non-essential to trading behavior.
 - `src/data/bots.config.json` now carries experiment label `quarantined_allow_small_loss_floor05`.
 - `reports/experiments/` still contains historical outputs for the quarantined label.
 - `src/core/architectService.ts` switch-delta publishing now compares challenger score against the true published incumbent score, not the candidate assessment's incumbent-regime score.

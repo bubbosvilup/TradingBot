@@ -14,13 +14,7 @@ declare global {
       };
       [key: string]: unknown;
     };
-    echarts: {
-      init(node: Element | null | undefined, theme?: unknown, options?: unknown): any;
-    };
     ChartAdapter: {
-      create(options: unknown): any;
-    };
-    DashboardAdapter: {
       create(options: unknown): any;
     };
   }

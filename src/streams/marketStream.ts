@@ -216,36 +216,56 @@ class MarketStream {
 
     const loggedAt = Date.now();
     const lastLoggedAt = this.lastLatencyLogAtBySymbol.get(tick.symbol) || 0;
-    const shouldWarn = totalTickPipelineMs >= this.highLatencyWarnMs;
+    const latency = {
+      botDecisionMs: pipeline?.botDecisionMs ?? null,
+      executionMs: pipeline?.executionMs ?? pipeline?.botToExecutionMs ?? null,
+      exchangeToWsMs: pipeline?.exchangeToReceiveMs ?? null,
+      restRoundtripMs: pipeline?.restRoundtripMs ?? null,
+      source: pipeline?.source || tick.source,
+      storeToBotMs: pipeline?.stateToBotMs ?? null,
+      totalMs: pipeline?.totalPipelineMs ?? null,
+      wsToStoreMs: pipeline?.receiveToStateMs ?? null
+    };
+    const shouldWarn = Math.max(
+      Number(totalTickPipelineMs) || 0,
+      Number(latency.totalMs) || 0
+    ) >= this.highLatencyWarnMs;
     const shouldSample = (loggedAt - lastLoggedAt) >= this.latencyLogIntervalMs;
     if (!shouldWarn && !shouldSample) {
       return;
     }
 
     this.lastLatencyLogAtBySymbol.set(tick.symbol, loggedAt);
-    const transport = {
-      botToExecutionMs: pipeline?.botToExecutionMs ?? null,
-      exchangeToReceiveMs: pipeline?.exchangeToReceiveMs ?? null,
-      receiveToStateMs: pipeline?.receiveToStateMs ?? null,
-      stateToBotMs: pipeline?.stateToBotMs ?? null
-    };
-    const wsToStoreMs = pipeline?.receiveToStateMs ?? null;
+    const totalSegments = [
+      latency.exchangeToWsMs,
+      latency.wsToStoreMs,
+      latency.storeToBotMs,
+      latency.botDecisionMs,
+      latency.executionMs
+    ].filter((value) => Number.isFinite(Number(value))) as number[];
+    const expectedTotalMs = totalSegments.length > 0
+      ? totalSegments.reduce((sum, value) => sum + Number(value), 0)
+      : null;
+    if (process.env.DEBUG_LATENCY_PIPELINE && expectedTotalMs !== null && latency.totalMs !== null) {
+      const mismatchMs = Math.abs(Number(latency.totalMs) - expectedTotalMs);
+      if (mismatchMs > 1) {
+        this.logger.warn("tick_pipeline_latency_invariant_mismatch", {
+          expectedTotalMs: Number(expectedTotalMs.toFixed(3)),
+          latency: JSON.stringify(latency),
+          mismatchMs: Number(mismatchMs.toFixed(3)),
+          symbol: tick.symbol
+        });
+      }
+    }
     const payload = {
-      exchangeToWsMs: pipeline?.exchangeToReceiveMs ?? null,
-      flushDelayMs: tickLatency.last.flushDelayMs,
-      publishFanoutMs: tickLatency.last.publishFanoutMs,
+      latency: JSON.stringify(latency),
       recentWorstTotalMs: tickLatency.recentWorstTotalMs,
       sampleCount: tickLatency.sampleCount,
-      source: tick.source,
       stageAverage: JSON.stringify(tickLatency.average),
       stageLast: JSON.stringify(tickLatency.last),
       stageMax: JSON.stringify(tickLatency.max),
-      stateUpdateMs: tickLatency.last.stateUpdateMs,
       symbol: tick.symbol,
-      tickTimestamp: tick.timestamp,
-      totalPipelineMs: tickLatency.last.totalTickPipelineMs,
-      transportBreakdown: JSON.stringify(transport),
-      wsToStoreMs
+      tickTimestamp: tick.timestamp
     };
     if (shouldWarn) {
       this.logger.warn("tick_pipeline_latency_high", payload);
@@ -279,7 +299,7 @@ class MarketStream {
     });
   }
 
-  normalizeFallbackTick(symbol: string, ticker: any, receivedAt: number) {
+  normalizeFallbackTick(symbol: string, ticker: any, receivedAt: number, restRoundtripMs?: number | null) {
     const price = Number(ticker?.last || ticker?.close || 0);
     if (!(price > 0)) {
       return null;
@@ -287,6 +307,7 @@ class MarketStream {
     return {
       price,
       receivedAt,
+      restRoundtripMs: Number.isFinite(Number(restRoundtripMs)) ? Math.max(0, Number(restRoundtripMs)) : undefined,
       source: "rest" as const,
       symbol,
       timestamp: Number(ticker?.timestamp || receivedAt)
@@ -296,24 +317,33 @@ class MarketStream {
   async fetchFallbackTicks(exchange: any, targetSymbols: string[], observedAt: number) {
     if (targetSymbols.length > 1 && typeof exchange.fetchTickers === "function") {
       const batchTickers = await exchange.fetchTickers(targetSymbols);
+      const receivedAt = now();
+      const restRoundtripMs = Math.max(0, receivedAt - observedAt);
       return {
         method: "fetchTickers",
+        restRoundtripMs,
         ticks: targetSymbols
-          .map((symbol) => this.normalizeFallbackTick(symbol, batchTickers?.[symbol], observedAt))
+          .map((symbol) => this.normalizeFallbackTick(symbol, batchTickers?.[symbol], receivedAt, restRoundtripMs))
           .filter(Boolean)
       };
     }
 
     const ticks = [];
+    let maxRestRoundtripMs = 0;
     for (const symbol of targetSymbols) {
+      const requestStartedAt = now();
       const ticker = await exchange.fetchTicker(symbol);
-      const tick = this.normalizeFallbackTick(symbol, ticker, observedAt);
+      const receivedAt = now();
+      const restRoundtripMs = Math.max(0, receivedAt - requestStartedAt);
+      maxRestRoundtripMs = Math.max(maxRestRoundtripMs, restRoundtripMs);
+      const tick = this.normalizeFallbackTick(symbol, ticker, receivedAt, restRoundtripMs);
       if (tick) {
         ticks.push(tick);
       }
     }
     return {
       method: "fetchTicker",
+      restRoundtripMs: maxRestRoundtripMs,
       ticks
     };
   }
@@ -333,7 +363,7 @@ class MarketStream {
 
     try {
       const exchange = this.getFallbackExchange();
-      const { method, ticks } = await this.fetchFallbackTicks(exchange, targetSymbols, observedAt);
+      const { method, restRoundtripMs, ticks } = await this.fetchFallbackTicks(exchange, targetSymbols, observedAt);
       if (this.stopping || generation !== this.restSnapshotGeneration) {
         return {
           method: "stopped",
@@ -350,6 +380,7 @@ class MarketStream {
       this.logger.info("market_rest_snapshot", {
         method,
         requestedSymbols: targetSymbols.join(","),
+        restRoundtripMs,
         skippedFreshSymbols: Math.max(this.symbols.length - targetSymbols.length, 0),
         staleAfterMs: this.fallbackStaleAfterMs,
         tickers: ticks.length,

@@ -52,6 +52,14 @@ export interface OpenAttemptCoordinatorInstance {
     availableBalanceUsdt: number;
     botId: string;
     confidence: number;
+    edgeDiagnostics?: {
+      expectedGrossEdgePctAtEntry?: number | null;
+      expectedNetEdgePctAtEntry?: number | null;
+      requiredEdgePctAtEntry?: number | null;
+      expectedEntryPrice?: number | null;
+      expectedExitPrice?: number | null;
+      entryArchitectRegime?: string | null;
+    };
     entryDebounceTicks: number;
     price: number;
     quantity: number;
@@ -128,6 +136,14 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
     availableBalanceUsdt: number;
     botId: string;
     confidence: number;
+    edgeDiagnostics?: {
+      expectedGrossEdgePctAtEntry?: number | null;
+      expectedNetEdgePctAtEntry?: number | null;
+      requiredEdgePctAtEntry?: number | null;
+      expectedEntryPrice?: number | null;
+      expectedExitPrice?: number | null;
+      entryArchitectRegime?: string | null;
+    };
     entryDebounceTicks: number;
     price: number;
     quantity: number;
@@ -141,6 +157,7 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
     const openParams = {
       botId: params.botId,
       confidence: params.confidence,
+      edgeDiagnostics: params.edgeDiagnostics,
       price: params.price,
       quantity: params.quantity,
       reason: [...params.reason, `entry_confirmed_${params.entryDebounceTicks}ticks`],

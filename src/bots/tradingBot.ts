@@ -142,6 +142,7 @@ class TradingBot extends BaseBot {
   entryEvaluationLogSampleMs: number;
   lastEntryEvaluationLogKey: string | null;
   lastEntryEvaluationLogAt: number | null;
+  lastEdgeDiagnosticsLogAt: number | null;
   compactLogSignatures: Record<string, string | null>;
   architectCoordinator: ArchitectCoordinatorInstance;
   entryCoordinator: EntryCoordinatorInstance;
@@ -176,6 +177,7 @@ class TradingBot extends BaseBot {
     this.entryEvaluationLogSampleMs = 30_000;
     this.lastEntryEvaluationLogKey = null;
     this.lastEntryEvaluationLogAt = null;
+    this.lastEdgeDiagnosticsLogAt = null;
     this.compactLogSignatures = {};
     this.architectCoordinator = new ArchitectCoordinator({
       allowedStrategies: this.allowedStrategies,
@@ -414,6 +416,78 @@ class TradingBot extends BaseBot {
     this.deps.store.updateBotState(this.config.id, patch);
   }
 
+  buildEntryEdgeDiagnostics(params: {
+    architectState?: ArchitectUsabilityState | null;
+    economics: EntryEconomicsEstimate;
+    tick: MarketTick;
+  }) {
+    return {
+      entryArchitectRegime: params.architectState?.architect?.marketRegime || null,
+      expectedEntryPrice: Number.isFinite(Number(params.tick?.price)) ? Number(params.tick.price) : null,
+      expectedExitPrice: null,
+      expectedGrossEdgePctAtEntry: Number.isFinite(Number(params.economics.expectedGrossEdgePct))
+        ? Number(params.economics.expectedGrossEdgePct)
+        : null,
+      expectedNetEdgePctAtEntry: Number.isFinite(Number(params.economics.expectedNetEdgePct))
+        ? Number(params.economics.expectedNetEdgePct)
+        : null,
+      requiredEdgePctAtEntry: Number.isFinite(Number(params.economics.requiredEdgePct))
+        ? Number(params.economics.requiredEdgePct)
+        : null
+    };
+  }
+
+  resolveExpectedExitPrice(params: {
+    exitPlan: ExitPlan;
+    managedRecoveryTarget?: any;
+    tick: MarketTick;
+  }) {
+    if (Number.isFinite(Number(params.exitPlan.estimatedExitEconomics?.exitPrice))) {
+      return Number(params.exitPlan.estimatedExitEconomics.exitPrice);
+    }
+    if (Number.isFinite(Number(params.managedRecoveryTarget?.targetPrice))) {
+      return Number(params.managedRecoveryTarget.targetPrice);
+    }
+    return Number.isFinite(Number(params.tick?.price)) ? Number(params.tick.price) : null;
+  }
+
+  recordBlockedOpportunityDiagnostics(outcome: EntryOutcomePlan) {
+    if (outcome.entryEvaluated.outcome !== "blocked") {
+      return;
+    }
+    const recorder = (this.deps.store as any).recordBlockedOpportunityEdgeDiagnostics;
+    if (typeof recorder !== "function") {
+      return;
+    }
+    const economics = outcome.entryEvaluated.economics;
+    recorder.call(this.deps.store, {
+      botId: this.config.id,
+      expectedGrossEdgePct: Number.isFinite(Number(economics?.expectedGrossEdgePct)) ? Number(economics.expectedGrossEdgePct) : null,
+      expectedNetEdgePct: Number.isFinite(Number(economics?.expectedNetEdgePct)) ? Number(economics.expectedNetEdgePct) : null,
+      reason: outcome.entryEvaluated.blockReason || outcome.entryBlockedReason || "unknown",
+      regime: outcome.entryEvaluated.architectState?.architect?.marketRegime || null,
+      requiredEdgePct: Number.isFinite(Number(economics?.requiredEdgePct)) ? Number(economics.requiredEdgePct) : null,
+      strategyId: this.strategy.id,
+      symbol: this.config.symbol,
+      timestamp: outcome.entryEvaluated.tick?.timestamp || null
+    });
+    this.maybeLogEdgeDiagnostics(outcome.entryEvaluated.tick?.timestamp || now());
+  }
+
+  maybeLogEdgeDiagnostics(timestamp: number) {
+    const summaryReader = (this.deps.store as any).getEdgeDiagnosticsSummary;
+    if (typeof summaryReader !== "function") {
+      return;
+    }
+    const logAt = Number.isFinite(Number(timestamp)) ? Number(timestamp) : now();
+    if (this.lastEdgeDiagnosticsLogAt !== null && (logAt - this.lastEdgeDiagnosticsLogAt) < 60_000) {
+      return;
+    }
+    this.lastEdgeDiagnosticsLogAt = logAt;
+    const summary = summaryReader.call(this.deps.store);
+    this.deps.logger.bot(this.config, "edge_diagnostics", summary);
+  }
+
   logEntryEvaluation(params: {
     allowReason?: string | null;
     architectState: any;
@@ -512,6 +586,7 @@ class TradingBot extends BaseBot {
 
   applyEntryOutcome(outcome: EntryOutcomePlan) {
     this.logEntryEvaluation(outcome.entryEvaluated);
+    this.recordBlockedOpportunityDiagnostics(outcome);
     if (outcome.gateLog) {
       this.deps.logger.bot(this.config, outcome.gateLog.message, outcome.gateLog.metadata);
     }
@@ -555,6 +630,7 @@ class TradingBot extends BaseBot {
     this.deps.store.recordExecution(this.config.id, this.config.symbol, outcome.recordExecutionAt, {
       skipBotStateWrite: true
     });
+    this.maybeLogEdgeDiagnostics(outcome.recordExecutionAt);
   }
 
   ensureCooldownState(timestamp: number) {
@@ -1412,6 +1488,11 @@ class TradingBot extends BaseBot {
         availableBalanceUsdt: snapshot.signalState.availableBalanceUsdt,
         botId: this.config.id,
         confidence: snapshot.decision.confidence,
+        edgeDiagnostics: this.buildEntryEdgeDiagnostics({
+          architectState: currentArchitectState,
+          economics: finalEntryGate.economics,
+          tick: snapshot.tick
+        }),
         entryDebounceTicks: snapshot.profile.entryDebounceTicks,
         price: snapshot.tick.price,
         quantity: sizing.quantity,
@@ -1595,6 +1676,11 @@ class TradingBot extends BaseBot {
 
     const closedTrade = this.deps.executionEngine.closePosition({
       botId: this.config.id,
+      expectedExitPrice: this.resolveExpectedExitPrice({
+        exitPlan,
+        managedRecoveryTarget,
+        tick: snapshot.tick
+      }),
       lifecycleEvent: exitPlan.lifecycleEvent || null,
       lifecycleState: "EXITING",
       price: snapshot.tick.price,
@@ -1689,6 +1775,10 @@ class TradingBot extends BaseBot {
 
   onMarketTick(tick: MarketTick) {
     const tickTimer = startTimer();
+    const botTickStartedAt = now();
+    if (typeof this.deps.store.recordBotTickStart === "function") {
+      this.deps.store.recordBotTickStart(this.config.id, this.config.symbol, botTickStartedAt);
+    }
     const prepareTimer = startTimer();
     const preparedSnapshot = this.prepareTickSnapshot(tick);
     const botPrepareMs = elapsedMs(prepareTimer);

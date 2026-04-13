@@ -25,6 +25,6 @@ Patch acceptance gate:
 - no unsupported live path made easier to enter
 - no experiment logic normalized without quarantine
 - no dashboard patch coupled to execution/risk changes without a reason
-- no compact monitor patch adds operator controls or trading-side decisions
+- no Pulse UI patch adds trading-side decisions
 - no managed-recovery patch restores single early `family_mismatch` invalidation
 - no entry patch bypasses pending Architect challenger hysteresis

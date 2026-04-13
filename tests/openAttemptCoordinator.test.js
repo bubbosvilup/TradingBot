@@ -181,6 +181,14 @@ async function runOpenAttemptCoordinatorTests() {
     availableBalanceUsdt: 1000,
     botId: "bot_test",
     confidence: 0.91,
+    edgeDiagnostics: {
+      entryArchitectRegime: "range",
+      expectedEntryPrice: 100,
+      expectedExitPrice: null,
+      expectedGrossEdgePctAtEntry: 0.012,
+      expectedNetEdgePctAtEntry: 0.01,
+      requiredEdgePctAtEntry: 0.002
+    },
     entryDebounceTicks: 2,
     price: 100,
     quantity: 2,
@@ -192,6 +200,9 @@ async function runOpenAttemptCoordinatorTests() {
   });
   if (openedShortResult.kind !== "opened" || openedShortResult.opened.side !== "short" || openedShortParams.side !== "short") {
     throw new Error(`open attempt coordinator should pass short side into execution: ${JSON.stringify({ openedShortParams, openedShortResult })}`);
+  }
+  if (openedShortParams.edgeDiagnostics?.expectedNetEdgePctAtEntry !== 0.01 || openedShortParams.edgeDiagnostics?.entryArchitectRegime !== "range") {
+    throw new Error(`open attempt coordinator should pass entry edge diagnostics into execution: ${JSON.stringify(openedShortParams)}`);
   }
 
   let fallbackLongCalled = false;

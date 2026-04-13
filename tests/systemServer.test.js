@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 
 const { StateStore } = require("../src/core/stateStore.ts");
 const { SystemServer } = require("../src/core/systemServer.ts");
@@ -57,7 +58,7 @@ function createResponseRecorder() {
   };
 }
 
-function runSystemServerTests() {
+async function runSystemServerTests() {
   const now = Date.now();
   const store = new StateStore();
   store.registerBot({
@@ -232,6 +233,7 @@ function runSystemServerTests() {
   const chart = server.buildChartPayload("BTC/USDT");
   const analytics = server.buildAnalyticsPayload();
   const trades = server.buildTradesPayload();
+  const pulse = server.buildPulsePayload({ botId: "bot_a" });
 
   if (system.feedMode !== "live") {
     throw new Error("system payload missing feed mode");
@@ -336,6 +338,34 @@ function runSystemServerTests() {
   const positions = server.buildPositionsPayload();
   if (!Array.isArray(positions) || positions.length !== 1 || Math.abs(Number(positions[0].unrealizedPnl) - expectedUnrealizedPnl) > 1e-9) {
     throw new Error(`positions payload unrealizedPnl should stay aligned with fee-aware server economics: ${JSON.stringify(positions)}`);
+  }
+  if (pulse.statusBar.feedMode !== "LIVE" || pulse.statusBar.executionMode !== "PAPER" || pulse.statusBar.bots.running !== 0 || pulse.statusBar.bots.total !== 1) {
+    throw new Error(`pulse status bar should normalize operator-visible runtime modes and bot counts: ${JSON.stringify(pulse.statusBar)}`);
+  }
+  if (pulse.statusBar.killSwitch.state !== "armed" || pulse.statusBar.killSwitch.severity !== "normal") {
+    throw new Error(`pulse should normalize non-triggered kill switch state: ${JSON.stringify(pulse.statusBar.killSwitch)}`);
+  }
+  if (pulse.statusBar.marketStream.status !== "disconnected" || !Number.isFinite(Number(pulse.statusBar.lastTickAgeMs))) {
+    throw new Error(`pulse should normalize market stream status and tick freshness: ${JSON.stringify(pulse.statusBar)}`);
+  }
+  if (pulse.statusBar.openPositions !== 1 || Math.abs(Number(pulse.statusBar.netPnlUsdt) - expectedUnrealizedPnl) > 1e-9) {
+    throw new Error(`pulse should derive open positions and net pnl consistently: ${JSON.stringify(pulse.statusBar)}`);
+  }
+  if (!Array.isArray(pulse.botCards) || pulse.botCards.length !== 1 || pulse.botCards[0].regime !== "trend" || pulse.botCards[0].syncStatus !== "synced") {
+    throw new Error(`pulse bot card should expose normalized regime/sync state: ${JSON.stringify(pulse.botCards)}`);
+  }
+  if (pulse.botCards[0].position.state !== "long" || Math.abs(Number(pulse.botCards[0].position.pnlUsdt) - expectedUnrealizedPnl) > 1e-9 || !String(pulse.botCards[0].position.label).startsWith("LONG +")) {
+    throw new Error(`pulse bot card should expose normalized position state: ${JSON.stringify(pulse.botCards[0].position)}`);
+  }
+  if (pulse.botCards[0].alert?.type !== "managed_recovery" || pulse.botCards[0].alert?.severity !== "warning") {
+    throw new Error(`pulse bot card should derive a single structured managed-recovery alert: ${JSON.stringify(pulse.botCards[0].alert)}`);
+  }
+  if (pulse.focusPanel.botId !== "bot_a"
+    || pulse.focusPanel.architect.line !== "trend regime . trend-following bias . strength 0.18"
+    || pulse.focusPanel.architect.bias !== "trend_following"
+    || pulse.focusPanel.actions.resume.visible !== false
+    || pulse.focusPanel.actions.history.enabled !== true) {
+    throw new Error(`pulse focus panel should expose normalized architect summary and actions: ${JSON.stringify(pulse.focusPanel)}`);
   }
 
   const observedOnlyStore = new StateStore();
@@ -464,7 +494,7 @@ function runSystemServerTests() {
     symbol: "SOL/USDT",
     warmupStartedAt: now - 12_000
   });
-  const syntheticBots = new SystemServer({
+  const syntheticServer = new SystemServer({
     architectWarmupMs: 20_000,
     executionMode: "paper",
     feedMode: "live",
@@ -472,7 +502,9 @@ function runSystemServerTests() {
     port: 3103,
     startedAt: now - 1000,
     store: syntheticStore
-  }).buildBotsPayload();
+  });
+  const syntheticBots = syntheticServer.buildBotsPayload();
+  const syntheticPulse = syntheticServer.buildPulsePayload({ botId: "bot_synthetic" });
   if (syntheticBots[0].architect !== null || syntheticBots[0].architectObserved !== null) {
     throw new Error("synthetic warm-up payload should not expose fake architect authority");
   }
@@ -481,6 +513,12 @@ function runSystemServerTests() {
   }
   if (syntheticBots[0].architectFallback?.warmupRemainingMs !== 8_000) {
     throw new Error(`synthetic warm-up payload should respect configured architect warmup: ${JSON.stringify(syntheticBots[0].architectFallback)}`);
+  }
+  if (syntheticPulse.botCards[0].regime !== "warming_up"
+    || syntheticPulse.botCards[0].syncStatus !== "warming_up"
+    || syntheticPulse.focusPanel.architect.line !== "warming up..."
+    || syntheticPulse.focusPanel.architect.regime !== "warming_up") {
+    throw new Error(`pulse should not promote synthetic warm-up into published architect authority: ${JSON.stringify(syntheticPulse)}`);
   }
 
   const pausedStore = new StateStore();
@@ -512,6 +550,7 @@ function runSystemServerTests() {
   });
   const pausedSystem = pausedServer.buildSystemPayload();
   const pausedBots = pausedServer.buildBotsPayload();
+  const pausedPulse = pausedServer.buildPulsePayload({ botId: "bot_paused" });
   if (pausedSystem.botsPaused !== 1 || pausedSystem.botsManualResumeRequired !== 1) {
     throw new Error(`system payload should count drawdown-paused bots requiring manual resume explicitly: ${JSON.stringify(pausedSystem)}`);
   }
@@ -520,6 +559,12 @@ function runSystemServerTests() {
   }
   if (pausedBots[0].portfolioKillSwitch.triggered !== false) {
     throw new Error(`bot payload should keep bot-level drawdown pause distinct from portfolio kill switch state: ${JSON.stringify(pausedBots[0])}`);
+  }
+  if (pausedPulse.botCards[0].alert?.type !== "manual_resume_required"
+    || pausedPulse.botCards[0].alert?.severity !== "critical"
+    || pausedPulse.focusPanel.actions.resume.visible !== true
+    || pausedPulse.focusPanel.actions.resume.enabled !== true) {
+    throw new Error(`pulse should expose manual-resume action only when the bot-level pause requires it: ${JSON.stringify(pausedPulse)}`);
   }
   const resumeLogs = [];
   const resumeServer = new SystemServer({
@@ -619,16 +664,168 @@ function runSystemServerTests() {
   if (killSwitchResumeResponse.statusCode !== 423 || killSwitchResumeStore.getBotState("bot_kill_paused").status !== "paused") {
     throw new Error(`manual resume API must not bypass an active portfolio kill switch: ${JSON.stringify(killSwitchResumeResponse)}`);
   }
+  const killSwitchPulse = killSwitchResumeServer.buildPulsePayload({ botId: "bot_kill_paused" });
+  if (killSwitchPulse.statusBar.killSwitch.state !== "triggered"
+    || killSwitchPulse.statusBar.killSwitch.severity !== "critical"
+    || killSwitchPulse.focusPanel.actions.resume.visible !== true
+    || killSwitchPulse.focusPanel.actions.resume.enabled !== false
+    || killSwitchPulse.focusPanel.actions.resume.reason !== "portfolio_kill_switch_active") {
+    throw new Error(`pulse should normalize kill-switch-triggered state and disable resume explicitly: ${JSON.stringify(killSwitchPulse)}`);
+  }
+
+  const filteredApiStore = new StateStore();
+  filteredApiStore.registerBot({
+    allowedStrategies: ["emaCross"],
+    enabled: true,
+    id: "bot_filter_a",
+    riskProfile: "medium",
+    strategy: "emaCross",
+    symbol: "BNB/USDT"
+  });
+  filteredApiStore.registerBot({
+    allowedStrategies: ["emaCross"],
+    enabled: true,
+    id: "bot_filter_b",
+    riskProfile: "medium",
+    strategy: "emaCross",
+    symbol: "DOGE/USDT"
+  });
+  filteredApiStore.appendEvent({
+    id: "filter-event-a-old",
+    level: "INFO",
+    message: "old_a",
+    metadata: { botId: "bot_filter_a" },
+    scope: "bot",
+    time: now
+  });
+  filteredApiStore.appendEvent({
+    id: "filter-event-b",
+    level: "INFO",
+    message: "event_b",
+    metadata: { botId: "bot_filter_b" },
+    scope: "bot",
+    time: now + 1
+  });
+  filteredApiStore.appendEvent({
+    id: "filter-event-a-new",
+    level: "WARN",
+    message: "new_a",
+    metadata: { botId: "bot_filter_a" },
+    scope: "bot",
+    time: now + 2
+  });
+  filteredApiStore.appendClosedTrade("bot_filter_a", {
+    botId: "bot_filter_a",
+    closedAt: now,
+    entryPrice: 300,
+    entryReason: ["entry_a_old"],
+    exitPrice: 301,
+    exitReason: ["exit_a_old"],
+    fees: 0.1,
+    id: "filter-trade-a-old",
+    netPnl: 0.9,
+    openedAt: now - 10_000,
+    pnl: 1,
+    quantity: 1,
+    side: "long",
+    strategyId: "emaCross",
+    symbol: "BNB/USDT"
+  });
+  filteredApiStore.appendClosedTrade("bot_filter_b", {
+    botId: "bot_filter_b",
+    closedAt: now + 1,
+    entryPrice: 0.1,
+    entryReason: ["entry_b"],
+    exitPrice: 0.11,
+    exitReason: ["exit_b"],
+    fees: 0.01,
+    id: "filter-trade-b",
+    netPnl: 0.09,
+    openedAt: now - 9_000,
+    pnl: 0.1,
+    quantity: 10,
+    side: "long",
+    strategyId: "emaCross",
+    symbol: "DOGE/USDT"
+  });
+  filteredApiStore.appendClosedTrade("bot_filter_a", {
+    botId: "bot_filter_a",
+    closedAt: now + 2,
+    entryPrice: 302,
+    entryReason: ["entry_a_new"],
+    exitPrice: 303,
+    exitReason: ["exit_a_new"],
+    fees: 0.1,
+    id: "filter-trade-a-new",
+    netPnl: 0.9,
+    openedAt: now - 8_000,
+    pnl: 1,
+    quantity: 1,
+    side: "long",
+    strategyId: "emaCross",
+    symbol: "BNB/USDT"
+  });
+  const filteredApiServer = new SystemServer({
+    executionMode: "paper",
+    feedMode: "live",
+    logger: { info() {} },
+    port: 3109,
+    startedAt: now - 1000,
+    store: filteredApiStore
+  });
+  const unfilteredEvents = filteredApiServer.buildEventsPayload();
+  const filteredEvents = filteredApiServer.buildEventsPayload({ botId: "bot_filter_a", limit: 1 });
+  if (unfilteredEvents.length !== 3 || filteredEvents.length !== 1 || filteredEvents[0].message !== "new_a") {
+    throw new Error(`events payload should preserve unfiltered behavior and support botId/limit filters newest-first: ${JSON.stringify({ filteredEvents, unfilteredEvents })}`);
+  }
+  const unfilteredTrades = filteredApiServer.buildTradesPayload();
+  const filteredTrades = filteredApiServer.buildTradesPayload({ botId: "bot_filter_a", limit: 1 });
+  if (unfilteredTrades.length !== 3 || filteredTrades.length !== 1 || filteredTrades[0].tradeId !== "filter-trade-a-new") {
+    throw new Error(`trades payload should preserve unfiltered behavior and support botId/limit filters newest-first: ${JSON.stringify({ filteredTrades, unfilteredTrades })}`);
+  }
+  const filteredEventsResponse = createResponseRecorder();
+  filteredApiServer.handleRequest({
+    headers: { host: "127.0.0.1:3109" },
+    url: "/api/events?botId=bot_filter_a&limit=1"
+  }, filteredEventsResponse);
+  const filteredEventsPayload = JSON.parse(String(filteredEventsResponse.body || "[]"));
+  if (filteredEventsResponse.statusCode !== 200 || filteredEventsPayload.length !== 1 || filteredEventsPayload[0].message !== "new_a") {
+    throw new Error(`events API should support Pulse botId/limit filters: ${JSON.stringify(filteredEventsResponse)}`);
+  }
+  const unfilteredEventsResponse = createResponseRecorder();
+  filteredApiServer.handleRequest({
+    headers: { host: "127.0.0.1:3109" },
+    url: "/api/events"
+  }, unfilteredEventsResponse);
+  const unfilteredEventsPayload = JSON.parse(String(unfilteredEventsResponse.body || "[]"));
+  if (unfilteredEventsResponse.statusCode !== 200 || unfilteredEventsPayload.length !== 3) {
+    throw new Error(`events API should preserve unfiltered endpoint behavior without query params: ${JSON.stringify(unfilteredEventsResponse)}`);
+  }
+  const filteredTradesResponse = createResponseRecorder();
+  filteredApiServer.handleRequest({
+    headers: { host: "127.0.0.1:3109" },
+    url: "/api/trades?botId=bot_filter_a&limit=1"
+  }, filteredTradesResponse);
+  const filteredTradesPayload = JSON.parse(String(filteredTradesResponse.body || "[]"));
+  if (filteredTradesResponse.statusCode !== 200 || filteredTradesPayload.length !== 1 || filteredTradesPayload[0].tradeId !== "filter-trade-a-new") {
+    throw new Error(`trades API should support Pulse botId/limit filters: ${JSON.stringify(filteredTradesResponse)}`);
+  }
+  const unfilteredTradesResponse = createResponseRecorder();
+  filteredApiServer.handleRequest({
+    headers: { host: "127.0.0.1:3109" },
+    url: "/api/trades"
+  }, unfilteredTradesResponse);
+  const unfilteredTradesPayload = JSON.parse(String(unfilteredTradesResponse.body || "[]"));
+  if (unfilteredTradesResponse.statusCode !== 200 || unfilteredTradesPayload.length !== 3) {
+    throw new Error(`trades API should preserve unfiltered endpoint behavior without query params: ${JSON.stringify(unfilteredTradesResponse)}`);
+  }
 
   const publicDir = fs.mkdtempSync(path.join(os.tmpdir(), "tradingbot-public-"));
   try {
     fs.mkdirSync(path.join(publicDir, "ui"), { recursive: true });
-    fs.writeFileSync(path.join(publicDir, "index.html"), "<!doctype html><title>dashboard</title>");
-    fs.writeFileSync(path.join(publicDir, "compact.html"), "<!doctype html><title>compact</title>");
-    fs.writeFileSync(path.join(publicDir, "app.js"), "window.__appLoaded = true;");
+    fs.writeFileSync(path.join(publicDir, "index.html"), "<!doctype html><title>pulse</title>");
+    fs.writeFileSync(path.join(publicDir, "pulse.js"), "window.__pulseLoaded = true;");
     fs.writeFileSync(path.join(publicDir, "styles.css"), "body{background:#000;}");
-    fs.writeFileSync(path.join(publicDir, "compact.js"), "window.__compactLoaded = true;");
-    fs.writeFileSync(path.join(publicDir, "compact.css"), "body{background:#050505;}");
     fs.writeFileSync(path.join(publicDir, "ui", "chartAdapter.js"), "window.ChartAdapter = { create() {} };");
 
     const assetServer = new SystemServer({
@@ -654,25 +851,81 @@ function runSystemServerTests() {
       throw new Error("system server did not return the public JS dashboard asset body");
     }
 
-    const compactResponse = createResponseRecorder();
+    const indexResponse = createResponseRecorder();
+    assetServer.handleRequest({
+      headers: { host: "127.0.0.1:3104" },
+      url: "/"
+    }, indexResponse);
+    if (indexResponse.statusCode !== 200 || !String(indexResponse.headers?.["Content-Type"] || "").includes("text/html")) {
+      throw new Error(`system server should serve the single Pulse UI entry point: ${JSON.stringify(indexResponse)}`);
+    }
+    if (!String(indexResponse.body).includes("pulse")) {
+      throw new Error("system server did not return the Pulse UI HTML body");
+    }
+
+    const pulseJsResponse = createResponseRecorder();
+    assetServer.handleRequest({
+      headers: { host: "127.0.0.1:3104" },
+      url: "/pulse.js"
+    }, pulseJsResponse);
+    if (pulseJsResponse.statusCode !== 200 || !String(pulseJsResponse.headers?.["Content-Type"] || "").includes("application/javascript")) {
+      throw new Error(`system server should serve Pulse JS assets: ${JSON.stringify(pulseJsResponse)}`);
+    }
+
+    const pulseApiResponse = createResponseRecorder();
+    assetServer.handleRequest({
+      headers: { host: "127.0.0.1:3104" },
+      url: "/api/pulse?botId=bot_a"
+    }, pulseApiResponse);
+    const pulseApiPayload = JSON.parse(String(pulseApiResponse.body || "{}"));
+    if (pulseApiResponse.statusCode !== 200 || pulseApiPayload.focusPanel?.botId !== "bot_a" || !Array.isArray(pulseApiPayload.botCards)) {
+      throw new Error(`system server should expose the additive /api/pulse projection endpoint: ${JSON.stringify(pulseApiResponse)}`);
+    }
+
+    const sseRequest = new EventEmitter();
+    sseRequest.headers = { host: "127.0.0.1:3104" };
+    sseRequest.url = "/api/pulse/stream";
+    const sseResponse = new EventEmitter();
+    sseResponse.headers = {};
+    sseResponse.writes = [];
+    sseResponse.setHeader = function setHeader(key, value) {
+      this.headers[key] = value;
+    };
+    sseResponse.flushHeaders = function flushHeaders() {
+      this.flushed = true;
+    };
+    sseResponse.write = function write(chunk) {
+      this.writes.push(String(chunk));
+      return true;
+    };
+    assetServer.handleRequest(sseRequest, sseResponse);
+    if (sseResponse.headers["Content-Type"] !== "text/event-stream"
+      || sseResponse.headers["Cache-Control"] !== "no-cache"
+      || sseResponse.headers["Connection"] !== "keep-alive"
+      || sseResponse.flushed !== true) {
+      throw new Error(`pulse SSE stream should open with event-stream headers: ${JSON.stringify(sseResponse.headers)}`);
+    }
+    if (!sseResponse.writes[0]?.startsWith("data: ")) {
+      throw new Error(`pulse SSE stream should write at least one event payload immediately: ${JSON.stringify(sseResponse.writes)}`);
+    }
+    const ssePayload = JSON.parse(sseResponse.writes[0].replace(/^data: /, "").trim());
+    if (!Array.isArray(ssePayload.botCards) || ssePayload.statusBar?.feedMode !== "LIVE") {
+      throw new Error(`pulse SSE stream should send a valid Pulse payload: ${JSON.stringify(ssePayload)}`);
+    }
+    const writesBeforeClose = sseResponse.writes.length;
+    sseRequest.emit("close");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    if (sseResponse.writes.length !== writesBeforeClose) {
+      throw new Error(`pulse SSE stream should stop writing after request close: ${JSON.stringify(sseResponse.writes)}`);
+    }
+
+    const removedCompactResponse = createResponseRecorder();
     assetServer.handleRequest({
       headers: { host: "127.0.0.1:3104" },
       url: "/compact"
-    }, compactResponse);
-    if (compactResponse.statusCode !== 200 || !String(compactResponse.headers?.["Content-Type"] || "").includes("text/html")) {
-      throw new Error(`system server should serve the compact monitor route: ${JSON.stringify(compactResponse)}`);
-    }
-    if (!String(compactResponse.body).includes("compact")) {
-      throw new Error("system server did not return the compact monitor HTML body");
-    }
-
-    const compactJsResponse = createResponseRecorder();
-    assetServer.handleRequest({
-      headers: { host: "127.0.0.1:3104" },
-      url: "/compact.js"
-    }, compactJsResponse);
-    if (compactJsResponse.statusCode !== 200 || !String(compactJsResponse.headers?.["Content-Type"] || "").includes("application/javascript")) {
-      throw new Error(`system server should serve compact JS assets: ${JSON.stringify(compactJsResponse)}`);
+    }, removedCompactResponse);
+    if (removedCompactResponse.statusCode !== 404) {
+      throw new Error(`system server should not serve the removed compact route: ${JSON.stringify(removedCompactResponse)}`);
     }
 
     const openedUrls = [];
@@ -690,8 +943,8 @@ function runSystemServerTests() {
       startedAt: now - 1000,
       store
     });
-    if (!compactAutoOpenServer.maybeOpenCompactUi() || openedUrls[0] !== "http://127.0.0.1:3106/compact") {
-      throw new Error(`compact auto-open should request the local compact route without launching a browser in tests: ${JSON.stringify(openedUrls)}`);
+    if (!compactAutoOpenServer.maybeOpenCompactUi() || openedUrls[0] !== "http://127.0.0.1:3106/") {
+      throw new Error(`UI auto-open should request the single Pulse route without launching a browser in tests: ${JSON.stringify(openedUrls)}`);
     }
 
     const tsResponse = createResponseRecorder();

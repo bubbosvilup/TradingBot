@@ -14,7 +14,7 @@ Do not do these regressions:
 - Do not move latch state handling back into `TradingBot`.
 - Do not move telemetry payload shaping back into `TradingBot`.
 - Do not collapse dashboard concerns into runtime decision modules.
-- Do not move compact monitor shaping into trading decision modules.
+- Do not move Pulse UI shaping into trading decision modules.
 - Do not put managed-recovery invalidation confirmation policy into strategy modules.
 - Do not put short-horizon target-distance gating into individual signal formulas.
 - Do not put MTF interpretation, raw timeframe-label mapping, or strategy-specific MTF branching into `TradingBot`.
@@ -42,7 +42,7 @@ Current ownership notes:
 - `RiskManager` owns position sizing penalties, drawdown/loss gating, loss cooldowns, post-win cooldown nuance, and trade constraint baselines.
 - `exitDecisionCoordinator` owns managed-recovery invalidation confirmation/grace policy.
 - `managedRecoveryExitResolver` owns managed-recovery exit precedence.
-- `SystemServer` and `public/compact.*` own compact monitor presentation only.
+- `SystemServer` and `public/` own Pulse UI presentation only.
 
 When planning a refactor:
 

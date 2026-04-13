@@ -172,6 +172,50 @@ async function runMarketStreamLiveEmitIntervalTests() {
     wsManager.closeAll();
   })();
 
+  (function testCanonicalLatencyLogShape() {
+    const logs = [];
+    const { stream, sockets, wsManager } = build({
+      logger: {
+        info(event, metadata) {
+          logs.push({ event, metadata });
+        },
+        warn(event, metadata) {
+          logs.push({ event, metadata });
+        },
+        error() {}
+      },
+      liveEmitIntervalMs: 100
+    });
+    stream.start(["BTC/USDT"]);
+    sockets[0].emit("open");
+
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        data: {
+          E: 1711960000000,
+          T: 1711960000001,
+          e: "trade",
+          p: "50000.00",
+          s: "BTCUSDT"
+        },
+        stream: "btcusdt@trade"
+      })
+    });
+    stream.flushPendingTicks();
+
+    const latencyLog = logs.find((entry) => entry.event === "tick_pipeline_latency" || entry.event === "tick_pipeline_latency_high");
+    const latency = latencyLog ? JSON.parse(latencyLog.metadata.latency) : null;
+    if (!latencyLog || latency?.source !== "ws" || !Number.isFinite(Number(latency?.totalMs))) {
+      throw new Error(`tick pipeline latency log should expose canonical latency payload: ${JSON.stringify(logs)}`);
+    }
+    if ("totalPipelineMs" in latencyLog.metadata || "flushDelayMs" in latencyLog.metadata || "transportBreakdown" in latencyLog.metadata) {
+      throw new Error(`tick pipeline latency log should not expose duplicated legacy top-level fields: ${JSON.stringify(latencyLog)}`);
+    }
+
+    stream.stop();
+    wsManager.closeAll();
+  })();
+
   {
     const { stream, wsManager } = build({});
     const calls = [];
@@ -344,6 +388,10 @@ async function runMarketStreamRestFallbackTests() {
     if (store.getLatestPrice("BTC/USDT") !== 50100 || store.getLatestPrice("ETH/USDT") !== 3010) {
       throw new Error("rest fallback batch refresh should update latest prices for all stale symbols");
     }
+    const restPipeline = store.getPipelineSnapshot("BTC/USDT");
+    if (restPipeline?.source !== "rest" || restPipeline.restRoundtripMs !== 0 || restPipeline.exchangeToReceiveMs !== 0) {
+      throw new Error(`rest fallback should mark latency source and roundtrip explicitly: ${JSON.stringify(restPipeline)}`);
+    }
 
     Date.now = () => 9_000;
     store.updatePrice({
@@ -362,7 +410,7 @@ async function runMarketStreamRestFallbackTests() {
     }
 
     const snapshotLog = logs.find((entry) => entry.event === "market_rest_snapshot" && entry.metadata.method === "fetchTickers");
-    if (!snapshotLog || snapshotLog.metadata.skippedFreshSymbols !== 0 || snapshotLog.metadata.totalSymbols !== 2) {
+    if (!snapshotLog || snapshotLog.metadata.skippedFreshSymbols !== 0 || snapshotLog.metadata.totalSymbols !== 2 || snapshotLog.metadata.restRoundtripMs !== 0) {
       throw new Error(`rest fallback diagnostics should report request scope and method clearly: ${JSON.stringify(logs)}`);
     }
   } finally {

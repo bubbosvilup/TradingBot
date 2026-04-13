@@ -48,7 +48,7 @@ Current tests that should move with these behaviors:
 - `tests/mtfContextService.test.js`: optional MTF frame snapshot construction
 - `tests/tradingBotTelemetry.test.js`: compact/full telemetry field shape, including MTF entry diagnostics
 - `tests/tradingBot.test.js`: full tick-path coverage for the same runtime behaviors
-- `tests/systemServer.test.js`: compact monitor/API payload behavior and published Architect diagnostics pass-through
+- `tests/systemServer.test.js`: Pulse UI/API payload behavior and published Architect diagnostics pass-through
 
 Do not:
 

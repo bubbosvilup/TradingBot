@@ -34,6 +34,12 @@ export interface PositionRecord {
   managedRecoveryStartedAt?: number | null;
   managedRecoveryDeferredReason?: string | null;
   managedRecoveryExitFloorNetPnlUsdt?: number | null;
+  expectedGrossEdgePctAtEntry?: number | null;
+  expectedNetEdgePctAtEntry?: number | null;
+  requiredEdgePctAtEntry?: number | null;
+  expectedEntryPrice?: number | null;
+  expectedExitPrice?: number | null;
+  entryArchitectRegime?: string | null;
 }
 
 export interface ClosedTradeRecord {
@@ -55,4 +61,14 @@ export interface ClosedTradeRecord {
   reason: string[];
   lifecycleEvent?: PositionLifecycleEvent | null;
   lifecycleState?: PositionLifecycleState | null;
+  expectedGrossEdgePctAtEntry?: number | null;
+  expectedNetEdgePctAtEntry?: number | null;
+  requiredEdgePctAtEntry?: number | null;
+  expectedEntryPrice?: number | null;
+  expectedExitPrice?: number | null;
+  realizedNetPnlPct?: number | null;
+  realizedNetPnlUsdt?: number | null;
+  edgeErrorPct?: number | null;
+  slippageImpactPct?: number | null;
+  entryArchitectRegime?: string | null;
 }

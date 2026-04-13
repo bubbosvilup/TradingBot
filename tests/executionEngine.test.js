@@ -193,6 +193,51 @@ function runExecutionEngineTests() {
       throw new Error(`position_closed log should expose structured PnL components: ${JSON.stringify(validCloseLog)}`);
     }
 
+    const openedWithEdge = engine.openLong({
+      botId: "bot_edge_diagnostics",
+      confidence: 0.8,
+      edgeDiagnostics: {
+        entryArchitectRegime: "range",
+        expectedEntryPrice: 100,
+        expectedExitPrice: 101,
+        expectedGrossEdgePctAtEntry: 0.012,
+        expectedNetEdgePctAtEntry: 0.01,
+        requiredEdgePctAtEntry: 0.002
+      },
+      price: 100,
+      quantity: 1,
+      reason: ["edge_entry"],
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    if (!openedWithEdge) {
+      throw new Error("execution engine rejected edge diagnostics open");
+    }
+    if (openedWithEdge.expectedNetEdgePctAtEntry !== 0.01 || openedWithEdge.entryArchitectRegime !== "range") {
+      throw new Error(`opened position should retain entry-time edge diagnostics: ${JSON.stringify(openedWithEdge)}`);
+    }
+    const closedWithEdge = engine.closePosition({
+      botId: "bot_edge_diagnostics",
+      price: 101,
+      reason: ["edge_exit"],
+      timestamp: 12_400
+    });
+    if (!closedWithEdge) {
+      throw new Error("execution engine rejected edge diagnostics close");
+    }
+    if (closedWithEdge.expectedGrossEdgePctAtEntry !== 0.012
+      || closedWithEdge.expectedNetEdgePctAtEntry !== 0.01
+      || closedWithEdge.requiredEdgePctAtEntry !== 0.002
+      || closedWithEdge.entryArchitectRegime !== "range") {
+      throw new Error(`closed trade should carry entry-time edge diagnostics: ${JSON.stringify(closedWithEdge)}`);
+    }
+    if (!approxEqual(closedWithEdge.realizedNetPnlUsdt, closedWithEdge.netPnl)
+      || !approxEqual(closedWithEdge.realizedNetPnlPct, 0.799 / 100)
+      || !approxEqual(closedWithEdge.edgeErrorPct, (0.799 / 100) - 0.01)
+      || !approxEqual(closedWithEdge.slippageImpactPct, 0)) {
+      throw new Error(`closed trade should expose realized edge discrepancy metrics: ${JSON.stringify(closedWithEdge)}`);
+    }
+
     const openedShort = engine.openShort({
       botId: "bot_short_valid",
       confidence: 0.82,

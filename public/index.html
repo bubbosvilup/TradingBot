@@ -3,253 +3,100 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TradingBot Observability</title>
+    <title>TradingBot Pulse</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="page">
-      <header class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">Observability Console</p>
-          <h1>TradingBot Runtime</h1>
-          <p id="system-note" class="hero-note">Connecting to orchestrator state...</p>
-        </div>
-        <div class="hero-status">
-          <div class="status-chip">
-            <span class="chip-label">Mode</span>
-            <strong id="mode-pill">n/a</strong>
-          </div>
-          <div class="status-chip">
-            <span class="chip-label">Market WS</span>
-            <strong id="ws-pill">n/a</strong>
-          </div>
-          <div class="status-chip">
-            <span class="chip-label">Latency</span>
-            <strong id="latency-pill">n/a</strong>
-          </div>
-          <button id="trade-history-button" type="button" class="button-secondary">Trade history</button>
-          <button id="refresh-button" type="button">Refresh</button>
-        </div>
-      </header>
+    <header class="pulse-status" aria-label="System status">
+      <div class="status-item">
+        <span>Feed</span>
+        <strong id="status-feed">n/a</strong>
+      </div>
+      <div class="status-item">
+        <span>Execution</span>
+        <strong id="status-execution">PAPER</strong>
+      </div>
+      <div class="status-item">
+        <span>Bots</span>
+        <strong id="status-bots">0/0</strong>
+      </div>
+      <div class="status-item">
+        <span>Positions</span>
+        <strong id="status-positions">0</strong>
+      </div>
+      <div class="status-item pnl-status">
+        <span>Net PnL</span>
+        <strong id="status-pnl">$0.00</strong>
+      </div>
+      <div class="status-item kill-status" id="status-kill-shell">
+        <span>Kill switch</span>
+        <strong id="status-kill">n/a</strong>
+      </div>
+      <div class="status-item">
+        <span>Market stream</span>
+        <strong id="status-stream">n/a</strong>
+      </div>
+      <div class="status-item">
+        <span>Last tick</span>
+        <strong id="status-tick-age">n/a</strong>
+      </div>
+    </header>
 
-      <section class="summary-grid" id="system-cards"></section>
-
-      <section class="main-grid">
-        <section class="card focus-card">
-          <div class="section-heading focus-heading">
-            <div>
-              <p class="section-kicker">Focus</p>
-              <h2 id="focus-title">No symbol selected</h2>
-              <p id="focus-architect-note" class="note focus-note">Architect context loading...</p>
-            </div>
-            <div class="focus-toolbar">
-              <label class="field">
-                <span>Symbol</span>
-                <select id="focus-symbol"></select>
-              </label>
-              <div class="timeframe-group" id="timeframe-group">
-                <button type="button" class="timeframe-button is-active" data-timeframe="1m">1m</button>
-                <button type="button" class="timeframe-button" data-timeframe="5m">5m</button>
-                <button type="button" class="timeframe-button" data-timeframe="1h">1h</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="focus-meta" id="focus-meta">
-            <article class="focus-stat">
-              <span class="focus-label">Strategy</span>
-              <strong>n/a</strong>
-            </article>
-          </div>
-
-          <div class="chart-panel">
-            <div class="chart-legend" id="chart-legend"></div>
-            <div class="chart-shell">
-              <div id="focus-chart" class="chart-canvas"></div>
-            </div>
-          </div>
-        </section>
-
-        <aside class="side-rail">
-          <section class="card side-card">
-            <div class="section-heading">
-              <div>
-                <p class="section-kicker">Health</p>
-                <h2>System status</h2>
-              </div>
-            </div>
-            <div class="health-stack" id="health-stack"></div>
-          </section>
-
-          <section class="card side-card">
-            <div class="section-heading">
-              <div>
-                <p class="section-kicker">Prices</p>
-                <h2>Live symbols</h2>
-              </div>
-            </div>
-            <div class="price-list" id="prices-list"></div>
-          </section>
-
-          <section class="card side-card">
-            <div class="section-heading">
-              <div>
-                <p class="section-kicker">Events</p>
-                <h2>Recent events</h2>
-              </div>
-            </div>
-            <div class="event-list" id="events-list"></div>
-          </section>
-        </aside>
-      </section>
-
-      <section class="card">
+    <main class="pulse-shell">
+      <section class="bot-column" aria-label="Bots">
         <div class="section-heading">
           <div>
-            <p class="section-kicker">Bots</p>
-            <h2>Active bots</h2>
+            <p>Pulse</p>
+            <h1>Bot state</h1>
           </div>
-          <div class="section-actions">
-            <button id="trade-history-button-inline" type="button" class="button-secondary">Closed positions</button>
-            <span id="refresh-status" class="note">Waiting for first sync...</span>
-          </div>
+          <span id="refresh-status">Waiting for data...</span>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Bot</th>
-                <th>Status</th>
-                <th>Strategy</th>
-                <th>Price</th>
-                <th>Cooldown</th>
-                <th>Position</th>
-                <th>PnL</th>
-                <th>Drawdown</th>
-                <th>Win rate</th>
-                <th>Decision</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="bots-body">
-              <tr><td colspan="11">Loading bots...</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <div class="bot-cards" id="bot-cards"></div>
       </section>
 
-      <section class="secondary-grid">
-        <section class="card">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">Positions</p>
-              <h2>Open positions</h2>
-            </div>
+      <aside class="focus-panel" aria-label="Selected bot">
+        <div class="focus-heading">
+          <div>
+            <p id="focus-symbol-note">Select a bot</p>
+            <h2 id="focus-title">No bot selected</h2>
+            <span id="focus-architect">warming up...</span>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Bot</th>
-                  <th>Symbol</th>
-                  <th>Side</th>
-                  <th>Entry</th>
-                  <th>Current</th>
-                  <th>Qty</th>
-                  <th>Hold</th>
-                  <th>PnL</th>
-                </tr>
-              </thead>
-              <tbody id="positions-body">
-                <tr><td colspan="8">No open positions.</td></tr>
-              </tbody>
-            </table>
+          <div class="focus-actions">
+            <button id="resume-button" type="button" class="is-hidden">Resume</button>
+            <button id="history-button" type="button">History</button>
           </div>
+        </div>
+
+        <section class="chart-block" aria-label="Price chart">
+          <div class="chart-legend" id="chart-legend"></div>
+          <div id="focus-chart" class="chart-canvas"></div>
         </section>
 
-        <section class="card analytics-card">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">Analytics</p>
-              <h2>Performance overview</h2>
-            </div>
-          </div>
-          <div class="analytics-grid">
-            <div id="pnl-chart" class="analytics-canvas"></div>
-            <div id="drawdown-chart" class="analytics-canvas"></div>
-            <div id="comparison-chart" class="analytics-canvas analytics-canvas-wide"></div>
-          </div>
+        <section class="position-block" aria-label="Position details">
+          <h3>Position</h3>
+          <div class="position-grid" id="position-details"></div>
         </section>
-      </section>
+
+        <section class="events-block" aria-label="Recent bot events">
+          <h3>Recent events</h3>
+          <div id="focus-events" class="event-list"></div>
+        </section>
+      </aside>
     </main>
 
-    <div id="history-modal" class="modal-shell is-hidden" aria-hidden="true">
-      <div class="modal-backdrop" data-close-modal="true"></div>
-      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="history-title">
-        <header class="modal-header">
-          <div>
-            <p class="section-kicker">Audit Trail</p>
-            <h2 id="history-title">Closed positions</h2>
-            <p class="note" id="history-note">Completed trades with full execution details.</p>
-          </div>
-          <button id="history-close-button" type="button" class="button-secondary">Close</button>
-        </header>
-
-        <div class="modal-filters">
-          <label class="field">
-            <span>Bot</span>
-            <select id="history-filter-bot">
-              <option value="all">All bots</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Symbol</span>
-            <select id="history-filter-symbol">
-              <option value="all">All symbols</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Result</span>
-            <select id="history-filter-result">
-              <option value="all">All</option>
-              <option value="win">Wins</option>
-              <option value="loss">Losses</option>
-              <option value="flat">Flat</option>
-            </select>
-          </label>
+    <dialog id="history-dialog" class="history-dialog">
+      <header>
+        <div>
+          <p>History</p>
+          <h2 id="history-title">Closed positions</h2>
         </div>
-
-        <div class="table-wrap modal-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Bot</th>
-                <th>Symbol</th>
-                <th>Side</th>
-                <th>Entry time</th>
-                <th>Exit time</th>
-                <th>Entry</th>
-                <th>Exit</th>
-                <th>Qty</th>
-                <th>Hold</th>
-                <th>Gross</th>
-                <th>Fees</th>
-                <th>Net</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody id="history-body">
-              <tr><td colspan="13">No completed trades yet.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
+        <button id="history-close" type="button">Close</button>
+      </header>
+      <div id="history-list" class="history-list"></div>
+    </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
     <script src="/ui/chartAdapter.js"></script>
-    <script src="/ui/dashboardAdapter.js"></script>
-    <script src="/app.js"></script>
+    <script src="/pulse.js"></script>
   </body>
 </html>

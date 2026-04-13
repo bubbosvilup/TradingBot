@@ -113,6 +113,42 @@ class ExecutionEngine {
     };
   }
 
+  normalizeOptionalNumber(value: unknown) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : null;
+  }
+
+  calculateRealizedNetPnlPct(economics: { entryNotionalUsdt: number; netPnl: number }) {
+    const entryNotionalUsdt = Number(economics.entryNotionalUsdt);
+    if (!Number.isFinite(entryNotionalUsdt) || entryNotionalUsdt <= 0) {
+      return null;
+    }
+    return Number(economics.netPnl) / entryNotionalUsdt;
+  }
+
+  calculateSlippageImpactPct(position: PositionRecord, economics: { entryPrice: number; exitPrice: number; side: "long" | "short" }, expectedExitPriceInput?: number | null) {
+    const expectedEntryPrice = this.normalizeOptionalNumber(position.expectedEntryPrice);
+    const expectedExitPrice = this.normalizeOptionalNumber(expectedExitPriceInput)
+      ?? this.normalizeOptionalNumber(position.expectedExitPrice)
+      ?? economics.exitPrice;
+    const actualEntryPrice = Number(economics.entryPrice);
+    const actualExitPrice = Number(economics.exitPrice);
+    const side = normalizeTradeSide(economics.side);
+
+    const entryImpact = expectedEntryPrice && expectedEntryPrice > 0 && Number.isFinite(actualEntryPrice)
+      ? side === "short"
+        ? (expectedEntryPrice - actualEntryPrice) / expectedEntryPrice
+        : (actualEntryPrice - expectedEntryPrice) / expectedEntryPrice
+      : 0;
+    const exitImpact = expectedExitPrice && expectedExitPrice > 0 && Number.isFinite(actualExitPrice)
+      ? side === "short"
+        ? (actualExitPrice - expectedExitPrice) / expectedExitPrice
+        : (expectedExitPrice - actualExitPrice) / expectedExitPrice
+      : 0;
+    const totalImpact = entryImpact + exitImpact;
+    return Number.isFinite(totalImpact) ? totalImpact : null;
+  }
+
   openPosition(params: {
     botId: string;
     symbol: string;
@@ -122,6 +158,14 @@ class ExecutionEngine {
     confidence: number;
     reason: string[];
     side?: "long" | "short";
+    edgeDiagnostics?: {
+      expectedGrossEdgePctAtEntry?: number | null;
+      expectedNetEdgePctAtEntry?: number | null;
+      requiredEdgePctAtEntry?: number | null;
+      expectedEntryPrice?: number | null;
+      expectedExitPrice?: number | null;
+      entryArchitectRegime?: string | null;
+    };
   }): PositionRecord | null {
     const side = normalizeTradeSide(params.side);
     const constraints = validateTradeConstraints({
@@ -169,6 +213,13 @@ class ExecutionEngine {
       botId: params.botId,
       confidence: params.confidence,
       entryPrice: constraints.price,
+      entryArchitectRegime: typeof params.edgeDiagnostics?.entryArchitectRegime === "string"
+        ? params.edgeDiagnostics.entryArchitectRegime
+        : null,
+      expectedEntryPrice: this.normalizeOptionalNumber(params.edgeDiagnostics?.expectedEntryPrice) ?? constraints.price,
+      expectedExitPrice: this.normalizeOptionalNumber(params.edgeDiagnostics?.expectedExitPrice),
+      expectedGrossEdgePctAtEntry: this.normalizeOptionalNumber(params.edgeDiagnostics?.expectedGrossEdgePctAtEntry),
+      expectedNetEdgePctAtEntry: this.normalizeOptionalNumber(params.edgeDiagnostics?.expectedNetEdgePctAtEntry),
       id: order.id,
       lastLifecycleEvent: null,
       lifecycleState: "ACTIVE",
@@ -180,6 +231,7 @@ class ExecutionEngine {
       notes: params.reason,
       openedAt: order.timestamp,
       quantity: constraints.quantity,
+      requiredEdgePctAtEntry: this.normalizeOptionalNumber(params.edgeDiagnostics?.requiredEdgePctAtEntry),
       side,
       strategyId: params.strategyId,
       symbol: params.symbol
@@ -226,6 +278,7 @@ class ExecutionEngine {
 
   closePosition(params: {
     botId: string;
+    expectedExitPrice?: number | null;
     lifecycleEvent?: any;
     lifecycleState?: any;
     price: number;
@@ -236,6 +289,11 @@ class ExecutionEngine {
     if (!position) return null;
 
     const economics = this.calculateCloseEconomics(position, params.price);
+    const realizedNetPnlPct = this.calculateRealizedNetPnlPct(economics);
+    const expectedNetEdgePctAtEntry = this.normalizeOptionalNumber(position.expectedNetEdgePctAtEntry);
+    const expectedExitPrice = this.normalizeOptionalNumber(params.expectedExitPrice)
+      ?? this.normalizeOptionalNumber(position.expectedExitPrice)
+      ?? economics.exitPrice;
     const closedAt = Number.isFinite(Number(params.timestamp))
       ? Number(params.timestamp)
       : Date.now();
@@ -246,6 +304,10 @@ class ExecutionEngine {
       entryPrice: economics.entryPrice,
       exitReason: [...params.reason],
       exitPrice: economics.exitPrice,
+      edgeErrorPct: realizedNetPnlPct !== null && expectedNetEdgePctAtEntry !== null
+        ? realizedNetPnlPct - expectedNetEdgePctAtEntry
+        : null,
+      entryArchitectRegime: typeof position.entryArchitectRegime === "string" ? position.entryArchitectRegime : null,
       fees: economics.fees,
       id: position.id,
       lifecycleEvent: params.lifecycleEvent || null,
@@ -255,7 +317,19 @@ class ExecutionEngine {
       pnl: economics.grossPnl,
       quantity: economics.quantity,
       reason: params.reason,
+      expectedEntryPrice: this.normalizeOptionalNumber(position.expectedEntryPrice) ?? economics.entryPrice,
+      expectedExitPrice,
+      expectedGrossEdgePctAtEntry: this.normalizeOptionalNumber(position.expectedGrossEdgePctAtEntry),
+      expectedNetEdgePctAtEntry,
+      realizedNetPnlPct,
+      realizedNetPnlUsdt: economics.netPnl,
+      requiredEdgePctAtEntry: this.normalizeOptionalNumber(position.requiredEdgePctAtEntry),
       side: economics.side,
+      slippageImpactPct: this.calculateSlippageImpactPct(position, {
+        entryPrice: economics.entryPrice,
+        exitPrice: economics.exitPrice,
+        side: economics.side
+      }, expectedExitPrice),
       strategyId: position.strategyId,
       symbol: position.symbol
     };

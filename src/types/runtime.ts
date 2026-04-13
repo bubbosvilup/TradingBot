@@ -86,6 +86,14 @@ export interface TradeConstraints {
 export interface ExecutionOpenParams {
   botId: string;
   confidence: number;
+  edgeDiagnostics?: {
+    expectedGrossEdgePctAtEntry?: number | null;
+    expectedNetEdgePctAtEntry?: number | null;
+    requiredEdgePctAtEntry?: number | null;
+    expectedEntryPrice?: number | null;
+    expectedExitPrice?: number | null;
+    entryArchitectRegime?: string | null;
+  };
   price: number;
   quantity: number;
   reason: string[];
@@ -99,6 +107,7 @@ export interface ExecutionOpenPositionParams extends ExecutionOpenParams {
 
 export interface ExecutionCloseParams {
   botId: string;
+  expectedExitPrice?: number | null;
   lifecycleEvent?: unknown;
   lifecycleState?: unknown;
   price: number;
@@ -129,6 +138,7 @@ export interface BotStateStoreLike {
     now?: number;
   }): PortfolioKillSwitchState;
   recordBotEvaluation(botId: string, symbol: string, evaluatedAt: number): void;
+  recordBotTickStart?(botId: string, symbol: string, startedAt: number): void;
   recordExecution(
     botId: string,
     symbol: string,

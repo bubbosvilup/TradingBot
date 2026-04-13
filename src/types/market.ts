@@ -6,6 +6,7 @@ export interface MarketTick {
   timestamp: number;
   source: "mock" | "ws" | "rest";
   receivedAt?: number;
+  restRoundtripMs?: number;
   stateUpdatedAt?: number;
 }
 

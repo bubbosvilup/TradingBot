@@ -7,7 +7,7 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: segregate the live execution path from the active paper runtime.
 - Completed: quarantine `allow_small_loss_floor05`; do not normalize it into the default runtime path.
 - Completed: add a strong managed recovery breaker.
-- Completed: fix the UI dashboard serving model and add the compact monitor.
+- Completed: fix the UI dashboard serving model and consolidate the Pulse UI entry point.
 - Completed: harden managed-recovery invalidation so a single early `family_mismatch` is not enough.
 - Completed: block entry during pending Architect challenger hysteresis.
 

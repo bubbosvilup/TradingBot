@@ -98,10 +98,11 @@ function openUrlWithDefaultBrowser(url: string) {
 }
 
 function normalizeCompactUiRoute(route?: string | null) {
-  const value = String(route || "/compact").trim();
+  const value = String(route || "/").trim();
   if (!value || !/^\/[A-Za-z0-9/_-]*$/.test(value)) {
-    return "/compact";
+    return "/";
   }
+  if (value === "/compact" || value === "/compact.html") return "/";
   return value;
 }
 
@@ -529,6 +530,258 @@ class SystemServer {
     });
   }
 
+  formatPulseMoney(value: unknown) {
+    const amount = Number(value);
+    const normalized = Number.isFinite(amount) ? amount : 0;
+    const sign = normalized > 0 ? "+" : normalized < 0 ? "-" : "";
+    return `${sign}${Math.abs(normalized).toFixed(2)}`;
+  }
+
+  humanizePulseToken(value: unknown) {
+    return String(value || "n/a").replace(/_/g, "-");
+  }
+
+  getPulseMarketStreamStatus(system: any) {
+    const marketConnection = (system?.wsConnections || []).find((connection: any) => connection.connectionId === "market-stream")
+      || system?.wsConnection
+      || null;
+    const status = String(marketConnection?.status || "disconnected").toLowerCase();
+    if (status.includes("reconnect") || status.includes("connecting")) return "reconnecting";
+    if (status.includes("connect") && !status.includes("disconnect")) return "connected";
+    return status === "connected" ? "connected" : "disconnected";
+  }
+
+  getPulseLastTickAgeMs(system: any, bots: any[], now: number) {
+    const latestPrices = this.store.getSystemSnapshot().latestPrices || [];
+    const latestPriceAt = latestPrices.reduce((max: number, price: any) => Math.max(max, Number(price?.updatedAt) || 0), 0);
+    const latestBotTickAt = bots.reduce((max: number, bot: any) => Math.max(max, Number(bot?.lastTickAt) || 0), 0);
+    const marketConnection = (system?.wsConnections || []).find((connection: any) => connection.connectionId === "market-stream")
+      || system?.wsConnection
+      || null;
+    const latestWsAt = Math.max(
+      Number(system?.latency?.lastWsReceivedAt) || 0,
+      Number(system?.latency?.lastStateUpdatedAt) || 0,
+      Number(marketConnection?.lastWsReceivedAt) || 0,
+      Number(marketConnection?.updatedAt) || 0
+    );
+    const latestAt = Math.max(latestPriceAt, latestBotTickAt, latestWsAt);
+    return latestAt > 0 ? Math.max(0, now - latestAt) : null;
+  }
+
+  getPulseNetPnlUsdt(system: any, bots: any[]) {
+    const portfolio = system?.portfolioKillSwitch || {};
+    if (Number.isFinite(Number(portfolio.realizedPnl)) || Number.isFinite(Number(portfolio.unrealizedPnl))) {
+      return (Number(portfolio.realizedPnl) || 0) + (Number(portfolio.unrealizedPnl) || 0);
+    }
+    return bots.reduce((sum: number, bot: any) => {
+      return sum + (Number(bot?.performance?.pnl) || 0) + (Number(bot?.openPosition?.unrealizedPnl) || 0);
+    }, 0);
+  }
+
+  buildPulseKillSwitch(portfolio: any) {
+    if (portfolio?.triggered) {
+      return {
+        reason: portfolio.reason || null,
+        severity: "critical",
+        state: "triggered"
+      };
+    }
+    if (portfolio?.blockingEntries) {
+      return {
+        reason: portfolio.reason || null,
+        severity: "warning",
+        state: "armed"
+      };
+    }
+    if (portfolio?.enabled) {
+      return {
+        reason: portfolio.reason || null,
+        severity: "normal",
+        state: "armed"
+      };
+    }
+    return {
+      reason: portfolio?.reason || null,
+      severity: "normal",
+      state: "inactive"
+    };
+  }
+
+  getPulseArchitect(bot: any) {
+    return bot?.architectPublished || bot?.architect || null;
+  }
+
+  getPulseRegime(bot: any) {
+    const architect = this.getPulseArchitect(bot);
+    return architect?.marketRegime || "warming_up";
+  }
+
+  getPulseSyncStatus(bot: any) {
+    const architect = this.getPulseArchitect(bot);
+    if (!architect?.marketRegime) return "warming_up";
+    const syncStatus = String(bot?.syncStatus || "pending");
+    if (syncStatus === "waiting_flat") return "diverged";
+    if (syncStatus === "synced" || syncStatus === "pending" || syncStatus === "diverged") return syncStatus;
+    return syncStatus;
+  }
+
+  buildPulsePosition(bot: any) {
+    const position = bot?.openPosition || null;
+    if (!position) {
+      return {
+        label: "FLAT",
+        pnlUsdt: 0,
+        state: "flat"
+      };
+    }
+    const state = normalizeTradeSide(position.side);
+    const pnlUsdt = Number(position.unrealizedPnl) || 0;
+    return {
+      label: `${state.toUpperCase()} ${this.formatPulseMoney(pnlUsdt)}`,
+      pnlUsdt,
+      state
+    };
+  }
+
+  buildPulseAlert(bot: any) {
+    if (bot?.manualResumeRequired) {
+      return {
+        message: "Manual resume required",
+        severity: "critical",
+        type: "manual_resume_required"
+      };
+    }
+    if (bot?.openPosition?.lifecycleMode === "managed_recovery" || bot?.openPosition?.lifecycleState === "MANAGED_RECOVERY") {
+      return {
+        message: "Managed recovery active",
+        severity: "warning",
+        type: "managed_recovery"
+      };
+    }
+    if (bot?.pausedReason) {
+      return {
+        message: this.humanizePulseToken(bot.pausedReason),
+        severity: "warning",
+        type: "manual_resume_required"
+      };
+    }
+    if (bot?.cooldownReason || Number(bot?.cooldownRemainingMs || 0) > 0) {
+      return {
+        message: bot.cooldownReason ? this.humanizePulseToken(bot.cooldownReason) : "Cooldown active",
+        severity: "info",
+        type: "cooldown"
+      };
+    }
+    if (!this.getPulseArchitect(bot) && bot?.status === "running") {
+      return {
+        message: "Architect warming up",
+        severity: "info",
+        type: "architect_blocked"
+      };
+    }
+    if (bot?.postLossArchitectLatchActive) {
+      return {
+        message: "Post-loss latch active",
+        severity: "warning",
+        type: "architect_blocked"
+      };
+    }
+    return null;
+  }
+
+  buildPulseArchitectSummary(bot: any) {
+    const architect = this.getPulseArchitect(bot);
+    if (!architect?.marketRegime) {
+      return {
+        bias: null,
+        line: "warming up...",
+        regime: "warming_up",
+        strength: 0,
+        updatedAt: null
+      };
+    }
+    const regime = architect.marketRegime || "unclear";
+    const bias = architect.recommendedFamily || "no_trade";
+    const strength = Number.isFinite(Number(architect.decisionStrength)) ? Number(architect.decisionStrength) : 0;
+    return {
+      bias,
+      line: `${this.humanizePulseToken(regime)} regime . ${this.humanizePulseToken(bias)} bias . strength ${strength.toFixed(2)}`,
+      regime,
+      strength,
+      updatedAt: architect.updatedAt || null
+    };
+  }
+
+  buildPulseActions(bot: any, portfolio: any) {
+    const resumeVisible = bot?.pausedReason === "max_drawdown_reached" || bot?.manualResumeRequired === true;
+    const killSwitchBlocks = Boolean(portfolio?.triggered || portfolio?.blockingEntries);
+    return {
+      history: {
+        enabled: Boolean(bot?.botId),
+        reason: bot?.botId ? null : "bot_not_selected",
+        visible: true
+      },
+      resume: {
+        enabled: resumeVisible && !killSwitchBlocks,
+        reason: !resumeVisible
+          ? "manual_resume_not_required"
+          : killSwitchBlocks
+            ? "portfolio_kill_switch_active"
+            : null,
+        visible: resumeVisible
+      }
+    };
+  }
+
+  selectPulseFocusBot(bots: any[], requestedBotId?: string | null) {
+    return bots.find((bot: any) => bot.botId === requestedBotId)
+      || bots.find((bot: any) => bot.openPosition)
+      || bots.find((bot: any) => bot.status === "running")
+      || bots[0]
+      || null;
+  }
+
+  buildPulsePayload(options: { botId?: string | null } = {}) {
+    const now = Date.now();
+    const system = this.buildSystemPayload();
+    const bots = this.buildBotsPayload();
+    const portfolio = system.portfolioKillSwitch || {};
+    const focusBot = this.selectPulseFocusBot(bots, options.botId || null);
+    return {
+      botCards: bots.map((bot: any) => ({
+        alert: this.buildPulseAlert(bot),
+        botId: bot.botId,
+        position: this.buildPulsePosition(bot),
+        regime: this.getPulseRegime(bot),
+        strategy: bot.activeStrategyId,
+        symbol: bot.symbol,
+        syncStatus: this.getPulseSyncStatus(bot)
+      })),
+      focusPanel: focusBot ? {
+        actions: this.buildPulseActions(focusBot, portfolio),
+        architect: this.buildPulseArchitectSummary(focusBot),
+        botId: focusBot.botId,
+        symbol: focusBot.symbol
+      } : null,
+      generatedAt: now,
+      statusBar: {
+        bots: {
+          running: system.botsRunning || 0,
+          total: system.botsTotal || bots.length
+        },
+        executionMode: String(system.executionMode || "paper").toUpperCase(),
+        feedMode: String(system.feedMode || "n/a").toUpperCase(),
+        killSwitch: this.buildPulseKillSwitch(portfolio),
+        lastTickAgeMs: this.getPulseLastTickAgeMs(system, bots, now),
+        marketStream: {
+          status: this.getPulseMarketStreamStatus(system)
+        },
+        netPnlUsdt: this.getPulseNetPnlUsdt(system, bots),
+        openPositions: system.openPositions || 0
+      }
+    };
+  }
+
   buildPricesPayload() {
     return this.store.getSystemSnapshot().latestPrices
       .sort((left: any, right: any) => left.symbol.localeCompare(right.symbol));
@@ -556,12 +809,34 @@ class SystemServer {
       .filter(Boolean);
   }
 
-  buildEventsPayload() {
-    return this.store.getRecentEvents(60).slice().reverse();
+  getPositiveQueryLimit(value: string | null, fallback: number, max: number) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(Math.floor(parsed), max);
   }
 
-  buildTradesPayload() {
-    return this.store.getAllClosedTrades()
+  buildEventsPayload(options: { botId?: string | null; limit?: number | null } = {}) {
+    const hasExplicitLimit = options.limit !== null && options.limit !== undefined && Number.isFinite(Number(options.limit));
+    const hasFilter = Boolean(options.botId) || hasExplicitLimit;
+    const limit = hasFilter ? Math.min(Math.max(Number(options.limit) || 60, 1), 500) : 60;
+    return this.store.getRecentEvents(hasFilter ? 500 : 60)
+      .slice()
+      .reverse()
+      .filter((event: any) => {
+        if (!options.botId) return true;
+        if (event?.botId === options.botId) return true;
+        if (event?.metadata?.botId === options.botId) return true;
+        return false;
+      })
+      .slice(0, limit);
+  }
+
+  buildTradesPayload(options: { botId?: string | null; limit?: number | null } = {}) {
+    const hasExplicitLimit = options.limit !== null && options.limit !== undefined && Number.isFinite(Number(options.limit));
+    const hasFilter = Boolean(options.botId) || hasExplicitLimit;
+    const limit = hasFilter ? Math.min(Math.max(Number(options.limit) || 100, 1), 500) : null;
+    const trades = this.store.getAllClosedTrades()
+      .filter((trade: any) => !options.botId || trade.botId === options.botId)
       .map((trade: any) => {
         const config = this.store.botConfigs.get(trade.botId);
         return {
@@ -586,6 +861,7 @@ class SystemServer {
         };
       })
       .sort((left: any, right: any) => Number(right.exitTime || 0) - Number(left.exitTime || 0));
+    return limit ? trades.slice(0, limit) : trades;
   }
 
   buildChartPayload(symbol: string | null) {
@@ -712,6 +988,48 @@ class SystemServer {
     };
   }
 
+  streamPulsePayload(request: any, response: any) {
+    const headers = {
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Content-Type": "text/event-stream"
+    };
+    if (typeof response.setHeader === "function") {
+      for (const [key, value] of Object.entries(headers)) {
+        response.setHeader(key, value);
+      }
+    } else {
+      response.writeHead(200, headers);
+    }
+    if (typeof response.flushHeaders === "function") {
+      response.flushHeaders();
+    }
+
+    let closed = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    const sendPulse = () => {
+      if (closed) return;
+      try {
+        response.write(`data: ${JSON.stringify(this.buildPulsePayload())}\n\n`);
+      } catch {
+        cleanup();
+      }
+    };
+
+    sendPulse();
+    interval = setInterval(sendPulse, 1000);
+    request.on?.("close", cleanup);
+    response.on?.("close", cleanup);
+  }
+
   handleRequest(request: any, response: any) {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${this.host}:${this.port}`}`);
     const pathname = url.pathname;
@@ -731,6 +1049,14 @@ class SystemServer {
       this.json(response, this.buildBotsPayload());
       return;
     }
+    if (pathname === "/api/pulse/stream") {
+      this.streamPulsePayload(request, response);
+      return;
+    }
+    if (pathname === "/api/pulse") {
+      this.json(response, this.buildPulsePayload({ botId: url.searchParams.get("botId") }));
+      return;
+    }
     if (pathname === "/api/prices") {
       this.json(response, this.buildPricesPayload());
       return;
@@ -740,11 +1066,19 @@ class SystemServer {
       return;
     }
     if (pathname === "/api/events") {
-      this.json(response, this.buildEventsPayload());
+      const limitParam = url.searchParams.get("limit");
+      this.json(response, this.buildEventsPayload({
+        botId: url.searchParams.get("botId"),
+        limit: limitParam === null ? null : this.getPositiveQueryLimit(limitParam, 60, 500)
+      }));
       return;
     }
     if (pathname === "/api/trades") {
-      this.json(response, this.buildTradesPayload());
+      const limitParam = url.searchParams.get("limit");
+      this.json(response, this.buildTradesPayload({
+        botId: url.searchParams.get("botId"),
+        limit: limitParam === null ? null : this.getPositiveQueryLimit(limitParam, 100, 500)
+      }));
       return;
     }
     if (pathname === "/api/chart") {
@@ -759,24 +1093,12 @@ class SystemServer {
       this.serveFile(response, path.join(this.publicDir, "index.html"));
       return;
     }
-    if (pathname === "/compact" || pathname === "/compact.html") {
-      this.serveFile(response, path.join(this.publicDir, "compact.html"));
-      return;
-    }
-    if (pathname === "/app.js") {
-      this.serveFile(response, path.join(this.publicDir, "app.js"));
+    if (pathname === "/pulse.js") {
+      this.serveFile(response, path.join(this.publicDir, "pulse.js"));
       return;
     }
     if (pathname === "/styles.css") {
       this.serveFile(response, path.join(this.publicDir, "styles.css"));
-      return;
-    }
-    if (pathname === "/compact.js") {
-      this.serveFile(response, path.join(this.publicDir, "compact.js"));
-      return;
-    }
-    if (pathname === "/compact.css") {
-      this.serveFile(response, path.join(this.publicDir, "compact.css"));
       return;
     }
     if (pathname.startsWith("/ui/")) {

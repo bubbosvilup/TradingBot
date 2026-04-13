@@ -29,14 +29,62 @@ interface PipelineSnapshot {
   lastExchangeTimestamp: number | null;
   lastWsReceivedAt: number | null;
   lastStateUpdatedAt: number | null;
+  lastBotStartedAt: number | null;
   lastBotEvaluatedAt: number | null;
   lastExecutionAt: number | null;
+  source: "mock" | "ws" | "rest" | null;
   exchangeToReceiveMs: number | null;
+  restRoundtripMs: number | null;
   receiveToStateMs: number | null;
   stateToBotMs: number | null;
+  botDecisionMs: number | null;
   botToExecutionMs: number | null;
+  executionMs: number | null;
   totalPipelineMs: number | null;
   tickLatency: TickLatencySummary | null;
+}
+
+interface EdgeDiagnosticsAggregate {
+  blockedOpportunityCount: number;
+  blockedOpportunityEdgeSampleCount: number;
+  closedTradeCount: number;
+  edgeErrorPctSum: number;
+  expectedNetEdgePctSum: number;
+  overestimatedCount: number;
+  realizedNetPnlPctSum: number;
+  slippageImpactPctSum: number;
+  slippageImpactSampleCount: number;
+  underestimatedCount: number;
+  blockedOpportunityExpectedNetEdgePctSum: number;
+}
+
+interface BlockedEdgeOpportunity {
+  botId: string;
+  symbol: string;
+  strategyId: string;
+  regime: string | null;
+  reason: string;
+  expectedGrossEdgePct: number | null;
+  expectedNetEdgePct: number | null;
+  requiredEdgePct: number | null;
+  timestamp: number;
+}
+
+interface EdgeDiagnosticsGroupSummary {
+  avgExpectedEdge: number | null;
+  avgRealizedEdge: number | null;
+  avgError: number | null;
+  overestimationRate: number | null;
+  underestimationRate: number | null;
+  blockedOpportunityCount: number;
+  blockedOpportunityAvgEdge: number | null;
+  avgSlippageImpactPct: number | null;
+  closedTradeCount: number;
+}
+
+interface EdgeDiagnosticsSummary extends EdgeDiagnosticsGroupSummary {
+  byStrategy: Record<string, EdgeDiagnosticsGroupSummary>;
+  byRegime: Record<string, EdgeDiagnosticsGroupSummary>;
 }
 
 type TickLatencyStageKey =
@@ -131,6 +179,12 @@ class StateStore {
   wsConnections: Map<string, WsConnectionSnapshot>;
   pipelineBySymbol: Map<string, PipelineSnapshot>;
   tickLatencyBySymbol: Map<string, TickLatencyAccumulator>;
+  edgeDiagnostics: {
+    overall: EdgeDiagnosticsAggregate;
+    byStrategy: Map<string, EdgeDiagnosticsAggregate>;
+    byRegime: Map<string, EdgeDiagnosticsAggregate>;
+  };
+  blockedEdgeOpportunities: BlockedEdgeOpportunity[];
   contextBySymbol: Map<string, ContextSnapshot>;
   architectObservedBySymbol: Map<string, ArchitectAssessment>;
   architectPublishedBySymbol: Map<string, ArchitectAssessment>;
@@ -147,6 +201,7 @@ class StateStore {
   maxPerformanceHistory: number;
   maxOrdersHistory: number;
   maxClosedTradesHistory: number;
+  maxBlockedEdgeOpportunities: number;
 
   constructor(options: {
     maxEvents?: number;
@@ -170,6 +225,12 @@ class StateStore {
     this.wsConnections = new Map();
     this.pipelineBySymbol = new Map();
     this.tickLatencyBySymbol = new Map();
+    this.edgeDiagnostics = {
+      overall: this.createEdgeDiagnosticsAggregate(),
+      byStrategy: new Map(),
+      byRegime: new Map()
+    };
+    this.blockedEdgeOpportunities = [];
     this.contextBySymbol = new Map();
     this.architectObservedBySymbol = new Map();
     this.architectPublishedBySymbol = new Map();
@@ -213,6 +274,7 @@ class StateStore {
     this.maxPerformanceHistory = Math.max(options.maxPerformanceHistory || 200, 20);
     this.maxOrdersHistory = Math.max(options.maxOrdersHistory || 500, 50);
     this.maxClosedTradesHistory = Math.max(options.maxClosedTradesHistory || 500, 50);
+    this.maxBlockedEdgeOpportunities = this.maxClosedTradesHistory;
   }
 
   registerBot(config: BotConfig) {
@@ -295,12 +357,17 @@ class StateStore {
       this.pipelineBySymbol.set(config.symbol, {
         botToExecutionMs: null,
         exchangeToReceiveMs: null,
+        executionMs: null,
         lastBotEvaluatedAt: null,
+        lastBotStartedAt: null,
         lastExchangeTimestamp: null,
         lastExecutionAt: null,
         lastStateUpdatedAt: null,
         lastWsReceivedAt: null,
+        botDecisionMs: null,
         receiveToStateMs: null,
+        restRoundtripMs: null,
+        source: null,
         stateToBotMs: null,
         symbol: config.symbol,
         tickLatency: null,
@@ -429,9 +496,152 @@ class StateStore {
     this.orders.set(botId, [...orders, order].slice(-this.maxOrdersHistory));
   }
 
+  createEdgeDiagnosticsAggregate(): EdgeDiagnosticsAggregate {
+    return {
+      blockedOpportunityCount: 0,
+      blockedOpportunityEdgeSampleCount: 0,
+      blockedOpportunityExpectedNetEdgePctSum: 0,
+      closedTradeCount: 0,
+      edgeErrorPctSum: 0,
+      expectedNetEdgePctSum: 0,
+      overestimatedCount: 0,
+      realizedNetPnlPctSum: 0,
+      slippageImpactPctSum: 0,
+      slippageImpactSampleCount: 0,
+      underestimatedCount: 0
+    };
+  }
+
+  normalizeEdgeDiagnosticsNumber(value: unknown): number | null {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : null;
+  }
+
+  getEdgeDiagnosticsAggregate(map: Map<string, EdgeDiagnosticsAggregate>, key: string) {
+    const existing = map.get(key);
+    if (existing) {
+      return existing;
+    }
+    const created = this.createEdgeDiagnosticsAggregate();
+    map.set(key, created);
+    return created;
+  }
+
+  updateClosedTradeEdgeDiagnosticsAggregate(aggregate: EdgeDiagnosticsAggregate, trade: ClosedTradeRecord) {
+    const expectedNetEdgePct = this.normalizeEdgeDiagnosticsNumber(trade.expectedNetEdgePctAtEntry);
+    const realizedNetPnlPct = this.normalizeEdgeDiagnosticsNumber(trade.realizedNetPnlPct);
+    const edgeErrorPct = this.normalizeEdgeDiagnosticsNumber(trade.edgeErrorPct);
+    const slippageImpactPct = this.normalizeEdgeDiagnosticsNumber(trade.slippageImpactPct);
+    if (expectedNetEdgePct === null || realizedNetPnlPct === null || edgeErrorPct === null) {
+      return;
+    }
+
+    aggregate.closedTradeCount += 1;
+    aggregate.expectedNetEdgePctSum += expectedNetEdgePct;
+    aggregate.realizedNetPnlPctSum += realizedNetPnlPct;
+    aggregate.edgeErrorPctSum += edgeErrorPct;
+    if (expectedNetEdgePct > realizedNetPnlPct) {
+      aggregate.overestimatedCount += 1;
+    } else if (expectedNetEdgePct < realizedNetPnlPct) {
+      aggregate.underestimatedCount += 1;
+    }
+    if (slippageImpactPct !== null) {
+      aggregate.slippageImpactPctSum += slippageImpactPct;
+      aggregate.slippageImpactSampleCount += 1;
+    }
+  }
+
+  updateBlockedEdgeDiagnosticsAggregate(aggregate: EdgeDiagnosticsAggregate, opportunity: BlockedEdgeOpportunity) {
+    aggregate.blockedOpportunityCount += 1;
+    if (opportunity.expectedNetEdgePct !== null) {
+      aggregate.blockedOpportunityExpectedNetEdgePctSum += opportunity.expectedNetEdgePct;
+      aggregate.blockedOpportunityEdgeSampleCount += 1;
+    }
+  }
+
+  recordClosedTradeEdgeDiagnostics(trade: ClosedTradeRecord) {
+    if (this.normalizeEdgeDiagnosticsNumber(trade.expectedNetEdgePctAtEntry) === null
+      || this.normalizeEdgeDiagnosticsNumber(trade.realizedNetPnlPct) === null
+      || this.normalizeEdgeDiagnosticsNumber(trade.edgeErrorPct) === null) {
+      return;
+    }
+    const strategyId = trade.strategyId || "unknown";
+    const regime = trade.entryArchitectRegime || "unknown";
+    this.updateClosedTradeEdgeDiagnosticsAggregate(this.edgeDiagnostics.overall, trade);
+    this.updateClosedTradeEdgeDiagnosticsAggregate(this.getEdgeDiagnosticsAggregate(this.edgeDiagnostics.byStrategy, strategyId), trade);
+    this.updateClosedTradeEdgeDiagnosticsAggregate(this.getEdgeDiagnosticsAggregate(this.edgeDiagnostics.byRegime, regime), trade);
+  }
+
+  recordBlockedOpportunityEdgeDiagnostics(params: {
+    botId: string;
+    symbol: string;
+    strategyId: string;
+    regime?: string | null;
+    reason: string;
+    expectedGrossEdgePct?: number | null;
+    expectedNetEdgePct?: number | null;
+    requiredEdgePct?: number | null;
+    timestamp?: number | null;
+  }) {
+    const opportunity: BlockedEdgeOpportunity = {
+      botId: params.botId,
+      expectedGrossEdgePct: this.normalizeEdgeDiagnosticsNumber(params.expectedGrossEdgePct),
+      expectedNetEdgePct: this.normalizeEdgeDiagnosticsNumber(params.expectedNetEdgePct),
+      reason: params.reason,
+      regime: params.regime || null,
+      requiredEdgePct: this.normalizeEdgeDiagnosticsNumber(params.requiredEdgePct),
+      strategyId: params.strategyId || "unknown",
+      symbol: params.symbol,
+      timestamp: Number.isFinite(Number(params.timestamp)) ? Number(params.timestamp) : Date.now()
+    };
+
+    this.blockedEdgeOpportunities = [...this.blockedEdgeOpportunities, opportunity].slice(-this.maxBlockedEdgeOpportunities);
+    this.updateBlockedEdgeDiagnosticsAggregate(this.edgeDiagnostics.overall, opportunity);
+    this.updateBlockedEdgeDiagnosticsAggregate(this.getEdgeDiagnosticsAggregate(this.edgeDiagnostics.byStrategy, opportunity.strategyId), opportunity);
+    this.updateBlockedEdgeDiagnosticsAggregate(this.getEdgeDiagnosticsAggregate(this.edgeDiagnostics.byRegime, opportunity.regime || "unknown"), opportunity);
+  }
+
+  summarizeEdgeDiagnosticsAggregate(aggregate: EdgeDiagnosticsAggregate): EdgeDiagnosticsGroupSummary {
+    return {
+      avgError: aggregate.closedTradeCount > 0 ? aggregate.edgeErrorPctSum / aggregate.closedTradeCount : null,
+      avgExpectedEdge: aggregate.closedTradeCount > 0 ? aggregate.expectedNetEdgePctSum / aggregate.closedTradeCount : null,
+      avgRealizedEdge: aggregate.closedTradeCount > 0 ? aggregate.realizedNetPnlPctSum / aggregate.closedTradeCount : null,
+      avgSlippageImpactPct: aggregate.slippageImpactSampleCount > 0
+        ? aggregate.slippageImpactPctSum / aggregate.slippageImpactSampleCount
+        : null,
+      blockedOpportunityAvgEdge: aggregate.blockedOpportunityEdgeSampleCount > 0
+        ? aggregate.blockedOpportunityExpectedNetEdgePctSum / aggregate.blockedOpportunityEdgeSampleCount
+        : null,
+      blockedOpportunityCount: aggregate.blockedOpportunityCount,
+      closedTradeCount: aggregate.closedTradeCount,
+      overestimationRate: aggregate.closedTradeCount > 0 ? aggregate.overestimatedCount / aggregate.closedTradeCount : null,
+      underestimationRate: aggregate.closedTradeCount > 0 ? aggregate.underestimatedCount / aggregate.closedTradeCount : null
+    };
+  }
+
+  getEdgeDiagnosticsSummary(): EdgeDiagnosticsSummary {
+    const summarizeMap = (map: Map<string, EdgeDiagnosticsAggregate>) => Object.fromEntries(
+      Array.from(map.entries()).map(([key, aggregate]) => [key, this.summarizeEdgeDiagnosticsAggregate(aggregate)])
+    );
+    return {
+      ...this.summarizeEdgeDiagnosticsAggregate(this.edgeDiagnostics.overall),
+      byRegime: summarizeMap(this.edgeDiagnostics.byRegime),
+      byStrategy: summarizeMap(this.edgeDiagnostics.byStrategy)
+    };
+  }
+
+  getBlockedEdgeOpportunities(limit: number = 50): BlockedEdgeOpportunity[] {
+    const normalizedLimit = Math.max(0, Math.floor(Number(limit) || 0));
+    if (normalizedLimit <= 0) {
+      return [...this.blockedEdgeOpportunities];
+    }
+    return this.blockedEdgeOpportunities.slice(-normalizedLimit);
+  }
+
   appendClosedTrade(botId: string, trade: ClosedTradeRecord) {
     const trades = this.closedTrades.get(botId) || [];
     this.closedTrades.set(botId, [...trades, trade].slice(-this.maxClosedTradesHistory));
+    this.recordClosedTradeEdgeDiagnostics(trade);
   }
 
   getClosedTrades(botId: string): ClosedTradeRecord[] {
@@ -500,11 +710,26 @@ class StateStore {
     const next = {
       ...current,
       lastBotEvaluatedAt: evaluatedAt,
-      stateToBotMs: current.lastStateUpdatedAt ? Math.max(0, evaluatedAt - current.lastStateUpdatedAt) : null
+      botDecisionMs: current.lastBotStartedAt ? Math.max(0, evaluatedAt - current.lastBotStartedAt) : null,
+      stateToBotMs: current.lastStateUpdatedAt
+        ? Math.max(0, (current.lastBotStartedAt || evaluatedAt) - current.lastStateUpdatedAt)
+        : null
     };
     next.totalPipelineMs = this.computeTotalPipelineMs(next);
     this.pipelineBySymbol.set(symbol, next);
     this.touchSymbol(symbol, evaluatedAt);
+  }
+
+  recordBotTickStart(botId: string, symbol: string, startedAt: number) {
+    const current = this.pipelineBySymbol.get(symbol) || this.createPipelineSnapshot(symbol);
+    const next = {
+      ...current,
+      lastBotStartedAt: startedAt,
+      stateToBotMs: current.lastStateUpdatedAt ? Math.max(0, startedAt - current.lastStateUpdatedAt) : null
+    };
+    next.totalPipelineMs = this.computeTotalPipelineMs(next);
+    this.pipelineBySymbol.set(symbol, next);
+    this.touchSymbol(symbol, startedAt);
   }
 
   recordExecution(
@@ -522,6 +747,7 @@ class StateStore {
     const next = {
       ...current,
       botToExecutionMs: current.lastBotEvaluatedAt ? Math.max(0, executedAt - current.lastBotEvaluatedAt) : null,
+      executionMs: current.lastBotEvaluatedAt ? Math.max(0, executedAt - current.lastBotEvaluatedAt) : null,
       lastExecutionAt: executedAt
     };
     next.totalPipelineMs = this.computeTotalPipelineMs(next);
@@ -845,14 +1071,19 @@ class StateStore {
 
   createPipelineSnapshot(symbol: string): PipelineSnapshot {
     return {
+      botDecisionMs: null,
       botToExecutionMs: null,
       exchangeToReceiveMs: null,
+      executionMs: null,
       lastBotEvaluatedAt: null,
+      lastBotStartedAt: null,
       lastExchangeTimestamp: null,
       lastExecutionAt: null,
       lastStateUpdatedAt: null,
       lastWsReceivedAt: null,
       receiveToStateMs: null,
+      restRoundtripMs: null,
+      source: null,
       stateToBotMs: null,
       symbol,
       tickLatency: null,
@@ -906,15 +1137,38 @@ class StateStore {
     return Number(value.toFixed(3));
   }
 
+  computeExchangeToReceiveMs(tick: MarketTick) {
+    const exchangeTimestamp = Number(tick.timestamp);
+    const receivedAt = Number(tick.receivedAt);
+    if (!Number.isFinite(exchangeTimestamp) || !Number.isFinite(receivedAt) || receivedAt <= 0 || exchangeTimestamp <= 0) {
+      return null;
+    }
+    if (exchangeTimestamp > receivedAt) {
+      return null;
+    }
+    return Math.max(0, receivedAt - exchangeTimestamp);
+  }
+
   recordPipelineFromTick(tick: MarketTick) {
     const current = this.pipelineBySymbol.get(tick.symbol) || this.createPipelineSnapshot(tick.symbol);
     const next = {
       ...current,
-      exchangeToReceiveMs: tick.receivedAt ? Math.max(0, tick.receivedAt - tick.timestamp) : null,
+      botDecisionMs: null,
+      botToExecutionMs: null,
+      exchangeToReceiveMs: this.computeExchangeToReceiveMs(tick),
+      executionMs: null,
       lastExchangeTimestamp: tick.timestamp,
+      lastBotStartedAt: null,
+      lastBotEvaluatedAt: null,
+      lastExecutionAt: null,
       lastStateUpdatedAt: tick.stateUpdatedAt || Date.now(),
       lastWsReceivedAt: tick.receivedAt || null,
-      receiveToStateMs: tick.receivedAt && tick.stateUpdatedAt ? Math.max(0, tick.stateUpdatedAt - tick.receivedAt) : null
+      receiveToStateMs: tick.receivedAt && tick.stateUpdatedAt ? Math.max(0, tick.stateUpdatedAt - tick.receivedAt) : null,
+      restRoundtripMs: Number.isFinite(Number(tick.restRoundtripMs)) && Number(tick.restRoundtripMs) >= 0
+        ? Number(tick.restRoundtripMs)
+        : null,
+      source: tick.source,
+      stateToBotMs: null
     };
     next.totalPipelineMs = this.computeTotalPipelineMs(next);
     this.pipelineBySymbol.set(tick.symbol, next);
@@ -925,7 +1179,8 @@ class StateStore {
       snapshot.exchangeToReceiveMs,
       snapshot.receiveToStateMs,
       snapshot.stateToBotMs,
-      snapshot.botToExecutionMs
+      snapshot.botDecisionMs,
+      snapshot.executionMs
     ].filter((value) => Number.isFinite(value)) as number[];
     if (segments.length <= 0) return null;
     return segments.reduce((sum, value) => sum + value, 0);

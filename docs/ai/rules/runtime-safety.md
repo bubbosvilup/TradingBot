@@ -7,7 +7,7 @@ Current runtime posture:
 - `StateStore` is the runtime truth source
 - startup historical preload, when enabled, seeds `StateStore` before live observation starts and remains bootstrap-only
 - the dashboard reads server/store state; it should not become a side channel for business logic
-- compact UI is served as a static observability surface; it must stay separate from operator controls and trading decisions
+- the Pulse UI is served as a static observability surface; it must stay separate from trading decisions
 - managed-recovery invalidation is now intentionally stricter than a single early `family_mismatch`
 - MTF context is optional and behind `mtf.enabled`; current default config enables it, and `MTF_ENABLED=false` disables it at runtime
 - historical preload is optional by default in config; required mode must abort startup on preload failure before market stream/context/Architect/bots start
@@ -41,7 +41,7 @@ P0-specific guidance:
 - Current managed-recovery precedence is: protective stop, timeout, confirmed target, invalidation.
 - Current non-protective regime invalidation must respect the post-entry grace/confirmation policy.
 - If fixing the dashboard, confirm API payload compatibility before changing server-side structures.
-- If changing compact UI, keep it dense, read-only, and API-facing; do not add trading controls.
+- If changing Pulse UI, keep it operator-focused and API-facing; do not add trading-side decisions.
 
 Before touching runtime plumbing:
 

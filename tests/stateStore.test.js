@@ -51,6 +51,10 @@ function createClosedTrade(index, overrides = {}) {
   };
 }
 
+function approxEqual(actual, expected, epsilon = 1e-9) {
+  return Math.abs(Number(actual) - Number(expected)) <= epsilon;
+}
+
 function runStateStoreTests() {
   const store = new StateStore({
     maxClosedTradesHistory: 50,
@@ -188,6 +192,61 @@ function runStateStoreTests() {
     throw new Error("unregisterBot should not disturb untouched per-bot state for remaining bots");
   }
 
+  const edgeStore = new StateStore();
+  edgeStore.registerBot(createBotConfig({ id: "bot_edge_a", strategy: "rsiReversion", symbol: "BTC/USDT" }));
+  edgeStore.registerBot(createBotConfig({ id: "bot_edge_b", strategy: "emaCross", symbol: "ETH/USDT" }));
+  edgeStore.appendClosedTrade("bot_edge_a", createClosedTrade(1, {
+    botId: "bot_edge_a",
+    edgeErrorPct: -0.002,
+    entryArchitectRegime: "range",
+    expectedNetEdgePctAtEntry: 0.01,
+    realizedNetPnlPct: 0.008,
+    realizedNetPnlUsdt: 0.8,
+    slippageImpactPct: 0.001,
+    strategyId: "rsiReversion",
+    symbol: "BTC/USDT"
+  }));
+  edgeStore.appendClosedTrade("bot_edge_b", createClosedTrade(2, {
+    botId: "bot_edge_b",
+    edgeErrorPct: 0.004,
+    entryArchitectRegime: "trend",
+    expectedNetEdgePctAtEntry: 0.006,
+    realizedNetPnlPct: 0.01,
+    realizedNetPnlUsdt: 1,
+    slippageImpactPct: 0.002,
+    strategyId: "emaCross",
+    symbol: "ETH/USDT"
+  }));
+  edgeStore.recordBlockedOpportunityEdgeDiagnostics({
+    botId: "bot_edge_a",
+    expectedGrossEdgePct: 0.012,
+    expectedNetEdgePct: 0.009,
+    reason: "insufficient_edge_after_costs",
+    regime: "range",
+    requiredEdgePct: 0.01,
+    strategyId: "rsiReversion",
+    symbol: "BTC/USDT",
+    timestamp: 10_000
+  });
+  const edgeSummary = edgeStore.getEdgeDiagnosticsSummary();
+  if (edgeSummary.closedTradeCount !== 2
+    || !approxEqual(edgeSummary.avgExpectedEdge, 0.008)
+    || !approxEqual(edgeSummary.avgRealizedEdge, 0.009)
+    || !approxEqual(edgeSummary.avgError, 0.001)
+    || edgeSummary.overestimationRate !== 0.5
+    || edgeSummary.underestimationRate !== 0.5
+    || edgeSummary.blockedOpportunityCount !== 1
+    || edgeSummary.blockedOpportunityAvgEdge !== 0.009
+    || !approxEqual(edgeSummary.avgSlippageImpactPct, 0.0015)) {
+    throw new Error(`edge diagnostics summary should compare expected and realized edge: ${JSON.stringify(edgeSummary)}`);
+  }
+  if (edgeSummary.byStrategy.rsiReversion.closedTradeCount !== 1
+    || edgeSummary.byStrategy.rsiReversion.blockedOpportunityCount !== 1
+    || edgeSummary.byRegime.range.closedTradeCount !== 1
+    || edgeStore.getBlockedEdgeOpportunities(1)[0].reason !== "insufficient_edge_after_costs") {
+    throw new Error(`edge diagnostics should retain strategy/regime bias and blocked opportunity detail: ${JSON.stringify(edgeSummary)}`);
+  }
+
   const latencyStore = new StateStore();
   latencyStore.registerBot(createBotConfig({ id: "bot_latency", symbol: "SOL/USDT" }));
   latencyStore.recordTickLatencySample("SOL/USDT", {
@@ -216,6 +275,66 @@ function runStateStoreTests() {
   }
   if (latencySnapshot.tickLatency.recentWorstTotalMs !== 12) {
     throw new Error(`tick latency should retain the recent worst-case total duration: ${JSON.stringify(latencySnapshot.tickLatency)}`);
+  }
+
+  const pipelineStore = new StateStore();
+  pipelineStore.registerBot(createBotConfig({ id: "bot_pipeline", symbol: "ADA/USDT" }));
+  pipelineStore.recordPipelineFromTick({
+    price: 1,
+    receivedAt: 1_100,
+    source: "ws",
+    stateUpdatedAt: 1_125,
+    symbol: "ADA/USDT",
+    timestamp: 1_000
+  });
+  pipelineStore.recordBotTickStart("bot_pipeline", "ADA/USDT", 1_140);
+  pipelineStore.recordBotEvaluation("bot_pipeline", "ADA/USDT", 1_170);
+  pipelineStore.recordExecution("bot_pipeline", "ADA/USDT", 1_210);
+  const wsPipeline = pipelineStore.getPipelineSnapshot("ADA/USDT");
+  if (wsPipeline.exchangeToReceiveMs !== 100
+    || wsPipeline.receiveToStateMs !== 25
+    || wsPipeline.stateToBotMs !== 15
+    || wsPipeline.botDecisionMs !== 30
+    || wsPipeline.executionMs !== 40
+    || wsPipeline.totalPipelineMs !== 210
+    || wsPipeline.source !== "ws") {
+    throw new Error(`canonical WS latency pipeline should sum actual stages: ${JSON.stringify(wsPipeline)}`);
+  }
+
+  pipelineStore.recordPipelineFromTick({
+    price: 1.01,
+    receivedAt: 2_090,
+    restRoundtripMs: 90,
+    source: "rest",
+    stateUpdatedAt: 2_100,
+    symbol: "ADA/USDT",
+    timestamp: 2_000
+  });
+  pipelineStore.recordBotTickStart("bot_pipeline", "ADA/USDT", 2_120);
+  pipelineStore.recordBotEvaluation("bot_pipeline", "ADA/USDT", 2_150);
+  const restPipeline = pipelineStore.getPipelineSnapshot("ADA/USDT");
+  if (restPipeline.source !== "rest"
+    || restPipeline.restRoundtripMs !== 90
+    || restPipeline.exchangeToReceiveMs !== 90
+    || restPipeline.receiveToStateMs !== 10
+    || restPipeline.stateToBotMs !== 20
+    || restPipeline.botDecisionMs !== 30
+    || restPipeline.executionMs !== null
+    || restPipeline.totalPipelineMs !== 150) {
+    throw new Error(`REST latency pipeline should expose source and roundtrip without stale execution leakage: ${JSON.stringify(restPipeline)}`);
+  }
+
+  pipelineStore.recordPipelineFromTick({
+    price: 1.02,
+    receivedAt: 3_000,
+    source: "ws",
+    stateUpdatedAt: 3_010,
+    symbol: "ADA/USDT",
+    timestamp: 3_100
+  });
+  const mixedTimestampPipeline = pipelineStore.getPipelineSnapshot("ADA/USDT");
+  if (mixedTimestampPipeline.exchangeToReceiveMs !== null || mixedTimestampPipeline.totalPipelineMs !== 10) {
+    throw new Error(`future exchange timestamps should not create negative latency: ${JSON.stringify(mixedTimestampPipeline)}`);
   }
 
   const portfolioStore = new StateStore();

@@ -265,7 +265,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const systemServer = new SystemServer({
     architectWarmupMs,
     autoOpenCompactUi: isEnabledFlag(process.env.AUTO_OPEN_COMPACT_UI) || isEnabledFlag(process.env.COMPACT_UI),
-    compactUiRoute: process.env.COMPACT_UI_ROUTE || "/compact",
+    compactUiRoute: process.env.COMPACT_UI_ROUTE || "/",
     executionMode,
     feeRate: executionFee.feeRate,
     feedMode: "live",

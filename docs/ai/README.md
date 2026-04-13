@@ -21,7 +21,7 @@ Default operating assumptions:
 - Do not reintroduce strategy-name branching into `src/bots/tradingBot.ts`.
 - Do not move `architectCoordinator`, latch logic, telemetry shaping, or outcome shaping back into `TradingBot`.
 - Keep paper-trading safety intact. The current runtime already rejects live execution.
-- Keep compact UI work in `SystemServer` / `public/`; it is read-only observability, not a control surface.
+- Keep Pulse UI work in `SystemServer` / `public/`; it is observability/control-surface presentation, not trading decision logic.
 - Preserve the current Architect/entry/exit consistency guards:
   - entry blocks on pending challenger hysteresis
   - managed-recovery invalidation has post-entry grace/confirmation
@@ -36,4 +36,4 @@ Primary use cases:
 - patch planning before touching behavior-sensitive paths
 - runtime safety review
 - UI/dashboard fixes that avoid collateral damage in core trading paths
-- compact monitor changes that preserve the existing static frontend model
+- Pulse UI changes that preserve the existing static frontend model
