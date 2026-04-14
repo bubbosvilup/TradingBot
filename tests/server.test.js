@@ -1,5 +1,8 @@
 "use strict";
 
+// Legacy-anchor note: this file protects legacy/server.js only. Active local UI
+// and API behavior is covered by systemServer.test.js.
+
 const http = require("http");
 const path = require("path");
 const assert = require("node:assert/strict");

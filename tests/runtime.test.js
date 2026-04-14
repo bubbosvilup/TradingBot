@@ -1,5 +1,8 @@
 "use strict";
 
+// Legacy-anchor note: this file protects legacy/runtime.js only. It does not
+// describe the active TypeScript orchestrator runtime.
+
 const assert = require("node:assert/strict");
 
 const { createRuntime } = require("../legacy/runtime");

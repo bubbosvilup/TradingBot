@@ -63,7 +63,7 @@ Avoid putting these back into `TradingBot`:
 ## Current hotspots
 The largest remaining area in `TradingBot` is the exit decision/reason planning logic (`shouldExitPosition(...)` or equivalent inline decision engine). Treat this as behavior-sensitive code. Refactor carefully.
 
-UI/chart/dashboard cleanup is still pending and should be evaluated separately from core trading logic.
+UI/chart/dashboard work should be evaluated separately from core trading logic; active browser-served assets live under `public/`.
 
 ## When unsure
 Favor:

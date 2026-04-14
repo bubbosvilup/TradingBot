@@ -3,7 +3,7 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 
-const { printBacktestReport, runBacktestJob } = require("../legacy/backtest_runner");
+const { BacktestEngine } = require("../src/engines/backtestEngine.ts");
 
 function parseSymbols(rawValue) {
   if (!rawValue || typeof rawValue !== "string") {
@@ -109,9 +109,10 @@ function buildConfig() {
 }
 
 async function main() {
+  const backtestEngine = new BacktestEngine();
   const config = buildConfig();
   const activeSymbols = parseSymbols(process.env.BACKTEST_SYMBOLS || process.env.SYMBOLS);
-  const report = await runBacktestJob({
+  const report = await backtestEngine.runJob({
     activeSymbols,
     baseConfig: config,
     hotPool: [],
@@ -124,7 +125,7 @@ async function main() {
   });
 
   fs.writeFileSync(config.BACKTEST_REPORT_FILE, JSON.stringify(report, null, 2));
-  printBacktestReport(report);
+  backtestEngine.printReport(report);
   console.log(`Saved report to ${config.BACKTEST_REPORT_FILE}`);
 }
 

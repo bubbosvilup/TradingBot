@@ -7,7 +7,7 @@ Current runtime shape:
 - `src/bots/`: bot classes; `tradingBot.ts` is the top-level runtime orchestrator
 - `src/engines/`: execution, indicators, backtest engine adapter
 - `src/streams/`: market and user stream integration
-- `src/ui/` and `public/`: dashboard adapters and static frontend; the active operator UI is the single Pulse entry point
+- `public/`: browser-ready dashboard adapters and static frontend; the active operator UI is the single Pulse entry point
 - `tests/`: behavior lock for runtime, roles, store, server, and stream flows
 - `legacy/`: isolated old code, not the target architecture
 
@@ -57,7 +57,7 @@ Boundary map:
 - `tradingBotTelemetry`: operator-facing metadata shaping, including full/compact MTF publish and entry cap-resolution diagnostics
 - `StateStore`: single runtime state container
 - `BacktestEngine`: adapter boundary for future replay migration, not full runtime parity yet
-- `SystemServer` plus `public/` and `src/ui/`: dashboard/API surface, separate from core decision logic
+- `SystemServer` plus `public/`: dashboard/API surface, separate from core decision logic
 
 Hotspots to treat carefully:
 

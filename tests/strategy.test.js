@@ -1,5 +1,8 @@
 "use strict";
 
+// Legacy-anchor note: this file protects legacy/strategy.js only. Active
+// strategy modules under src/strategies are covered separately.
+
 const assert = require("node:assert/strict");
 
 const { createStrategy } = require("../legacy/strategy");

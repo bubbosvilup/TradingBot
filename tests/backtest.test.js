@@ -1,8 +1,11 @@
 "use strict";
 
+// Legacy-adapter note: this file covers the BacktestEngine boundary. The engine
+// still reports a legacy adapter internally, but this test should not import
+// legacy modules directly.
+
 const assert = require("node:assert/strict");
 
-const { compareStrategyModes } = require("../legacy/backtest");
 const { BacktestEngine } = require("../src/engines/backtestEngine.ts");
 
 function makeCandle(timestamp, open, high, low, close, volume) {
@@ -160,7 +163,8 @@ async function runBacktestTests() {
     ...buildReplayEligibleHistories("TREND/USDT", 100, 0.25)
   };
 
-  const report = compareStrategyModes({
+  const engine = new BacktestEngine();
+  const report = engine.compareStrategyModes({
     baseConfig: config,
     symbolHistories: histories
   });
@@ -174,20 +178,11 @@ async function runBacktestTests() {
   assert.ok(report.modes.some((mode) => Array.isArray(mode.rounds) && mode.rounds.length > 0));
   assert.ok(report.modes[0].timeline.points > 0);
 
-  const aggressiveReport = compareStrategyModes({
+  const aggressiveReport = engine.compareStrategyModes({
     baseConfig: { ...config, AGGRESSIVE_MODE_ENABLED: true },
     symbolHistories: histories
   });
   assert.equal(aggressiveReport.strategyProfile, "aggressive");
-
-  const engine = new BacktestEngine();
-  const engineReport = engine.compareStrategyModes({
-    baseConfig: config,
-    symbolHistories: histories
-  });
-  assert.equal(engineReport.symbolCount, report.symbolCount);
-  assert.equal(engineReport.modes.length, report.modes.length);
-  assert.equal(engineReport.strategyProfile, "normal");
 
   const readiness = await engine.run();
   assert.equal(readiness.ok, true);
@@ -203,6 +198,9 @@ async function runBacktestTests() {
     async runBacktestJob(params) {
       delegatedCalls.push({ type: "job", params });
       return { ok: true, type: "job" };
+    },
+    printBacktestReport(report) {
+      delegatedCalls.push({ type: "print", report });
     }
   });
   const delegatedCompare = await delegatedEngine.run({
@@ -216,9 +214,11 @@ async function runBacktestTests() {
     request: { days: 2 }
   });
   assert.equal(delegatedJob.type, "job");
-  assert.equal(delegatedCalls.length, 2);
+  delegatedEngine.printReport({ ok: true, type: "report" });
+  assert.equal(delegatedCalls.length, 3);
   assert.equal(delegatedCalls[0].type, "compare");
   assert.equal(delegatedCalls[1].type, "job");
+  assert.equal(delegatedCalls[2].type, "print");
 }
 
 module.exports = {

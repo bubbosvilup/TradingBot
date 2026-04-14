@@ -1,19 +1,16 @@
 // Module responsibility: modern adapter boundary around the preserved legacy backtest modules.
 
 const { compareStrategyModes: legacyCompareStrategyModes } = require("../../legacy/backtest");
-const { runBacktestJob: legacyRunBacktestJob } = require("../../legacy/backtest_runner");
+const { printBacktestReport: legacyPrintBacktestReport, runBacktestJob: legacyRunBacktestJob } = require("../../legacy/backtest_runner");
 
 class BacktestEngine {
-  compareStrategyModesImpl: (params: any) => any;
-  runBacktestJobImpl: (params: any) => Promise<any>;
-
-  constructor(deps: {
-    compareStrategyModes?: ((params: any) => any) | null;
-    runBacktestJob?: ((params: any) => Promise<any>) | null;
-  } = {}) {
+  constructor(deps = {}) {
     this.compareStrategyModesImpl = typeof deps.compareStrategyModes === "function"
       ? deps.compareStrategyModes
       : legacyCompareStrategyModes;
+    this.printBacktestReportImpl = typeof deps.printBacktestReport === "function"
+      ? deps.printBacktestReport
+      : legacyPrintBacktestReport;
     this.runBacktestJobImpl = typeof deps.runBacktestJob === "function"
       ? deps.runBacktestJob
       : legacyRunBacktestJob;
@@ -28,15 +25,19 @@ class BacktestEngine {
     };
   }
 
-  compareStrategyModes(params: any) {
+  compareStrategyModes(params) {
     return this.compareStrategyModesImpl(params);
   }
 
-  async runJob(params: any) {
+  async runJob(params) {
     return this.runBacktestJobImpl(params);
   }
 
-  async run(params: any = {}) {
+  printReport(report) {
+    return this.printBacktestReportImpl(report);
+  }
+
+  async run(params = {}) {
     if (params?.symbolHistories) {
       return this.compareStrategyModes(params);
     }

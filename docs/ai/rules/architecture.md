@@ -27,7 +27,7 @@ Expected ownership:
 - `src/core/`: lifecycle/bootstrap/store/system composition
 - `src/roles/`: focused policy, planning, gating, shaping, and coordination logic
 - `src/bots/`: orchestration and execution sequencing
-- `src/ui/` and `public/`: dashboard rendering/adapters only
+- `public/`: browser-ready dashboard rendering/adapters only
 - `tests/`: behavior locks for every non-trivial extraction
 
 Current ownership notes:

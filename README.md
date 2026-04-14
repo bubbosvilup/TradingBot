@@ -110,7 +110,6 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
 - La dashboard non dipende piu da import browser di file TypeScript raw da `src/ui/*.ts`.
 - `public/index.html` carica asset JS servibili dal browser:
   - `/ui/chartAdapter.js`
-  - `/ui/dashboardAdapter.js`
 - `SystemServer` serve la UI dal path statico `public/ui/`.
 
 ### Backtest e prep futura
@@ -527,7 +526,6 @@ src/
   strategies/
   data/
   types/
-  ui/
   utils/
 public/
 legacy/
