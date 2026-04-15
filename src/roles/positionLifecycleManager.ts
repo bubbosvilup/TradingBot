@@ -179,17 +179,6 @@ function enterManagedRecovery(position: PositionRecord, params: {
   });
 }
 
-function resetManagedRecovery(position: PositionRecord) {
-  return {
-    ...position,
-    lifecycleMode: "normal" as const,
-    lifecycleState: POSITION_LIFECYCLE_STATES.ACTIVE,
-    managedRecoveryDeferredReason: null,
-    managedRecoveryExitFloorNetPnlUsdt: null,
-    managedRecoveryStartedAt: null
-  };
-}
-
 module.exports = {
   DEFAULT_MANAGED_RECOVERY_EXIT_FLOOR_NET_PNL_USDT,
   DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES,
@@ -203,6 +192,5 @@ module.exports = {
   getPositionLifecycleState,
   isManagedRecoveryPosition,
   isLifecycleTransitionAllowed,
-  resolveLifecycleEventFromReasons,
-  resetManagedRecovery
+  resolveLifecycleEventFromReasons
 };

@@ -24,10 +24,6 @@ export interface DeferredManagedRecoveryParams {
   nextPosition: PositionRecord;
 }
 
-export interface PendingManagedRecoveryParams {
-  metadata: Record<string, unknown>;
-}
-
 export interface ClosedTradeOutcomeParams {
   classification: ExitClassification;
   closedTrade: ClosedTradeRecord;
@@ -60,7 +56,6 @@ export interface ClosedTradeOutcome {
 export interface ExitOutcomeCoordinatorInstance {
   buildClosedTradeOutcome(params: ClosedTradeOutcomeParams): ClosedTradeOutcome;
   buildDeferredManagedRecoveryOutcome(params: DeferredManagedRecoveryParams): Record<string, unknown>;
-  buildPendingManagedRecoveryUpdate(params: PendingManagedRecoveryParams): Record<string, unknown>;
 }
 
 class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
@@ -81,12 +76,6 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
       exitFloorNetPnlUsdt: this.toFixed(params.exitFloorNetPnlUsdt, 4),
       managedRecoveryStartedAt: params.managedRecoveryStartedAt,
       strategy: params.nextPosition.strategyId
-    };
-  }
-
-  buildPendingManagedRecoveryUpdate(params: PendingManagedRecoveryParams) {
-    return {
-      ...params.metadata
     };
   }
 

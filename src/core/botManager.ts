@@ -36,18 +36,6 @@ class BotManager {
       bot.stop();
     }
   }
-
-  pauseBot(botId: string, reason: string) {
-    this.bots.get(botId)?.pause(reason);
-  }
-
-  resumeBot(botId: string) {
-    this.bots.get(botId)?.resume();
-  }
-
-  getBots() {
-    return Array.from(this.bots.values());
-  }
 }
 
 module.exports = {

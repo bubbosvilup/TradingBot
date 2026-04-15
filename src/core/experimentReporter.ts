@@ -490,6 +490,5 @@ class ExperimentReporter implements ExperimentReporterInstance {
 }
 
 module.exports = {
-  buildManagedRecoverySummary: function() { return null; },
   ExperimentReporter
 };

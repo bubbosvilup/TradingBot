@@ -13,7 +13,6 @@ import type {
   ArchitectCoordinatorInstance,
   ArchitectCoordinatorParams,
   ArchitectSyncUpdateResult,
-  ArchitectTimingMetadata,
   ArchitectUsabilityState
 } from "../roles/architectCoordinator.ts";
 import type {
@@ -546,25 +545,6 @@ class TradingBot extends BaseBot {
     return state;
   }
 
-  updateSignalState(params: {
-    hasPosition: boolean;
-    decisionAction: "buy" | "sell" | "hold";
-    decisionReasons?: string[];
-    managedRecoveryPriceTargetHit?: boolean;
-    position?: PositionRecord | null;
-    state: any;
-    timestamp: number;
-  }) {
-    return this.entryCoordinator.updateSignalState({
-      decisionAction: params.decisionAction,
-      hasPosition: params.hasPosition,
-      managedRecoveryPriceTargetHit: params.managedRecoveryPriceTargetHit,
-      position: params.position,
-      state: params.state,
-      timestamp: params.timestamp
-    });
-  }
-
   classifyClosedTrade(closedTrade: any) {
     const exitReasons = Array.isArray(closedTrade?.exitReason)
       ? closedTrade.exitReason
@@ -582,10 +562,6 @@ class TradingBot extends BaseBot {
 
   isRsiExitReason(exitReasons: string[]) {
     return exitReasons.includes("rsi_exit_confirmed") || exitReasons.includes("rsi_exit_threshold_hit");
-  }
-
-  getArchitectTimingMetadata(timestamp: number): ArchitectTimingMetadata {
-    return this.architectCoordinator.getTimingMetadata(timestamp);
   }
 
   buildExitTelemetry(params: {
@@ -606,7 +582,7 @@ class TradingBot extends BaseBot {
     const exitPolicy = this.getExitPolicy();
     return this.telemetry.buildExitTelemetry({
       architectState: params.architectState,
-      architectTiming: this.getArchitectTimingMetadata(Number(params.signalTimestamp)),
+      architectTiming: this.architectCoordinator.getTimingMetadata(Number(params.signalTimestamp)),
       closedTrade: params.closedTrade,
       executionTimestamp: params.executionTimestamp,
       exitMechanism: params.exitMechanism,
@@ -768,26 +744,24 @@ class TradingBot extends BaseBot {
       return false;
     }
 
-    this.logManagedRecoveryUpdate(this.exitOutcomeCoordinator.buildPendingManagedRecoveryUpdate({
-      metadata: {
-        ...this.buildExitTelemetry({
-          architectState: params.architectState,
-          exitMechanism: params.managedRecoveryTarget?.hit ? "recovery" : null,
-          exitReasons: Array.isArray(params.exitPlan.reason) ? params.exitPlan.reason : [],
-          lifecycleEvent: params.managedRecoveryTarget?.hit
-            ? POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
-            : null,
-          managedRecoveryTarget: params.managedRecoveryTarget,
-          position: params.positionSnapshot,
-          signalTimestamp: params.snapshot.tick.timestamp,
-          tick: params.snapshot.tick
-        }),
-        exitSignalStreak: params.snapshot.signalState.exitSignalStreak,
-        latestPrice: Number(Number(params.snapshot.tick.price || 0).toFixed(4)),
-        status: params.managedRecoveryTarget?.hit ? "managed_recovery_target_ready" : "managed_recovery_rsi_ignored",
-        strategy: this.strategy.id
-      }
-    }));
+    this.logManagedRecoveryUpdate({
+      ...this.buildExitTelemetry({
+        architectState: params.architectState,
+        exitMechanism: params.managedRecoveryTarget?.hit ? "recovery" : null,
+        exitReasons: Array.isArray(params.exitPlan.reason) ? params.exitPlan.reason : [],
+        lifecycleEvent: params.managedRecoveryTarget?.hit
+          ? POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
+          : null,
+        managedRecoveryTarget: params.managedRecoveryTarget,
+        position: params.positionSnapshot,
+        signalTimestamp: params.snapshot.tick.timestamp,
+        tick: params.snapshot.tick
+      }),
+      exitSignalStreak: params.snapshot.signalState.exitSignalStreak,
+      latestPrice: Number(Number(params.snapshot.tick.price || 0).toFixed(4)),
+      status: params.managedRecoveryTarget?.hit ? "managed_recovery_target_ready" : "managed_recovery_rsi_ignored",
+      strategy: this.strategy.id
+    });
     return true;
   }
 
@@ -1188,9 +1162,8 @@ class TradingBot extends BaseBot {
     const managedRecoveryTarget = position && isManagedRecoveryPosition(position)
       ? this.resolveManagedRecoveryTarget({ context, position })
       : null;
-    const signalState = this.updateSignalState({
+    const signalState = this.entryCoordinator.updateSignalState({
       decisionAction: decision.action,
-      decisionReasons: decision.reason,
       hasPosition: Boolean(position),
       managedRecoveryPriceTargetHit: managedRecoveryTarget?.hit,
       position,

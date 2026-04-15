@@ -219,22 +219,6 @@ class UserStream {
     return this.wsManager.subscribe("user:events", handler);
   }
 
-  subscribeOrders(handler: (...args: any[]) => void) {
-    return this.wsManager.subscribe("user:orders", handler);
-  }
-
-  subscribePositions(handler: (...args: any[]) => void) {
-    return this.wsManager.subscribe("user:positions", handler);
-  }
-
-  subscribeFills(handler: (...args: any[]) => void) {
-    return this.wsManager.subscribe("user:fills", handler);
-  }
-
-  subscribeBalances(handler: (...args: any[]) => void) {
-    return this.wsManager.subscribe("user:balances", handler);
-  }
-
   handleRemoteUserEvent(event: any) {
     if (!event) return;
     this.emitNormalized(event);

@@ -373,16 +373,6 @@ function buildExitLifecycleReport(params: {
   };
 }
 
-function buildExitLifecycleReportFromStore(store: any, events: EventLike[] = []) {
-  const closedTrades = typeof store?.getAllClosedTrades === "function"
-    ? store.getAllClosedTrades()
-    : [];
-  return buildExitLifecycleReport({
-    closedTrades,
-    events
-  });
-}
-
 function renderMetricMap(title: string, metrics: Record<string, AggregatedMetric>) {
   const lines = [`${title}:`];
   for (const [key, metric] of Object.entries(metrics)) {
@@ -412,6 +402,5 @@ function renderExitLifecycleReport(report: ReturnType<typeof buildExitLifecycleR
 
 module.exports = {
   buildExitLifecycleReport,
-  buildExitLifecycleReportFromStore,
   renderExitLifecycleReport
 };

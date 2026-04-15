@@ -13,8 +13,78 @@ const VALID_MARKET_PROVIDERS = new Set(["binance"]);
 const VALID_MARKET_STREAM_TYPES = new Set(["trade", "aggTrade"]);
 const VALID_MTF_HORIZON_FRAMES = new Set(["short", "medium", "long"]);
 const VALID_MTF_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
-const VALID_RISK_OVERRIDE_FIELDS = new Set(["positionPct", "cooldownMs", "emergencyStopPct", "postExitReentryGuardMs", "exitConfirmationTicks", "minHoldMs", "meaningfulWinUsdt", "winReentryCooldownMs", "volatilitySizingEnabled", "volatilitySizingMultiplier", "volatilitySizingMinPenalty"]);
 const VALID_PORTFOLIO_KILL_SWITCH_MODES = new Set(["block_entries_only"]);
+
+type NumericValidationRule = {
+  max?: number;
+  min?: number;
+  minExclusive?: number;
+};
+type RiskOverrideRule =
+  | { type: "boolean" }
+  | ({ type: "number" } & NumericValidationRule);
+
+const RISK_OVERRIDE_RULES: Record<string, RiskOverrideRule> = {
+  cooldownMs: { type: "number", min: 1 },
+  emergencyStopPct: { type: "number", minExclusive: 0 },
+  exitConfirmationTicks: { type: "number", min: 1 },
+  meaningfulWinUsdt: { type: "number", min: 0 },
+  minHoldMs: { type: "number", min: 1 },
+  positionPct: { type: "number", minExclusive: 0 },
+  postExitReentryGuardMs: { type: "number", min: 1 },
+  volatilitySizingEnabled: { type: "boolean" },
+  volatilitySizingMinPenalty: { type: "number", max: 1, minExclusive: 0 },
+  volatilitySizingMultiplier: { type: "number", min: 0 },
+  winReentryCooldownMs: { type: "number", min: 1 }
+};
+
+function normalizeConfigString(value: unknown) {
+  return String(value || "").trim();
+}
+
+function requirePlainObject(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(message);
+  }
+  return value as Record<string, unknown>;
+}
+
+function hasOwnConfigRule(rules: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(rules, key);
+}
+
+function numberMatchesRule(value: number, rule: NumericValidationRule) {
+  if (rule.min !== undefined && value < rule.min) return false;
+  if (rule.minExclusive !== undefined && value <= rule.minExclusive) return false;
+  if (rule.max !== undefined && value > rule.max) return false;
+  return true;
+}
+
+function assertOptionalBooleanField(config: Record<string, unknown>, field: string, label: string) {
+  const value = config[field];
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error(`${label} "${String(value)}"`);
+  }
+}
+
+function assertOptionalNumberField(config: Record<string, unknown>, field: string, label: string, rule: NumericValidationRule) {
+  const value = config[field];
+  if (value === undefined) return;
+  assertNumberValue(value, label, rule);
+}
+
+function assertNumberValue(value: unknown, label: string, rule: NumericValidationRule) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || !numberMatchesRule(numericValue, rule)) {
+    throw new Error(`${label} "${String(value)}"`);
+  }
+}
+
+function assertAllowedString(value: unknown, allowed: Set<string>, message: string) {
+  if (!allowed.has(normalizeConfigString(value))) {
+    throw new Error(message);
+  }
+}
 
 class ConfigLoader {
   rootDir: string;
@@ -79,36 +149,20 @@ class ConfigLoader {
       }
 
       if (bot.riskOverrides !== undefined) {
-        if (!bot.riskOverrides || typeof bot.riskOverrides !== "object" || Array.isArray(bot.riskOverrides)) {
-          throw new Error(`${label} has invalid riskOverrides; expected an object`);
-        }
-        for (const [key, value] of Object.entries(bot.riskOverrides)) {
-          if (!VALID_RISK_OVERRIDE_FIELDS.has(key)) {
+        const riskOverrides = requirePlainObject(bot.riskOverrides, `${label} has invalid riskOverrides; expected an object`);
+        for (const [key, value] of Object.entries(riskOverrides)) {
+          if (!hasOwnConfigRule(RISK_OVERRIDE_RULES, key)) {
             throw new Error(`${label} has invalid riskOverrides field "${key}"`);
           }
-          if (key === "volatilitySizingEnabled") {
+          const rule = RISK_OVERRIDE_RULES[key];
+          if (rule.type === "boolean") {
             if (typeof value !== "boolean") {
               throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
             }
             continue;
           }
           const numericValue = Number(value);
-          if (!Number.isFinite(numericValue)) {
-            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
-          }
-          if ((key === "positionPct" || key === "emergencyStopPct") && !(numericValue > 0)) {
-            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
-          }
-          if ((key === "cooldownMs" || key === "postExitReentryGuardMs" || key === "exitConfirmationTicks" || key === "minHoldMs" || key === "winReentryCooldownMs") && !(numericValue >= 1)) {
-            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
-          }
-          if (key === "meaningfulWinUsdt" && !(numericValue >= 0)) {
-            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
-          }
-          if (key === "volatilitySizingMultiplier" && !(numericValue >= 0)) {
-            throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
-          }
-          if (key === "volatilitySizingMinPenalty" && !(numericValue > 0 && numericValue <= 1)) {
+          if (rule.type !== "number" || !Number.isFinite(numericValue) || !numberMatchesRule(numericValue, rule)) {
             throw new Error(`${label} has invalid riskOverrides.${key} "${String(value)}"`);
           }
         }
@@ -170,19 +224,15 @@ class ConfigLoader {
     }
 
     if (config.market !== undefined) {
-      if (!config.market || typeof config.market !== "object" || Array.isArray(config.market)) {
-        throw new Error("bots.config.json has invalid market; expected an object");
-      }
-
-      const market = config.market as MarketStreamConfig;
+      const market = requirePlainObject(config.market, "bots.config.json has invalid market; expected an object") as MarketStreamConfig;
       if (market.mode !== undefined && String(market.mode || "").trim().toLowerCase() !== "live") {
         throw new Error(`bots.config.json has unsupported market.mode "${String(market.mode || "")}"; active runtime requires live market data`);
       }
-      if (market.provider !== undefined && !VALID_MARKET_PROVIDERS.has(String(market.provider || "").trim())) {
-        throw new Error(`bots.config.json has invalid market.provider "${String(market.provider || "")}"`);
+      if (market.provider !== undefined) {
+        assertAllowedString(market.provider, VALID_MARKET_PROVIDERS, `bots.config.json has invalid market.provider "${String(market.provider || "")}"`);
       }
-      if (market.streamType !== undefined && !VALID_MARKET_STREAM_TYPES.has(String(market.streamType || "").trim())) {
-        throw new Error(`bots.config.json has invalid market.streamType "${String(market.streamType || "")}"`);
+      if (market.streamType !== undefined) {
+        assertAllowedString(market.streamType, VALID_MARKET_STREAM_TYPES, `bots.config.json has invalid market.streamType "${String(market.streamType || "")}"`);
       }
       if (market.wsBaseUrl !== undefined && String(market.wsBaseUrl || "").trim() === "") {
         throw new Error("bots.config.json has invalid market.wsBaseUrl; expected a non-empty string");
@@ -192,31 +242,15 @@ class ConfigLoader {
           throw new Error("bots.config.json has invalid market.klineIntervals; expected an array of non-empty strings");
         }
       }
-      if (market.liveEmitIntervalMs !== undefined) {
-        const intervalMs = Number(market.liveEmitIntervalMs);
-        if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-          throw new Error(`bots.config.json has invalid market.liveEmitIntervalMs "${String(market.liveEmitIntervalMs)}"`);
-        }
-      }
+      assertOptionalNumberField(market as Record<string, unknown>, "liveEmitIntervalMs", "bots.config.json has invalid market.liveEmitIntervalMs", { minExclusive: 0 });
     }
 
     this.validateHistoricalPreloadConfig(config.historicalPreload);
 
     if (config.portfolioKillSwitch !== undefined) {
-      if (!config.portfolioKillSwitch || typeof config.portfolioKillSwitch !== "object" || Array.isArray(config.portfolioKillSwitch)) {
-        throw new Error("bots.config.json has invalid portfolioKillSwitch; expected an object");
-      }
-
-      const portfolioKillSwitch = config.portfolioKillSwitch as Record<string, unknown>;
-      if (portfolioKillSwitch.enabled !== undefined && typeof portfolioKillSwitch.enabled !== "boolean") {
-        throw new Error(`bots.config.json has invalid portfolioKillSwitch.enabled "${String(portfolioKillSwitch.enabled)}"`);
-      }
-      if (portfolioKillSwitch.maxDrawdownPct !== undefined) {
-        const maxDrawdownPct = Number(portfolioKillSwitch.maxDrawdownPct);
-        if (!Number.isFinite(maxDrawdownPct) || maxDrawdownPct <= 0) {
-          throw new Error(`bots.config.json has invalid portfolioKillSwitch.maxDrawdownPct "${String(portfolioKillSwitch.maxDrawdownPct)}"`);
-        }
-      }
+      const portfolioKillSwitch = requirePlainObject(config.portfolioKillSwitch, "bots.config.json has invalid portfolioKillSwitch; expected an object");
+      assertOptionalBooleanField(portfolioKillSwitch, "enabled", "bots.config.json has invalid portfolioKillSwitch.enabled");
+      assertOptionalNumberField(portfolioKillSwitch, "maxDrawdownPct", "bots.config.json has invalid portfolioKillSwitch.maxDrawdownPct", { minExclusive: 0 });
       if (portfolioKillSwitch.mode !== undefined && !VALID_PORTFOLIO_KILL_SWITCH_MODES.has(String(portfolioKillSwitch.mode || "").trim())) {
         throw new Error(`bots.config.json has invalid portfolioKillSwitch.mode "${String(portfolioKillSwitch.mode || "")}"`);
       }
@@ -229,30 +263,17 @@ class ConfigLoader {
 
   validateHistoricalPreloadConfig(preloadConfig?: HistoricalPreloadConfig | unknown) {
     if (preloadConfig === undefined) return;
-    if (!preloadConfig || typeof preloadConfig !== "object" || Array.isArray(preloadConfig)) {
-      throw new Error("bots.config.json has invalid historicalPreload; expected an object");
-    }
-
-    const preload = preloadConfig as HistoricalPreloadConfig;
-    if (preload.enabled !== undefined && typeof preload.enabled !== "boolean") {
-      throw new Error(`bots.config.json has invalid historicalPreload.enabled "${String(preload.enabled)}"`);
-    }
-    if (preload.required !== undefined && typeof preload.required !== "boolean") {
-      throw new Error(`bots.config.json has invalid historicalPreload.required "${String(preload.required)}"`);
-    }
+    const preload = requirePlainObject(preloadConfig, "bots.config.json has invalid historicalPreload; expected an object") as HistoricalPreloadConfig;
+    assertOptionalBooleanField(preload as Record<string, unknown>, "enabled", "bots.config.json has invalid historicalPreload.enabled");
+    assertOptionalBooleanField(preload as Record<string, unknown>, "required", "bots.config.json has invalid historicalPreload.required");
 
     const numericFields = ["horizonMs", "maxHorizonMs", "timeoutMs", "limit"];
     for (const field of numericFields) {
-      const value = (preload as Record<string, unknown>)[field];
-      if (value === undefined) continue;
-      const numericValue = Number(value);
-      if (!Number.isFinite(numericValue) || numericValue <= 0) {
-        throw new Error(`bots.config.json has invalid historicalPreload.${field} "${String(value)}"`);
-      }
+      assertOptionalNumberField(preload as Record<string, unknown>, field, `bots.config.json has invalid historicalPreload.${field}`, { minExclusive: 0 });
     }
 
-    if (preload.priceTimeframe !== undefined && !VALID_MTF_TIMEFRAMES.has(String(preload.priceTimeframe || "").trim())) {
-      throw new Error(`bots.config.json has invalid historicalPreload.priceTimeframe "${String(preload.priceTimeframe || "")}"`);
+    if (preload.priceTimeframe !== undefined) {
+      assertAllowedString(preload.priceTimeframe, VALID_MTF_TIMEFRAMES, `bots.config.json has invalid historicalPreload.priceTimeframe "${String(preload.priceTimeframe || "")}"`);
     }
 
     if (preload.timeframes !== undefined) {
@@ -260,30 +281,17 @@ class ConfigLoader {
         throw new Error("bots.config.json has invalid historicalPreload.timeframes; expected a non-empty array");
       }
       for (const timeframe of preload.timeframes) {
-        if (!VALID_MTF_TIMEFRAMES.has(String(timeframe || "").trim())) {
-          throw new Error(`bots.config.json has invalid historicalPreload.timeframes entry "${String(timeframe || "")}"`);
-        }
+        assertAllowedString(timeframe, VALID_MTF_TIMEFRAMES, `bots.config.json has invalid historicalPreload.timeframes entry "${String(timeframe || "")}"`);
       }
     }
   }
 
   validateMtfConfig(mtfConfig?: MtfRuntimeConfig | unknown) {
     if (mtfConfig === undefined) return;
-    if (!mtfConfig || typeof mtfConfig !== "object" || Array.isArray(mtfConfig)) {
-      throw new Error("bots.config.json has invalid mtf; expected an object");
-    }
+    const mtf = requirePlainObject(mtfConfig, "bots.config.json has invalid mtf; expected an object") as MtfRuntimeConfig;
+    assertOptionalBooleanField(mtf as Record<string, unknown>, "enabled", "bots.config.json has invalid mtf.enabled");
 
-    const mtf = mtfConfig as MtfRuntimeConfig;
-    if (mtf.enabled !== undefined && typeof mtf.enabled !== "boolean") {
-      throw new Error(`bots.config.json has invalid mtf.enabled "${String(mtf.enabled)}"`);
-    }
-
-    if (mtf.instabilityThreshold !== undefined) {
-      const threshold = Number(mtf.instabilityThreshold);
-      if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-        throw new Error(`bots.config.json has invalid mtf.instabilityThreshold "${String(mtf.instabilityThreshold)}"`);
-      }
-    }
+    assertOptionalNumberField(mtf as Record<string, unknown>, "instabilityThreshold", "bots.config.json has invalid mtf.instabilityThreshold", { max: 1, min: 0 });
 
     if (mtf.frames !== undefined) {
       if (!Array.isArray(mtf.frames) || mtf.frames.length <= 0) {
@@ -296,48 +304,19 @@ class ConfigLoader {
         if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
           throw new Error(`${label} is invalid; expected an object`);
         }
-        if (!VALID_MTF_TIMEFRAMES.has(String(frame.id || "").trim())) {
-          throw new Error(`${label} has invalid id "${String(frame.id || "")}"`);
-        }
-        if (!VALID_MTF_HORIZON_FRAMES.has(String(frame.horizonFrame || "").trim())) {
-          throw new Error(`${label} has invalid horizonFrame "${String(frame.horizonFrame || "")}"`);
-        }
-        const windowMs = Number(frame.windowMs);
-        if (!Number.isFinite(windowMs) || windowMs < 5_000) {
-          throw new Error(`${label} has invalid windowMs "${String(frame.windowMs)}"`);
-        }
+        assertAllowedString(frame.id, VALID_MTF_TIMEFRAMES, `${label} has invalid id "${String(frame.id || "")}"`);
+        assertAllowedString(frame.horizonFrame, VALID_MTF_HORIZON_FRAMES, `${label} has invalid horizonFrame "${String(frame.horizonFrame || "")}"`);
+        assertNumberValue(frame.windowMs, `${label} has invalid windowMs`, { min: 5_000 });
       }
     }
   }
 
   validateRuntimeTuningConfig(config: RuntimeTuningConfig) {
-    if (config.architectWarmupMs !== undefined) {
-      const architectWarmupMs = Number(config.architectWarmupMs);
-      if (!Number.isFinite(architectWarmupMs) || architectWarmupMs < 5_000) {
-        throw new Error(`bots.config.json has invalid architectWarmupMs "${String(config.architectWarmupMs)}"`);
-      }
-    }
-
-    if (config.architectPublishIntervalMs !== undefined) {
-      const architectPublishIntervalMs = Number(config.architectPublishIntervalMs);
-      if (!Number.isFinite(architectPublishIntervalMs) || architectPublishIntervalMs < 5_000) {
-        throw new Error(`bots.config.json has invalid architectPublishIntervalMs "${String(config.architectPublishIntervalMs)}"`);
-      }
-    }
-
-    if (config.postLossLatchMinFreshPublications !== undefined) {
-      const postLossLatchMinFreshPublications = Number(config.postLossLatchMinFreshPublications);
-      if (!Number.isFinite(postLossLatchMinFreshPublications) || postLossLatchMinFreshPublications < 1) {
-        throw new Error(`bots.config.json has invalid postLossLatchMinFreshPublications "${String(config.postLossLatchMinFreshPublications)}"`);
-      }
-    }
-
-    if (config.symbolStateRetentionMs !== undefined) {
-      const symbolStateRetentionMs = Number(config.symbolStateRetentionMs);
-      if (!Number.isFinite(symbolStateRetentionMs) || symbolStateRetentionMs < 60_000) {
-        throw new Error(`bots.config.json has invalid symbolStateRetentionMs "${String(config.symbolStateRetentionMs)}"`);
-      }
-    }
+    const runtimeConfig = config as Record<string, unknown>;
+    assertOptionalNumberField(runtimeConfig, "architectWarmupMs", "bots.config.json has invalid architectWarmupMs", { min: 5_000 });
+    assertOptionalNumberField(runtimeConfig, "architectPublishIntervalMs", "bots.config.json has invalid architectPublishIntervalMs", { min: 5_000 });
+    assertOptionalNumberField(runtimeConfig, "postLossLatchMinFreshPublications", "bots.config.json has invalid postLossLatchMinFreshPublications", { min: 1 });
+    assertOptionalNumberField(runtimeConfig, "symbolStateRetentionMs", "bots.config.json has invalid symbolStateRetentionMs", { min: 60_000 });
   }
 }
 

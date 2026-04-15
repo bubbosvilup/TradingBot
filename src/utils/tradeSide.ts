@@ -80,15 +80,6 @@ function isTargetHit(side: unknown, latestPrice: number, targetPrice: number) {
     : price >= target;
 }
 
-function isStopHit(side: unknown, latestPrice: number, stopPrice: number) {
-  const price = Number(latestPrice);
-  const stop = Number(stopPrice);
-  if (!Number.isFinite(price) || !Number.isFinite(stop)) return false;
-  return normalizeTradeSide(side) === "short"
-    ? price >= stop
-    : price <= stop;
-}
-
 function calculateDirectionalGrossPnl(params: {
   entryPrice: number;
   exitPrice: number;
@@ -115,7 +106,6 @@ module.exports = {
   inferEntrySideFromAction,
   isEntryAction,
   isExitActionForSide,
-  isStopHit,
   isTargetHit,
   normalizeEntrySide,
   normalizeTradeSide

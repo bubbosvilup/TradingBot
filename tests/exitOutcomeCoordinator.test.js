@@ -28,16 +28,6 @@ async function runExitOutcomeCoordinatorTests() {
     throw new Error(`managed recovery defer outcome should preserve rounded metadata and strategy handoff: ${JSON.stringify(deferred)}`);
   }
 
-  const pending = coordinator.buildPendingManagedRecoveryUpdate({
-    metadata: {
-      status: "managed_recovery_target_ready",
-      exitSignalStreak: 1
-    }
-  });
-  if (pending.status !== "managed_recovery_target_ready" || pending.exitSignalStreak !== 1) {
-    throw new Error(`managed recovery pending updates should preserve existing metadata verbatim: ${JSON.stringify(pending)}`);
-  }
-
   const closedOutcome = coordinator.buildClosedTradeOutcome({
     classification: {
       closeClassification: "failed_rsi_exit",

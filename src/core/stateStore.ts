@@ -820,10 +820,6 @@ class StateStore {
     return this.contextBySymbol.get(symbol) || null;
   }
 
-  getAllContextSnapshots() {
-    return Array.from(this.contextBySymbol.values());
-  }
-
   setArchitectObservedAssessment(symbol: string, assessment: ArchitectAssessment) {
     this.architectObservedBySymbol.set(symbol, assessment);
     this.touchSymbol(symbol, assessment?.updatedAt || Date.now());
@@ -842,10 +838,6 @@ class StateStore {
     return this.architectPublishedBySymbol.get(symbol) || null;
   }
 
-  getAllArchitectAssessments() {
-    return Array.from(this.architectPublishedBySymbol.values());
-  }
-
   setArchitectPublisherState(symbol: string, state: ArchitectPublisherState) {
     this.architectPublisherBySymbol.set(symbol, state);
     this.touchSymbol(symbol, this.resolvePublisherTouchedAt(state) || Date.now());
@@ -853,14 +845,6 @@ class StateStore {
 
   getArchitectPublisherState(symbol: string): ArchitectPublisherState | null {
     return this.architectPublisherBySymbol.get(symbol) || null;
-  }
-
-  getAllArchitectPublisherStates() {
-    return Array.from(this.architectPublisherBySymbol.values());
-  }
-
-  getOrdersForSymbol(symbol: string): OrderRecord[] {
-    return Array.from(this.orders.values()).flat().filter((order) => order.symbol === symbol);
   }
 
   getClosedTradesForSymbol(symbol: string): ClosedTradeRecord[] {
@@ -891,9 +875,9 @@ class StateStore {
       openPositions: Array.from(this.positions.values()).filter(Boolean),
       performance: Array.from(this.performance.values()),
       pipelines: this.getAllPipelineSnapshots(),
-      context: this.getAllContextSnapshots(),
-      architect: this.getAllArchitectAssessments(),
-      architectPublisher: this.getAllArchitectPublisherStates(),
+      context: Array.from(this.contextBySymbol.values()),
+      architect: Array.from(this.architectPublishedBySymbol.values()),
+      architectPublisher: Array.from(this.architectPublisherBySymbol.values()),
       wsConnections: this.getWsConnections()
     };
   }
