@@ -560,15 +560,9 @@ function runTradingBotTests() {
     if (holdHarness.store.getPosition("bot_test")) {
       throw new Error("position opened before entry debounce was satisfied");
     }
-    const debounceEvaluation = holdHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.skipReason === "debounce_not_satisfied");
-    if (!debounceEvaluation) {
-      throw new Error("missing structured entry evaluation log for debounce_not_satisfied");
-    }
-    if (debounceEvaluation.metadata.architectSourceUsed !== "published" || debounceEvaluation.metadata.architectUpdatedAt !== 1_000_000) {
-      throw new Error("debounce evaluation log missing published architect snapshot details");
-    }
-    if (debounceEvaluation.metadata.strategyRsi !== 55 || debounceEvaluation.metadata.architectContextRsi !== 62 || debounceEvaluation.metadata.architectRsiIntensity !== 0.24) {
-      throw new Error("debounce evaluation log should distinguish strategy RSI from architect context RSI diagnostics");
+    const debounceState = holdHarness.store.getBotState("bot_test");
+    if (debounceState.entryEvaluationsCount !== 1 || debounceState.entrySkippedCount !== 1) {
+      throw new Error(`entry evaluation counters should track debounce_not_satisfied skips: ${JSON.stringify(debounceState)}`);
     }
 
     clock += 1_000;
@@ -842,11 +836,11 @@ function runTradingBotTests() {
     strategyDebugHarness.bot.onMarketTick({ price: 100.3, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     const strategyDebugSetups = strategyDebugHarness.botLogs.filter((entry) => entry.message === "SETUP");
     const strategyDebugBlockChanges = strategyDebugHarness.botLogs.filter((entry) => entry.message === "BLOCK_CHANGE");
-    if (strategyDebugSetups.length !== 1) {
-      throw new Error(`strategy_debug should dedupe identical SETUP logs, found ${strategyDebugSetups.length}`);
+    if (strategyDebugSetups.length !== 0) {
+      throw new Error(`strategy_debug should not emit compact entry SETUP chatter, found ${strategyDebugSetups.length}`);
     }
-    if (strategyDebugBlockChanges.length !== 1) {
-      throw new Error(`strategy_debug should dedupe identical BLOCK_CHANGE logs, found ${strategyDebugBlockChanges.length}`);
+    if (strategyDebugBlockChanges.length !== 0) {
+      throw new Error(`strategy_debug should not emit compact entry BLOCK_CHANGE chatter, found ${strategyDebugBlockChanges.length}`);
     }
     process.env.LOG_TYPE = testDefaultLogType;
 
@@ -1598,8 +1592,8 @@ function runTradingBotTests() {
     if (switchedState.architectSyncStatus !== "synced") {
       throw new Error(`flat bot sync status invalid after realignment: ${switchedState.architectSyncStatus}`);
     }
-    if (!realignHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.skipReason === "no_entry_signal")) {
-      throw new Error("missing structured entry evaluation log for no_entry_signal");
+    if (switchedState.entryEvaluationsCount !== 1 || switchedState.entrySkippedCount !== 1) {
+      throw new Error(`entry evaluation counters should track no_entry_signal skips: ${JSON.stringify(switchedState)}`);
     }
 
     clock += 10_000;
@@ -1744,24 +1738,18 @@ function runTradingBotTests() {
     dedupHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     clock += 1_000;
     dedupHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
-    let dedupEvaluations = dedupHarness.botLogs.filter((entry) =>
-      entry.message === "entry_evaluated"
-      && entry.metadata.blockReason === "architect_no_trade"
-    );
-    if (dedupEvaluations.length !== 1) {
-      throw new Error(`repeated identical entry blocks should be deduplicated, found ${dedupEvaluations.length} logs`);
+    let dedupEvaluations = dedupHarness.botLogs.filter((entry) => entry.message === "entry_evaluated");
+    if (dedupEvaluations.length !== 0) {
+      throw new Error(`entry_evaluated logs should remain disabled, found ${dedupEvaluations.length} logs`);
     }
     clock += 31_000;
     dedupHarness.bot.onMarketTick({ price: 100.3, source: "mock", symbol: "BTC/USDT", timestamp: clock });
-    dedupEvaluations = dedupHarness.botLogs.filter((entry) =>
-      entry.message === "entry_evaluated"
-      && entry.metadata.blockReason === "architect_no_trade"
-    );
-    if (dedupEvaluations.length !== 2) {
-      throw new Error(`identical blocked state should be sampled again after 30s, found ${dedupEvaluations.length} logs`);
+    dedupEvaluations = dedupHarness.botLogs.filter((entry) => entry.message === "entry_evaluated");
+    if (dedupEvaluations.length !== 0) {
+      throw new Error(`entry_evaluated logs should stay disabled after sampling window, found ${dedupEvaluations.length} logs`);
     }
     const dedupState = dedupHarness.store.getBotState("bot_test");
-    if (dedupState.entryEvaluationsCount !== 4 || dedupState.entryEvaluationLogsCount !== 2 || dedupState.entryBlockedCount !== 4) {
+    if (dedupState.entryEvaluationsCount !== 4 || dedupState.entryEvaluationLogsCount !== 0 || dedupState.entryBlockedCount !== 4) {
       throw new Error(`entry evaluation counters did not track deduped states correctly: ${JSON.stringify(dedupState)}`);
     }
 
@@ -1950,12 +1938,9 @@ function runTradingBotTests() {
     if (rollingPartialMaturityHarness.store.getPosition("bot_test")) {
       throw new Error("rolling_full context should still block entries below the 0.5 maturity threshold");
     }
-    const rollingPartialBlock = rollingPartialMaturityHarness.botLogs.find((entry) =>
-      entry.message === "entry_evaluated"
-      && entry.metadata.blockReason === "architect_low_maturity"
-    );
-    if (!rollingPartialBlock || rollingPartialBlock.metadata.entryMaturityThreshold !== 0.5) {
-      throw new Error("rolling_full maturity gate should remain unchanged at 0.5");
+    const rollingPartialState = rollingPartialMaturityHarness.store.getBotState("bot_test");
+    if (rollingPartialState.entryBlockedCount !== 1) {
+      throw new Error(`rolling_full maturity gate should still block the entry: ${JSON.stringify(rollingPartialState)}`);
     }
 
     clock += 10_000;
@@ -2021,21 +2006,9 @@ function runTradingBotTests() {
     if (postSwitchImmatureHarness.store.getPosition("bot_test")) {
       throw new Error("bot opened a position during post-switch low-maturity warmup");
     }
-    const postSwitchBlock = postSwitchImmatureHarness.botLogs.find((entry) =>
-      entry.message === "entry_evaluated"
-      && entry.metadata.blockReason === "architect_post_switch_low_maturity"
-    );
-    if (!postSwitchBlock) {
-      throw new Error("missing architect_post_switch_low_maturity diagnostics");
-    }
-    if (postSwitchBlock.metadata.postSwitchCoveragePct !== 0.08 || postSwitchBlock.metadata.rollingMaturity !== 0.83 || postSwitchBlock.metadata.postSwitchWarmupReason !== "post_switch_context_immature") {
-      throw new Error("post-switch low-maturity diagnostics missing warmup quality metadata");
-    }
-    if (postSwitchBlock.metadata.effectiveWindowStartedAt !== clock - 18_000 || postSwitchBlock.metadata.contextWindowMode !== "post_switch_segment") {
-      throw new Error("post-switch low-maturity diagnostics missing effective window metadata");
-    }
-    if (postSwitchBlock.metadata.entryMaturityThreshold !== 0.3) {
-      throw new Error("post-switch low-maturity diagnostics should reflect the reduced 0.3 entry threshold");
+    const postSwitchBlockState = postSwitchImmatureHarness.store.getBotState("bot_test");
+    if (postSwitchBlockState.entryBlockedCount !== 1) {
+      throw new Error(`post-switch low-maturity gate should still block the entry: ${JSON.stringify(postSwitchBlockState)}`);
     }
 
     clock += 10_000;
@@ -2183,8 +2156,9 @@ function runTradingBotTests() {
     if (mismatchHarness.store.getPosition("bot_test")) {
       throw new Error("bot opened a position with architect symbol mismatch");
     }
-    if (!mismatchHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.blockReason === "architect_symbol_mismatch" && entry.metadata.architectSymbolMatch === false)) {
-      throw new Error("missing structured entry evaluation log for architect_symbol_mismatch");
+    const mismatchState = mismatchHarness.store.getBotState("bot_test");
+    if (mismatchState.entryBlockedCount !== 1) {
+      throw new Error(`architect symbol mismatch should still count as a blocked entry: ${JSON.stringify(mismatchState)}`);
     }
 
     clock += 10_000;
@@ -2531,9 +2505,9 @@ function runTradingBotTests() {
     if (singleDiagnosticsCalls !== 1) {
       throw new Error(`entry diagnostics should be built only once on the same final-gate-blocked path: ${singleDiagnosticsCalls}`);
     }
-    const singleDiagnosticsLog = singleDiagnosticsHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.blockReason === "notional_below_minimum");
+    const singleDiagnosticsLog = singleDiagnosticsHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "notional_below_minimum");
     if (!singleDiagnosticsLog || singleDiagnosticsLog.metadata.tickTimestamp !== clock || singleDiagnosticsLog.metadata.expectedNetEdgePct === undefined) {
-      throw new Error(`single-build diagnostics path should preserve entry_evaluated metadata content: ${JSON.stringify(singleDiagnosticsLog)}`);
+      throw new Error(`single-build diagnostics path should preserve entry gate metadata content: ${JSON.stringify(singleDiagnosticsLog)}`);
     }
 
     clock += 10_000;
@@ -2602,9 +2576,9 @@ function runTradingBotTests() {
     if (!allowedHarness.botLogs.find((entry) => entry.message === "entry_gate_allowed")) {
       throw new Error("missing entry_gate_allowed log on valid entry");
     }
-    const openedEvaluation = allowedHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.outcome === "opened" && entry.metadata.allowReason === "entry_opened");
+    const openedEvaluation = allowedHarness.botLogs.find((entry) => entry.message === "entry_gate_allowed");
     if (!openedEvaluation) {
-      throw new Error("missing structured entry evaluation log for opened entry");
+      throw new Error("missing structured entry gate log for opened entry");
     }
     if (openedEvaluation.metadata.publisherLastPublishedAt !== clock - 1_000 || openedEvaluation.metadata.tickTimestamp !== clock) {
       throw new Error("opened entry evaluation log missing publisher/tick timing");
@@ -2636,101 +2610,8 @@ function runTradingBotTests() {
     if (executionRejectedEconomicsCalls !== 2) {
       throw new Error(`execution-rejected entry path should reuse sized economics instead of recomputing it: ${executionRejectedEconomicsCalls}`);
     }
-    if (!executionRejectedEconomicsHarness.botLogs.find((entry) => entry.message === "entry_evaluated" && entry.metadata.blockReason === "execution_open_rejected")) {
+    if (!executionRejectedEconomicsHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "execution_open_rejected")) {
       throw new Error("execution-rejected path should preserve existing blocked outcome semantics");
-    }
-
-    clock += 10_000;
-    const compactDedupDiagnosticsHarness = createHarness(() => ({
-      action: "buy",
-      confidence: 0.93,
-      reason: ["buy_signal"]
-    }), {
-      initialBalanceUsdt: 20,
-      publishedArchitect: createTrendArchitect({
-        updatedAt: clock
-      }),
-      strategy: "emaCross"
-    });
-    let compactDedupDiagnosticsCalls = 0;
-    const originalCompactDedupDiagnostics = compactDedupDiagnosticsHarness.bot.buildEntryDiagnostics.bind(compactDedupDiagnosticsHarness.bot);
-    compactDedupDiagnosticsHarness.bot.buildEntryDiagnostics = (params) => {
-      compactDedupDiagnosticsCalls += 1;
-      return originalCompactDedupDiagnostics(params);
-    };
-    const compactDedupTick = { price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock };
-    const compactDedupRuntimeState = compactDedupDiagnosticsHarness.store.getBotState("bot_test");
-    const compactDedupContextSnapshot = compactDedupDiagnosticsHarness.store.getContextSnapshot("BTC/USDT");
-    const compactDedupArchitectState = compactDedupDiagnosticsHarness.bot.evaluateArchitectUsability({
-      architect: compactDedupDiagnosticsHarness.store.getArchitectPublishedAssessment("BTC/USDT"),
-      contextSnapshot: compactDedupContextSnapshot,
-      currentFamily: compactDedupDiagnosticsHarness.bot.deps.strategySwitcher.getStrategyFamily(compactDedupDiagnosticsHarness.bot.strategy.id),
-      publisher: compactDedupDiagnosticsHarness.store.getArchitectPublisherState("BTC/USDT"),
-      timestamp: compactDedupTick.timestamp
-    });
-    const compactDedupContext = compactDedupDiagnosticsHarness.bot.buildContext(compactDedupTick, {
-      performance: compactDedupDiagnosticsHarness.store.getPerformance("bot_test"),
-      position: null
-    });
-    const compactDedupEconomics = compactDedupDiagnosticsHarness.bot.estimateEntryEconomics({
-      context: compactDedupContext,
-      price: compactDedupTick.price,
-      quantity: 0.02
-    });
-    const compactDedupProfile = compactDedupDiagnosticsHarness.bot.deps.riskManager.getProfile(
-      compactDedupDiagnosticsHarness.bot.config.riskProfile,
-      compactDedupDiagnosticsHarness.bot.config.riskOverrides || null
-    );
-    process.env.LOG_TYPE = "minimal";
-    compactDedupDiagnosticsHarness.bot.logEntryEvaluation({
-      architectState: compactDedupArchitectState,
-      blockReason: "notional_below_minimum",
-      context: compactDedupContext,
-      contextSnapshot: compactDedupContextSnapshot,
-      decision: {
-        action: "buy",
-        confidence: 0.93,
-        reason: ["buy_signal"]
-      },
-      economics: compactDedupEconomics,
-      outcome: "blocked",
-      profile: compactDedupProfile,
-      quantity: 0.02,
-      signalEvaluated: true,
-      state: compactDedupRuntimeState,
-      strategyId: compactDedupDiagnosticsHarness.bot.strategy.id,
-      tick: compactDedupTick
-    });
-    compactDedupDiagnosticsCalls = 0;
-    compactDedupDiagnosticsHarness.bot.logEntryEvaluation({
-      architectState: compactDedupArchitectState,
-      blockReason: "notional_below_minimum",
-      context: compactDedupContext,
-      contextSnapshot: compactDedupContextSnapshot,
-      decision: {
-        action: "buy",
-        confidence: 0.93,
-        reason: ["buy_signal"]
-      },
-      economics: compactDedupEconomics,
-      outcome: "blocked",
-      profile: compactDedupProfile,
-      quantity: 0.02,
-      signalEvaluated: true,
-      state: compactDedupRuntimeState,
-      strategyId: compactDedupDiagnosticsHarness.bot.strategy.id,
-      tick: compactDedupTick
-    });
-    process.env.LOG_TYPE = testDefaultLogType;
-    if (compactDedupDiagnosticsCalls !== 0) {
-      throw new Error(`compact deduped entry evaluation should skip full diagnostics construction: ${compactDedupDiagnosticsCalls}`);
-    }
-    const compactBlockedChanges = compactDedupDiagnosticsHarness.botLogs.filter((entry) =>
-      entry.message === "BLOCK_CHANGE"
-      && entry.metadata.blockReason === "notional_below_minimum"
-    );
-    if (compactBlockedChanges.length !== 1) {
-      throw new Error(`compact deduped path should preserve existing BLOCK_CHANGE dedupe semantics: ${JSON.stringify(compactBlockedChanges)}`);
     }
 
     clock += 10_000;
@@ -2780,91 +2661,6 @@ function runTradingBotTests() {
     const openedPipeline = openedEconomicsHarness.store.getPipelineSnapshot("BTC/USDT");
     if (!openedPipeline || openedPipeline.lastExecutionAt !== clock || openedPipeline.botToExecutionMs !== 0) {
       throw new Error(`opened entry path should preserve pipeline execution metadata: ${JSON.stringify(openedPipeline)}`);
-    }
-
-    clock += 10_000;
-    const dedupDiagnosticsHarness = createHarness(() => ({
-      action: "hold",
-      confidence: 0.52,
-      reason: ["neutral_signal"]
-    }), {
-      publishedArchitect: createTrendArchitect({
-        updatedAt: clock
-      }),
-      strategy: "emaCross"
-    });
-    let dedupDiagnosticsCalls = 0;
-    const originalDedupDiagnostics = dedupDiagnosticsHarness.bot.buildEntryDiagnostics.bind(dedupDiagnosticsHarness.bot);
-    dedupDiagnosticsHarness.bot.buildEntryDiagnostics = (params) => {
-      dedupDiagnosticsCalls += 1;
-      return originalDedupDiagnostics(params);
-    };
-    const dedupTick = { price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock };
-    const dedupRuntimeState = dedupDiagnosticsHarness.store.getBotState("bot_test");
-    const dedupContextSnapshot = dedupDiagnosticsHarness.store.getContextSnapshot("BTC/USDT");
-    const dedupArchitectState = dedupDiagnosticsHarness.bot.evaluateArchitectUsability({
-      architect: dedupDiagnosticsHarness.store.getArchitectPublishedAssessment("BTC/USDT"),
-      contextSnapshot: dedupContextSnapshot,
-      currentFamily: dedupDiagnosticsHarness.bot.deps.strategySwitcher.getStrategyFamily(dedupDiagnosticsHarness.bot.strategy.id),
-      publisher: dedupDiagnosticsHarness.store.getArchitectPublisherState("BTC/USDT"),
-      timestamp: dedupTick.timestamp
-    });
-    const dedupContext = dedupDiagnosticsHarness.bot.buildContext(dedupTick, {
-      performance: dedupDiagnosticsHarness.store.getPerformance("bot_test"),
-      position: null
-    });
-    const dedupEconomics = dedupDiagnosticsHarness.bot.estimateEntryEconomics({
-      context: dedupContext,
-      price: dedupTick.price,
-      quantity: null
-    });
-    const dedupProfile = dedupDiagnosticsHarness.bot.deps.riskManager.getProfile(
-      dedupDiagnosticsHarness.bot.config.riskProfile,
-      dedupDiagnosticsHarness.bot.config.riskOverrides || null
-    );
-    process.env.LOG_TYPE = "verbose";
-    dedupDiagnosticsHarness.bot.logEntryEvaluation({
-      architectState: dedupArchitectState,
-      context: dedupContext,
-      contextSnapshot: dedupContextSnapshot,
-      decision: {
-        action: "hold",
-        confidence: 0.52,
-        reason: ["neutral_signal"]
-      },
-      economics: dedupEconomics,
-      outcome: "skipped",
-      profile: dedupProfile,
-      quantity: null,
-      signalEvaluated: true,
-      state: dedupRuntimeState,
-      strategyId: dedupDiagnosticsHarness.bot.strategy.id,
-      tick: dedupTick
-    });
-    dedupDiagnosticsHarness.bot.logEntryEvaluation({
-      architectState: dedupArchitectState,
-      context: dedupContext,
-      contextSnapshot: dedupContextSnapshot,
-      decision: {
-        action: "hold",
-        confidence: 0.52,
-        reason: ["neutral_signal"]
-      },
-      economics: dedupEconomics,
-      outcome: "skipped",
-      profile: dedupProfile,
-      quantity: null,
-      signalEvaluated: true,
-      state: dedupRuntimeState,
-      strategyId: dedupDiagnosticsHarness.bot.strategy.id,
-      tick: dedupTick
-    });
-    process.env.LOG_TYPE = testDefaultLogType;
-    if (dedupDiagnosticsCalls !== 1) {
-      throw new Error(`deduped verbose entry evaluation should skip rebuilding diagnostics on unchanged repeats: ${dedupDiagnosticsCalls}`);
-    }
-    if (dedupDiagnosticsHarness.botLogs.filter((entry) => entry.message === "entry_evaluated").length !== 1) {
-      throw new Error("deduped verbose entry evaluation should preserve single-log behavior");
     }
 
     clock += 10_000;

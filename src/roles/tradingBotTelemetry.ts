@@ -34,15 +34,6 @@ export interface EntryRiskGateTelemetry {
   reason?: string | null;
 }
 
-export interface EntryEvaluationMetadata extends Record<string, unknown> {
-  allowReason: string | null;
-  blockReason: string | null;
-  decisionAction: string;
-  outcome: "blocked" | "opened" | "skipped";
-  signalEvaluated: boolean;
-  skipReason: string | null;
-}
-
 export interface TradingBotTelemetryParams {
   botId: string;
   symbol: string;
@@ -53,22 +44,6 @@ export interface TradingBotTelemetryInstance {
   buildArchitectEntryShortCircuitLogMetadata(architectState: ArchitectUsabilityState | null): Record<string, unknown>;
   buildCompactArchitectDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor;
   buildCompactBuyDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor;
-  buildCompactEntryMetadata(params: {
-    allowReason?: string | null;
-    architectState: ArchitectUsabilityState;
-    context?: Partial<MarketContext> | null;
-    decision?: StrategyDecision | null;
-    economics: EntryEconomicsEstimate;
-    outcome: "blocked" | "opened" | "skipped";
-    profile?: Pick<RiskProfileSettings, "entryDebounceTicks"> | null;
-    quantity: number | null;
-    riskGate?: EntryRiskGateTelemetry | null;
-    signalState?: Partial<BotRuntimeState> | null;
-    blockReason?: string | null;
-    state?: Partial<BotRuntimeState> | null;
-    strategyId: string;
-    tick: MarketTick;
-  }): Record<string, unknown>;
   buildCompactRiskDescriptor(strategyId: string, metadata: Record<string, unknown>, dedupeKey?: string, signature?: string): CompactLogDescriptor;
   buildCompactSellDescriptor(metadata: Record<string, unknown>): CompactLogDescriptor;
   buildEntryBlockedMetadata(params: {
@@ -76,14 +51,8 @@ export interface TradingBotTelemetryInstance {
     reason: string;
   }): Record<string, unknown>;
   buildEntryDiagnostics(params: BuildEntryDiagnosticsParams): Record<string, unknown>;
-  buildEntryEvaluationLogKey(metadata: Partial<EntryEvaluationMetadata>): string;
-  buildEntryEvaluationMetadata(params: BuildEntryEvaluationMetadataParams): EntryEvaluationMetadata;
   buildManagedRecoverySignature(metadata: Record<string, unknown>): string;
-  buildSetupLogMetadata(metadata: Record<string, unknown>, strategyId: string): Record<string, unknown>;
-  buildSetupStateSignature(metadata: Record<string, unknown>, strategyId: string): string;
   buildExitTelemetry(params: BuildExitTelemetryParams): Record<string, unknown>;
-  maybeBuildCompactBlockChangeDescriptor(metadata: Record<string, unknown>, strategyId: string): CompactLogDescriptor | null;
-  maybeBuildCompactSetupDescriptor(metadata: Record<string, unknown>, strategyId: string): CompactLogDescriptor | null;
   resolveInvalidationLevel(architectState?: ArchitectUsabilityState | null, invalidationMode?: InvalidationMode | null): string | null;
 }
 
@@ -104,15 +73,6 @@ export interface BuildEntryDiagnosticsParams {
   strategyId: string;
   tick: MarketTick;
   tradeConstraints: TradeConstraints;
-}
-
-export interface BuildEntryEvaluationMetadataParams {
-  allowReason?: string | null;
-  blockReason?: string | null;
-  diagnostics: Record<string, unknown>;
-  outcome: "blocked" | "opened" | "skipped";
-  signalEvaluated?: boolean;
-  skipReason?: string | null;
 }
 
 export interface BuildExitTelemetryParams {
@@ -190,136 +150,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     };
   }
 
-  buildEntryEvaluationLogKey(metadata: Partial<EntryEvaluationMetadata>) {
-    return [
-      metadata.outcome || "unknown",
-      metadata.blockReason || "none",
-      metadata.skipReason || "none",
-      metadata.architectUsable ? "usable" : "blocked",
-      metadata.signalEvaluated ? "evaluated" : "not_evaluated",
-      metadata.decisionAction || "not_evaluated"
-    ].join("|");
-  }
-
-  buildSetupLogMetadata(metadata: Record<string, unknown>, strategyId: string) {
-    return {
-      allowReason: metadata.allowReason || null,
-      blockReason: metadata.blockReason || null,
-      botId: this.botId,
-      decisionAction: metadata.decisionAction || "not_evaluated",
-      decisionSide: metadata.decisionSide || null,
-      decisionConfidence: metadata.decisionConfidence ?? 0,
-      entryDebounceRequired: metadata.entryDebounceRequired ?? null,
-      entrySignalStreak: metadata.entrySignalStreak ?? 0,
-      estimatedCostPct: metadata.estimatedCostPct ?? null,
-      expectedGrossEdgePct: metadata.expectedGrossEdgePct ?? null,
-      expectedNetEdgePct: metadata.expectedNetEdgePct ?? null,
-      family: metadata.publishedFamily || metadata.targetFamily || null,
-      latestPrice: metadata.latestPrice ?? null,
-      maxTargetDistancePctForShortHorizon: metadata.maxTargetDistancePctForShortHorizon ?? null,
-      mtfAdjustmentApplied: metadata.mtfAdjustmentApplied ?? null,
-      mtfDominantFrame: metadata.mtfDominantFrame ?? null,
-      mtfParamFallbackReason: metadata.mtfParamFallbackReason ?? null,
-      mtfParamResolutionReason: metadata.mtfParamResolutionReason ?? null,
-      mtfResolvedTargetDistanceCapPct: metadata.mtfResolvedTargetDistanceCapPct ?? null,
-      regime: metadata.publishedRegime || null,
-      rsi: metadata.strategyRsi ?? null,
-      strategy: metadata.strategy || strategyId,
-      symbol: this.symbol,
-      targetDistancePct: metadata.targetDistancePct ?? null,
-      targetFamily: metadata.targetFamily || null
-    };
-  }
-
-  buildSetupStateSignature(metadata: Record<string, unknown>, strategyId: string) {
-    const debounceRequired = Number(metadata.entryDebounceRequired || 0);
-    const streak = Number(metadata.entrySignalStreak || 0);
-    const readinessState = !isEntryAction(metadata.decisionAction)
-      ? "inactive"
-      : debounceRequired <= 0
-        ? "ready"
-        : streak >= debounceRequired
-          ? "ready"
-          : streak >= Math.max(debounceRequired - 1, 1)
-            ? "near_ready"
-            : streak > 0
-              ? "arming"
-              : "idle";
-
-    return this.buildPrimitiveSignature([
-      metadata.allowReason || null,
-      metadata.blockReason || null,
-      metadata.decisionAction || "not_evaluated",
-      metadata.publishedFamily || metadata.targetFamily || null,
-      readinessState,
-      metadata.publishedRegime || null,
-      metadata.riskReason || null,
-      metadata.strategy || strategyId
-    ]);
-  }
-
-  maybeBuildCompactSetupDescriptor(metadata: Record<string, unknown>, strategyId: string): CompactLogDescriptor | null {
-    const entryDebounceRequired = Number(metadata.entryDebounceRequired || 0);
-    const entrySignalStreak = Number(metadata.entrySignalStreak || 0);
-    const nearReady = entryDebounceRequired > 0 && entrySignalStreak >= Math.max(entryDebounceRequired - 1, 1);
-    const shouldLog = isEntryAction(metadata.decisionAction)
-      || Boolean(metadata.allowReason)
-      || Boolean(metadata.blockReason)
-      || nearReady;
-    if (!shouldLog) {
-      return null;
-    }
-
-    return {
-      dedupeKey: "SETUP",
-      message: "SETUP",
-      metadata: this.buildSetupLogMetadata(metadata, strategyId),
-      signature: this.buildSetupStateSignature(metadata, strategyId)
-    };
-  }
-
-  maybeBuildCompactBlockChangeDescriptor(metadata: Record<string, unknown>, strategyId: string): CompactLogDescriptor | null {
-    if (!metadata.blockReason) {
-      return null;
-    }
-
-    const blockMetadata = {
-      blockReason: metadata.blockReason,
-      botId: this.botId,
-      decisionAction: metadata.decisionAction || "not_evaluated",
-      decisionSide: metadata.decisionSide || null,
-      entryDebounceRequired: metadata.entryDebounceRequired ?? null,
-      entrySignalStreak: metadata.entrySignalStreak ?? 0,
-      expectedNetEdgePct: metadata.expectedNetEdgePct ?? null,
-      latestPrice: metadata.latestPrice ?? null,
-      maxTargetDistancePctForShortHorizon: metadata.maxTargetDistancePctForShortHorizon ?? null,
-      mtfAdjustmentApplied: metadata.mtfAdjustmentApplied ?? null,
-      mtfDominantFrame: metadata.mtfDominantFrame ?? null,
-      mtfParamFallbackReason: metadata.mtfParamFallbackReason ?? null,
-      mtfParamResolutionReason: metadata.mtfParamResolutionReason ?? null,
-      mtfResolvedTargetDistanceCapPct: metadata.mtfResolvedTargetDistanceCapPct ?? null,
-      publishedFamily: metadata.publishedFamily || null,
-      publishedRegime: metadata.publishedRegime || null,
-      riskReason: metadata.riskReason || null,
-      strategy: metadata.strategy || strategyId,
-      symbol: this.symbol,
-      targetDistancePct: metadata.targetDistancePct ?? null,
-      targetFamily: metadata.targetFamily || null
-    };
-
-    return {
-      dedupeKey: "BLOCK_CHANGE",
-      message: "BLOCK_CHANGE",
-      metadata: blockMetadata,
-      signature: this.buildPrimitiveSignature([
-        blockMetadata.blockReason,
-        blockMetadata.decisionAction,
-        blockMetadata.riskReason,
-        blockMetadata.strategy
-      ])
-    };
-  }
-
   buildCompactRiskDescriptor(strategyId: string, metadata: Record<string, unknown>, dedupeKey = "RISK_CHANGE", signature?: string): CompactLogDescriptor {
     return {
       dedupeKey,
@@ -369,60 +199,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
         ...metadata,
         side
       }
-    };
-  }
-
-  buildCompactEntryMetadata(params: {
-    allowReason?: string | null;
-    architectState: ArchitectUsabilityState;
-    context?: Partial<MarketContext> | null;
-    decision?: StrategyDecision | null;
-    economics: EntryEconomicsEstimate;
-    outcome: "blocked" | "opened" | "skipped";
-    profile?: Pick<RiskProfileSettings, "entryDebounceTicks"> | null;
-    quantity: number | null;
-    riskGate?: EntryRiskGateTelemetry | null;
-    signalState?: Partial<BotRuntimeState> | null;
-    blockReason?: string | null;
-    state?: Partial<BotRuntimeState> | null;
-    strategyId: string;
-    tick: MarketTick;
-  }) {
-    const state = params.state || {};
-    const signalState = params.signalState || state;
-    const architect = params.architectState.architect;
-    const strategyRsiRaw = params.context?.indicators?.rsi;
-    const strategyRsi = Number.isFinite(Number(strategyRsiRaw))
-      ? Number(Number(strategyRsiRaw).toFixed(4))
-      : null;
-    const mtfParamResolution = params.economics.mtfParamResolution || null;
-
-    return {
-      allowReason: params.allowReason || null,
-      blockReason: params.blockReason || null,
-      decisionAction: params.decision?.action || "not_evaluated",
-      decisionConfidence: params.decision ? Number(Number(params.decision.confidence || 0).toFixed(4)) : 0,
-      decisionSide: isEntryAction(params.decision?.action) ? (params.decision?.side || params.economics.side || null) : null,
-      entryDebounceRequired: params.profile?.entryDebounceTicks ?? null,
-      entrySignalStreak: signalState?.entrySignalStreak ?? state.entrySignalStreak ?? 0,
-      estimatedCostPct: Number((params.economics.estimatedEntryFeePct + params.economics.estimatedExitFeePct + params.economics.estimatedSlippagePct).toFixed(4)),
-      expectedGrossEdgePct: Number(params.economics.expectedGrossEdgePct.toFixed(4)),
-      expectedNetEdgePct: Number(params.economics.expectedNetEdgePct.toFixed(4)),
-      latestPrice: Number(Number(params.tick?.price || 0).toFixed(4)),
-      maxTargetDistancePctForShortHorizon: this.toFixedNumberOrNull(params.economics.maxTargetDistancePctForShortHorizon, 4),
-      mtfAdjustmentApplied: mtfParamResolution?.mtfAdjustmentApplied ?? null,
-      mtfDominantFrame: mtfParamResolution?.dominantTimeframe ?? null,
-      mtfParamFallbackReason: mtfParamResolution?.fallbackReason ?? null,
-      mtfParamResolutionReason: mtfParamResolution?.coherenceReason ?? null,
-      mtfResolvedTargetDistanceCapPct: this.toFixedNumberOrNull(mtfParamResolution?.resolvedTargetDistanceCapPct, 4),
-      outcome: params.outcome,
-      publishedFamily: architect?.recommendedFamily || null,
-      publishedRegime: architect?.marketRegime || null,
-      riskReason: params.riskGate?.reason || null,
-      strategy: params.strategyId,
-      strategyRsi,
-      targetDistancePct: this.toFixedNumberOrNull(params.economics.targetDistancePct, 4),
-      targetFamily: params.architectState.actionableFamily || null
     };
   }
 
@@ -600,17 +376,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       tickSymbolMatch,
       tickTimestamp: params.tick?.timestamp || null
     };
-  }
-
-  buildEntryEvaluationMetadata(params: BuildEntryEvaluationMetadataParams): EntryEvaluationMetadata {
-    return {
-      ...params.diagnostics,
-      allowReason: params.allowReason || null,
-      blockReason: params.blockReason || null,
-      outcome: params.outcome,
-      signalEvaluated: params.signalEvaluated !== false,
-      skipReason: params.skipReason || null
-    } as EntryEvaluationMetadata;
   }
 
   getPositionStatus(position: PositionRecord | null | undefined) {

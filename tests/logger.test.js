@@ -29,12 +29,21 @@ function runLoggerTests() {
     minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "entry_blocked", { reason: "architect_stale" });
     minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "loss_streak_limit" });
     minimalLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BUY", { latestPrice: 100 });
-    if (lines.length !== 4 || lines.some((line) => line.includes("entry_evaluated"))) {
-      throw new Error(`minimal mode should suppress evaluation spam and keep essential events: ${JSON.stringify(lines)}`);
+    minimalLogger.info("experiment_summary", { label: "paper" });
+    minimalLogger.info("system_stopped");
+    minimalLogger.warn("ws_error", { channel: "ticker" });
+    minimalLogger.error("fatal_runtime_error", { reason: "fixture" });
+    if (lines.length !== 4
+      || !lines[0].includes("system_ready")
+      || !lines[1].includes("system_stopped")
+      || !lines[2].includes("ws_error")
+      || !lines[3].includes("fatal_runtime_error")
+      || lines.some((line) => line.includes("entry_evaluated") || line.includes("entry_blocked") || line.includes("BLOCK_CHANGE") || line.includes("BUY") || line.includes("experiment_summary"))) {
+      throw new Error(`minimal mode should keep only startup/shutdown/warning/error events: ${JSON.stringify(lines)}`);
     }
 
     lines.length = 0;
-    const compactArchitectLogger = createLogger("test:architect", { logType: "minimal" });
+    const compactArchitectLogger = createLogger("test:architect", { logType: "strategy_debug" });
     compactArchitectLogger.info("architect_published", {
       candidateMarketRegime: "range",
       candidateRecommendedFamily: "mean_reversion",
@@ -67,10 +76,10 @@ function runLoggerTests() {
       || !lines[0].includes("publishedMtfDominantFrame=medium")
       || lines[0].includes("contextDataQuality")
       || lines[0].includes("contextBreakoutQuality")) {
-      throw new Error(`minimal architect publish should keep compact MTF state and drop feature dumps: ${JSON.stringify(lines)}`);
+      throw new Error(`non-verbose architect publish should keep compact MTF state and drop feature dumps: ${JSON.stringify(lines)}`);
     }
     if (!lines[1].includes("architect_changed") || lines[1].includes("contextDataQuality")) {
-      throw new Error(`minimal architect changed should also drop feature dumps: ${JSON.stringify(lines)}`);
+      throw new Error(`non-verbose architect changed should also drop feature dumps: ${JSON.stringify(lines)}`);
     }
 
     lines.length = 0;
@@ -96,8 +105,8 @@ function runLoggerTests() {
     const blockDedupeLogger = createLogger("test:block-dedupe", { logType: "minimal" });
     blockDedupeLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "architect_stale" });
     blockDedupeLogger.bot({ id: "bot_a", symbol: "BTC/USDT" }, "BLOCK_CHANGE", { blockReason: "target_distance_exceeds_short_horizon" });
-    if (lines.length !== 2) {
-      throw new Error(`minimal BLOCK_CHANGE dedupe should not suppress distinct block reasons: ${JSON.stringify(lines)}`);
+    if (lines.length !== 0) {
+      throw new Error(`minimal mode should suppress BLOCK_CHANGE chatter before dedupe matters: ${JSON.stringify(lines)}`);
     }
 
     lines.length = 0;

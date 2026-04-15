@@ -94,7 +94,7 @@ function shouldLog(logType: LogType, category: LogCategory) {
   if (logType === "silent") return false;
 
   const categorySets: Record<Exclude<LogType, "verbose" | "silent">, Set<LogCategory>> = {
-    minimal: new Set(["startup", "architect_change", "blocked", "cooldown", "risk_change", "trade_open", "trade_close", "shutdown", "warning", "error", "experiment_summary"]),
+    minimal: new Set(["startup", "shutdown", "warning", "error"]),
     only_trades: new Set(["trade_open", "trade_close", "warning", "error"]),
     strategy_debug: new Set(["setup", "blocked", "risk_change", "architect_change", "trade_open", "trade_close", "warning", "error"])
   };

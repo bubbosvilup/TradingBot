@@ -139,10 +139,6 @@ class TradingBot extends BaseBot {
   entrySlippageBufferPct: number;
   entryProfitSafetyBufferPct: number;
   minExpectedNetEdgePct: number;
-  entryEvaluationLogSampleMs: number;
-  lastEntryEvaluationLogKey: string | null;
-  lastEntryEvaluationLogAt: number | null;
-  lastEdgeDiagnosticsLogAt: number | null;
   compactLogSignatures: Record<string, string | null>;
   architectCoordinator: ArchitectCoordinatorInstance;
   entryCoordinator: EntryCoordinatorInstance;
@@ -174,10 +170,6 @@ class TradingBot extends BaseBot {
     this.entrySlippageBufferPct = 0.0005;
     this.entryProfitSafetyBufferPct = 0.0005;
     this.minExpectedNetEdgePct = 0.0005;
-    this.entryEvaluationLogSampleMs = 30_000;
-    this.lastEntryEvaluationLogKey = null;
-    this.lastEntryEvaluationLogAt = null;
-    this.lastEdgeDiagnosticsLogAt = null;
     this.compactLogSignatures = {};
     this.architectCoordinator = new ArchitectCoordinator({
       allowedStrategies: this.allowedStrategies,
@@ -271,7 +263,7 @@ class TradingBot extends BaseBot {
       latestPrice: tick.price,
       localRegimeHint: regime,
       metadata: {
-        architectMtf: this.getPublishedArchitectAssessment()?.mtf || null,
+        architectMtf: this.architectCoordinator.getPublishedAssessment()?.mtf || null,
         positionEntryPrice: position?.entryPrice ?? null,
         positionSide: position ? normalizeTradeSide(position.side) : null,
         updatedAt: tick.timestamp
@@ -340,27 +332,23 @@ class TradingBot extends BaseBot {
     return resolveLogType(process.env.LOG_TYPE);
   }
 
-  emitCompactBotLog(message: string, metadata: Record<string, unknown>, dedupeKey?: string, signatureOverride?: string) {
-    if (this.getLogType() === "verbose") {
-      return;
-    }
-
-    if (dedupeKey) {
-      const signature = signatureOverride || JSON.stringify(metadata);
-      if (this.compactLogSignatures[dedupeKey] === signature) {
-        return;
-      }
-      this.compactLogSignatures[dedupeKey] = signature;
-    }
-
-    this.deps.logger.bot(this.config, message, metadata);
-  }
-
   emitCompactDescriptor(descriptor?: CompactLogDescriptor | null) {
     if (!descriptor) {
       return;
     }
-    this.emitCompactBotLog(descriptor.message, descriptor.metadata, descriptor.dedupeKey, descriptor.signature);
+    if (this.getLogType() === "verbose") {
+      return;
+    }
+
+    if (descriptor.dedupeKey) {
+      const signature = descriptor.signature || JSON.stringify(descriptor.metadata);
+      if (this.compactLogSignatures[descriptor.dedupeKey] === signature) {
+        return;
+      }
+      this.compactLogSignatures[descriptor.dedupeKey] = signature;
+    }
+
+    this.deps.logger.bot(this.config, descriptor.message, descriptor.metadata);
   }
 
   logCompactRiskChange(metadata: Record<string, unknown>) {
@@ -375,24 +363,12 @@ class TradingBot extends BaseBot {
     this.emitCompactDescriptor(descriptor);
   }
 
-  logCompactArchitectChange(metadata: Record<string, unknown>) {
-    this.emitCompactDescriptor(this.telemetry.buildCompactArchitectDescriptor(metadata));
-  }
-
   emitPostLossArchitectLatchTransition(transition?: PostLossArchitectLatchTransition) {
     if (!transition) {
       return;
     }
     this.deps.logger.bot(this.config, transition.message, transition.logMetadata);
     this.logCompactRiskChange(transition.compactMetadata);
-  }
-
-  logCompactBuy(metadata: Record<string, unknown>) {
-    this.emitCompactDescriptor(this.telemetry.buildCompactBuyDescriptor(metadata));
-  }
-
-  logCompactSell(metadata: Record<string, unknown>) {
-    this.emitCompactDescriptor(this.telemetry.buildCompactSellDescriptor(metadata));
   }
 
   recordEntryEvaluationCounters(outcome: "blocked" | "opened" | "skipped", logged: boolean) {
@@ -471,121 +447,10 @@ class TradingBot extends BaseBot {
       symbol: this.config.symbol,
       timestamp: outcome.entryEvaluated.tick?.timestamp || null
     });
-    this.maybeLogEdgeDiagnostics(outcome.entryEvaluated.tick?.timestamp || now());
-  }
-
-  maybeLogEdgeDiagnostics(timestamp: number) {
-    const summaryReader = (this.deps.store as any).getEdgeDiagnosticsSummary;
-    if (typeof summaryReader !== "function") {
-      return;
-    }
-    const logAt = Number.isFinite(Number(timestamp)) ? Number(timestamp) : now();
-    if (this.lastEdgeDiagnosticsLogAt !== null && (logAt - this.lastEdgeDiagnosticsLogAt) < 60_000) {
-      return;
-    }
-    this.lastEdgeDiagnosticsLogAt = logAt;
-    const summary = summaryReader.call(this.deps.store);
-    this.deps.logger.bot(this.config, "edge_diagnostics", summary);
-  }
-
-  logEntryEvaluation(params: {
-    allowReason?: string | null;
-    architectState: any;
-    blockReason?: string | null;
-    context?: any;
-    contextSnapshot: any;
-    decision?: any;
-    diagnostics?: any;
-    economics: any;
-    outcome: "blocked" | "opened" | "skipped";
-    profile?: any;
-    quantity: number | null;
-    riskGate?: any;
-    signalEvaluated?: boolean;
-    signalState?: any;
-    skipReason?: string | null;
-    state?: any;
-    strategyId: string;
-    tick: MarketTick;
-  }) {
-    const logAt = Number.isFinite(Number(params.tick?.timestamp)) ? Number(params.tick.timestamp) : now();
-    const logKey = this.telemetry.buildEntryEvaluationLogKey({
-      allowReason: params.allowReason || null,
-      architectUsable: params.architectState?.usable,
-      blockReason: params.blockReason || null,
-      decisionAction: params.decision?.action || "not_evaluated",
-      outcome: params.outcome,
-      signalEvaluated: params.signalEvaluated !== false,
-      skipReason: params.skipReason || null
-    });
-    const shouldLog = this.lastEntryEvaluationLogKey !== logKey
-      || this.lastEntryEvaluationLogAt === null
-      || (logAt - this.lastEntryEvaluationLogAt) >= this.entryEvaluationLogSampleMs;
-    const compactLoggingActive = this.getLogType() !== "verbose";
-
-    this.recordEntryEvaluationCounters(params.outcome, shouldLog);
-    if (!compactLoggingActive && !shouldLog) {
-      return;
-    }
-
-    if (compactLoggingActive && !shouldLog) {
-      const compactMetadata = this.telemetry.buildCompactEntryMetadata({
-        allowReason: params.allowReason,
-        architectState: params.architectState,
-        blockReason: params.blockReason,
-        context: params.context,
-        decision: params.decision,
-        economics: params.economics,
-        outcome: params.outcome,
-        profile: params.profile,
-        quantity: params.quantity,
-        riskGate: params.riskGate,
-        signalState: params.signalState,
-        state: params.state,
-        strategyId: params.strategyId,
-        tick: params.tick
-      });
-      this.emitCompactDescriptor(this.telemetry.maybeBuildCompactSetupDescriptor(compactMetadata, this.strategy.id));
-      this.emitCompactDescriptor(this.telemetry.maybeBuildCompactBlockChangeDescriptor(compactMetadata, this.strategy.id));
-      return;
-    }
-
-    const diagnostics = params.diagnostics || this.buildEntryDiagnostics({
-      architectState: params.architectState,
-      context: params.context,
-      contextSnapshot: params.contextSnapshot,
-      decision: params.decision,
-      economics: params.economics,
-      profile: params.profile,
-      quantity: params.quantity,
-      riskGate: params.riskGate,
-      signalEvaluated: params.signalEvaluated,
-      signalState: params.signalState,
-      state: params.state,
-      strategyId: params.strategyId,
-      tick: params.tick
-    });
-    const metadata = this.telemetry.buildEntryEvaluationMetadata({
-      allowReason: params.allowReason,
-      blockReason: params.blockReason,
-      diagnostics,
-      outcome: params.outcome,
-      signalEvaluated: params.signalEvaluated,
-      skipReason: params.skipReason
-    });
-    this.emitCompactDescriptor(this.telemetry.maybeBuildCompactSetupDescriptor(metadata, this.strategy.id));
-    this.emitCompactDescriptor(this.telemetry.maybeBuildCompactBlockChangeDescriptor(metadata, this.strategy.id));
-    if (!shouldLog) {
-      return;
-    }
-
-    this.lastEntryEvaluationLogKey = logKey;
-    this.lastEntryEvaluationLogAt = logAt;
-    this.deps.logger.bot(this.config, "entry_evaluated", metadata);
   }
 
   applyEntryOutcome(outcome: EntryOutcomePlan) {
-    this.logEntryEvaluation(outcome.entryEvaluated);
+    this.recordEntryEvaluationCounters(outcome.entryEvaluated.outcome, false);
     this.recordBlockedOpportunityDiagnostics(outcome);
     if (outcome.gateLog) {
       this.deps.logger.bot(this.config, outcome.gateLog.message, outcome.gateLog.metadata);
@@ -608,7 +473,7 @@ class TradingBot extends BaseBot {
       this.deps.logger.bot(this.config, "entry_opened", outcome.entryOpenedMetadata);
     }
     if (outcome.compactBuyMetadata) {
-      this.logCompactBuy(outcome.compactBuyMetadata);
+      this.emitCompactDescriptor(this.telemetry.buildCompactBuyDescriptor(outcome.compactBuyMetadata));
     }
     if (outcome.lastNonCooldownBlockReason !== undefined) {
       this.lastNonCooldownBlockReason = outcome.lastNonCooldownBlockReason;
@@ -626,11 +491,10 @@ class TradingBot extends BaseBot {
     if (outcome.managedRecoveryExitedLogMetadata) {
       this.deps.logger.bot(this.config, "managed_recovery_exited", outcome.managedRecoveryExitedLogMetadata);
     }
-    this.logCompactSell(outcome.compactSellMetadata);
+    this.emitCompactDescriptor(this.telemetry.buildCompactSellDescriptor(outcome.compactSellMetadata));
     this.deps.store.recordExecution(this.config.id, this.config.symbol, outcome.recordExecutionAt, {
       skipBotStateWrite: true
     });
-    this.maybeLogEdgeDiagnostics(outcome.recordExecutionAt);
   }
 
   ensureCooldownState(timestamp: number) {
@@ -988,10 +852,6 @@ class TradingBot extends BaseBot {
     });
   }
 
-  getPublishedArchitectAssessment(): ArchitectAssessment | null {
-    return this.architectCoordinator.getPublishedAssessment();
-  }
-
   evaluateArchitectUsability(params: {
     architect?: ArchitectAssessment | null;
     contextSnapshot?: any;
@@ -1076,7 +936,7 @@ class TradingBot extends BaseBot {
       this.deps.logger.bot(this.config, applyResult.logEvent.message, applyResult.logEvent.metadata);
     }
     if (applyResult.compactArchitectChangeMetadata) {
-      this.logCompactArchitectChange(applyResult.compactArchitectChangeMetadata);
+      this.emitCompactDescriptor(this.telemetry.buildCompactArchitectDescriptor(applyResult.compactArchitectChangeMetadata));
     }
     return applyResult;
   }
@@ -1226,7 +1086,7 @@ class TradingBot extends BaseBot {
       performance: overrides.performance !== undefined ? overrides.performance : this.deps.store.getPerformance(this.config.id),
       contextSnapshot: overrides.contextSnapshot !== undefined ? overrides.contextSnapshot : this.deps.store.getContextSnapshot(this.config.symbol),
       currentFamily: overrides.currentFamily !== undefined ? overrides.currentFamily : this.deps.strategySwitcher.getStrategyFamily(this.strategy.id),
-      publishedArchitect: overrides.publishedArchitect !== undefined ? overrides.publishedArchitect : this.getPublishedArchitectAssessment(),
+      publishedArchitect: overrides.publishedArchitect !== undefined ? overrides.publishedArchitect : this.architectCoordinator.getPublishedAssessment(),
       publisherState: overrides.publisherState !== undefined ? overrides.publisherState : this.deps.store.getArchitectPublisherState(this.config.symbol)
     });
   }
@@ -1260,24 +1120,6 @@ class TradingBot extends BaseBot {
     });
   }
 
-  patchArchitectStateFamily(
-    architectState: ArchitectUsabilityState | null,
-    currentFamily: ArchitectUsabilityState["currentFamily"]
-  ) {
-    if (!architectState) {
-      return null;
-    }
-    if (architectState.currentFamily === currentFamily) {
-      return architectState;
-    }
-    const actionableFamily = architectState.actionableFamily;
-    return {
-      ...architectState,
-      currentFamily,
-      familyMatch: actionableFamily ? currentFamily === actionableFamily : null
-    };
-  }
-
   applyArchitectTickPhase(snapshot: TradingTickSnapshot): TradingTickArchitectContext {
     const architectState = !snapshot.position
       ? this.evaluateArchitectStateForTick(snapshot, snapshot.tick.timestamp)
@@ -1299,44 +1141,32 @@ class TradingBot extends BaseBot {
     });
 
     const nextSnapshot = this.createTickSnapshot(snapshot.tick);
+    let nextArchitectState = null;
+    if (!nextSnapshot.position && architectState) {
+      if (architectState.currentFamily === nextSnapshot.currentFamily) {
+        nextArchitectState = architectState;
+      } else {
+        const actionableFamily = architectState.actionableFamily;
+        nextArchitectState = {
+          ...architectState,
+          currentFamily: nextSnapshot.currentFamily,
+          familyMatch: actionableFamily ? nextSnapshot.currentFamily === actionableFamily : null
+        };
+      }
+    }
     return Object.freeze({
       ...nextSnapshot,
-      architectState: !nextSnapshot.position
-        ? this.patchArchitectStateFamily(
-            architectState,
-            nextSnapshot.currentFamily
-          )
-        : null
+      architectState: nextArchitectState
     });
   }
 
   handleArchitectEntryShortCircuit(snapshot: TradingTickArchitectContext) {
-    const shortCircuitEconomics = this.estimateEntryEconomics({
-      context: null,
-      price: snapshot.tick.price,
-      quantity: null,
-      mtfDiagnostics: snapshot.architectState?.architect?.mtf || null
-    });
     this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, now());
     this.deps.store.updateBotState(
       this.config.id,
       this.entryCoordinator.buildArchitectEntryShortCircuitStatePatch(snapshot.architectState?.blockReason)
     );
-    this.logEntryEvaluation({
-      architectState: snapshot.architectState,
-      blockReason: snapshot.architectState?.blockReason,
-      context: null,
-      contextSnapshot: snapshot.contextSnapshot,
-      decision: null,
-      economics: shortCircuitEconomics,
-      outcome: "blocked",
-      profile: this.deps.riskManager.getProfile(this.config.riskProfile, this.config.riskOverrides || null),
-      quantity: null,
-      signalEvaluated: false,
-      state: this.deps.store.getBotState(this.config.id) || snapshot.state,
-      strategyId: this.strategy.id,
-      tick: snapshot.tick
-    });
+    this.recordEntryEvaluationCounters("blocked", false);
     this.logArchitectEntryShortCircuit(snapshot.architectState);
   }
 
