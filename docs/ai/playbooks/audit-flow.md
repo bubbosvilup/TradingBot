@@ -14,6 +14,8 @@ Checklist:
    - runtime/UI coupling
    - silent risk behavior drift
    - Pulse UI concerns leaking into trading decisions
+   - launcher/debug-capture concerns leaking into trading decisions
+   - log/output volume growing because rolling numeric state is emitted as append-only noise
    - managed-recovery invalidation becoming easier than entry
    - entry ignoring active Architect challenger hysteresis
 6. Identify the smallest safe patch set.

@@ -55,6 +55,9 @@ Avoid putting these back into `TradingBot`:
 - Keep strategy economics policy explicit in strategy/economics surfaces; do not reintroduce strategy-id or symbol-name branching in shared economics code
 - Keep volatility sizing conservative: it may reduce or preserve size only, never increase it
 - Keep operator-facing log names/fields stable unless explicitly asked to change them
+- Keep Pulse as the single operator UI surface; do not reintroduce a second dashboard architecture
+- Keep launcher mode selection and debug-capture configuration in startup/UI/config plumbing, not in trading decision paths
+- When preparing debug `jsonl` capture, distinguish append-only event records from rolling numeric snapshots/counters; do not dump every tick-sized detail by default
 - Add tests for extracted roles when behavior is non-trivial
 - Run:
   - `npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false`
@@ -64,6 +67,7 @@ Avoid putting these back into `TradingBot`:
 The largest remaining area in `TradingBot` is the exit decision/reason planning logic (`shouldExitPosition(...)` or equivalent inline decision engine). Treat this as behavior-sensitive code. Refactor carefully.
 
 UI/chart/dashboard work should be evaluated separately from core trading logic; active browser-served assets live under `public/`.
+Launcher/debug-capture work should be evaluated separately from execution/risk behavior even when it changes startup flow or persisted run artifacts.
 
 ## When unsure
 Favor:

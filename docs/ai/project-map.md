@@ -20,14 +20,15 @@ Important repo facts:
 - `src/core/historicalBootstrapService.ts` owns startup-only historical preload. It uses the same `MarketStream`/ccxt Binance REST source, seeds `StateStore` through existing price/kline update paths, and runs before market stream/context/Architect/bots start.
 - `src/streams/marketStream.ts` guards shutdown so WS close during teardown cannot start REST fallback, and in-flight fallback snapshots are invalidated after stop; this keeps test teardown clean without muting production logs.
 - `src/engines/backtestEngine.ts` is now a modern adapter over legacy backtest modules, not a full replay runtime.
-- `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, and provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses.
-- `src/core/systemServer.ts` serves the single Pulse dashboard entry point and static UI assets. The dashboard remains UI/API-facing only and must not become a control plane.
+- `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses, and projects Pulse-focused operator payloads.
+- `src/core/systemServer.ts` serves the single Pulse dashboard entry point at `/` and static UI assets. `/compact` now normalizes to `/`; the dashboard remains UI/API-facing only and must not become a control plane.
 - `src/core/systemServer.ts` exposes additive `/api/pulse` server-side projection and `/api/pulse/stream` SSE for the operator-facing Pulse contract; chart data, filtered events/trades, and legacy API endpoints remain available separately.
 - `src/core/orchestrator.ts` can opt into opening the Pulse UI at startup through env flags, but this must remain explicit and non-essential to trading behavior.
 - `src/data/bots.config.json` now carries experiment label `quarantined_allow_small_loss_floor05`.
 - `reports/experiments/` still contains historical outputs for the quarantined label.
 - `src/core/architectService.ts` switch-delta publishing now compares challenger score against the true published incumbent score, not the candidate assessment's incumbent-regime score.
 - `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`, but the close path now takes a defensive position snapshot for planning/lifecycle/telemetry shaping and emits explicit `position_close_rejected` risk telemetry when `closePosition(...)` returns null.
+- `src/engines/executionEngine.ts`, `src/roles/openAttemptCoordinator.ts`, `src/core/systemServer.ts`, and active strategies are now side-aware for first-class short handling in paper runtime and operator telemetry.
 - `src/strategies/rsiReversion/config.json` now carries conservative short-horizon entry economics: `minExpectedNetEdgePct: 0.0015` and `maxTargetDistancePctForShortHorizon: 0.01`.
 - `src/strategies/rsiReversion/strategy.ts` declares explicit entry economics capabilities through `entryEconomicsPolicy`; shared economics code must use that policy surface instead of strategy-name branching.
 - MTF is enabled in `src/data/bots.config.json` and can be overridden with `MTF_ENABLED=false` / `MTF_ENABLED=true`; when absent or disabled, RSI entry behavior must remain baseline-identical.
@@ -48,13 +49,13 @@ Boundary map:
 - `mtfContextAggregator`: MTF frame aggregation and dominant internal frame diagnostics
 - `ArchitectService`, `BotArchitect`, `architectCoordinator`: regime/family/usability publish and apply flow; `architectCoordinator` owns entry blocking for pending challenger hysteresis
 - `TradingBot`: per-tick orchestration, coordination, execution handoff
-- `entryCoordinator`, `openAttemptCoordinator`, `entryOutcomeCoordinator`: entry-side flow ownership, including short-horizon target-distance gating
+- `entryCoordinator`, `openAttemptCoordinator`, `entryOutcomeCoordinator`: entry-side flow ownership, including short-horizon target-distance gating and side-aware execution handoff
 - `mtfParamResolver`: pure MTF-driven RSI entry hint/cap resolution only; no sizing, cooldown, hold, or gate ownership
 - `entryEconomicsEstimator`: fee-aware edge estimate plus deterministic capture-gap, short-horizon target-distance diagnostics, and resolved cap computation from explicit strategy economics policy
 - `RiskManager`: drawdown gates, loss-streak policy, volatility-aware sizing penalties, and post-close cooldown timing
 - `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, `recoveryTargetResolver`: exit planning and shaping; managed-recovery invalidation grace and target-vs-invalidation precedence live here
 - `postLossArchitectLatch`: post-loss re-entry defense
-- `tradingBotTelemetry`: operator-facing metadata shaping, including full/compact MTF publish and entry cap-resolution diagnostics
+- `tradingBotTelemetry`: operator-facing metadata shaping, including full/Pulse-facing MTF publish and entry cap-resolution diagnostics
 - `StateStore`: single runtime state container
 - `BacktestEngine`: adapter boundary for future replay migration, not full runtime parity yet
 - `SystemServer` plus `public/`: dashboard/API surface, separate from core decision logic
@@ -77,6 +78,8 @@ Hotspots to treat carefully:
 - `src/roles/managedRecoveryExitResolver.ts`
 - `src/streams/marketStream.ts`
 - `tests/tradingBot.test.js`
+- `tests/executionEngine.test.js`
+- `tests/activeStrategies.test.js`
 - `tests/mtfParamResolver.test.js`
 - `tests/mtfContextAggregator.test.js`
 - `tests/mtfContextService.test.js`

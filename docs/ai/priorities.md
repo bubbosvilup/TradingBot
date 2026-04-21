@@ -32,12 +32,20 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: reduce REST fallback cost with stale-symbol narrowing and batch ticker fetches.
 - Completed: harden market stream teardown so shutdown does not leave REST fallback snapshots logging after tests finish.
 - In progress: integrate backtest with the modern runtime through `src/engines/backtestEngine.ts`; full replay parity is still not done.
+- In progress: realign repo documentation with the current Pulse UI, short-side runtime support, and post-trimming architecture shape.
+- Next: clean up the current logging noise without regressing structured telemetry, risk signals, or test visibility.
+- Next: define a launcher-ready runtime surface with explicit startup modes `Normal` and `Debug`.
+- Next: prepare a debug-run capture contract for `jsonl`, including which fields are append-only event records versus rolling numeric counters/snapshots.
 
 ## P3
 
-- Add shorts.
+- Implement the launcher flow:
+  - first window selects startup mode
+  - `Debug` opens a second window for run-capture selection
+  - selected capture fields persist into a `jsonl`-friendly config/runtime contract
+- Continue end-to-end audit of first-class short support across runtime, exits, telemetry, analytics, and operator UI.
 - Continue hot-path micro-optimizations after the latest `ContextBuilder` allocation pass.
-- Continue architectural refinements after the safety and separation work lands.
+- Continue architectural refinements after the latest trimming patches and role extraction work land.
 
 Priority notes:
 
@@ -50,4 +58,9 @@ Priority notes:
 - Capture-gap cap permissiveness must be explicit via strategy/economics policy; the default remains `0.03`.
 - Volatility-aware sizing may only reduce or preserve position size, and post-loss cooldown behavior must remain stronger than post-win cooldown behavior.
 - Avoid broad rewrites while the runtime is under active refactor.
-- Treat short support as an audit-and-prep area until entry/exit/risk/UI semantics are explicitly upgraded end-to-end.
+- Pulse remains the single operator UI entry point; keep it API-facing and separate from trading decisions.
+- Treat short support as implemented but still audit-sensitive until replay/reporting/operator flows are explicitly re-checked end-to-end.
+- Launcher prep should stay outside trading decision paths; mode selection and debug capture configuration belong in startup/UI/config plumbing.
+- Debug capture design should separate:
+  - high-cardinality append-only events for `jsonl`
+  - rolling numeric state that should be updated as a single latest value instead of duplicated on every tick

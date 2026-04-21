@@ -11,9 +11,9 @@ Il progetto mantiene nel repository alcune fondamenta per lavori futuri come liv
 | Execution | Solo `paper` |
 | Market feed runtime attivo | Solo `live` market data |
 | Live order routing | Disabilitato dal runtime attivo |
-| Dashboard | Frontend statico servito da `public/` con asset JS browser-ready |
+| Dashboard | Pulse UI statica servita da `public/` sulla route root `/` |
 | Backtest | Adapter moderno sopra il legacy, non ancora parita completa |
-| Short support | Preparazione avviata, non abilitato |
+| Short support | Supporto short di prima classe nel runtime paper, ancora da riallineare/auditare end-to-end |
 | MTF | Infrastruttura e diagnostica presenti, abilitato nella config default e spegnibile via env |
 | Historical preload | Preload startup-only da Binance/ccxt REST, opzionale e configurabile |
 
@@ -117,9 +117,9 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
 - `src/engines/backtestEngine.ts` non e piu uno scaffold vuoto:
   - e un adapter moderno sopra i moduli legacy preservati
   - lo stato reale e `bridged_not_fully_migrated`
-- Avviata la prep per short support:
+- Avviata la base per side handling:
   - tipi e helper economici side-ready
-  - nessuna abilitazione reale degli short nel runtime
+  - questa base e stata poi estesa nei commit successivi fino ad abilitare short paper end-to-end nel runtime attivo
 
 ### Performance e tuning
 
@@ -298,6 +298,51 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - `npm test`
   - `git diff --check`
 
+## Aggiornamenti del 2026-04-21
+
+### Short support e side semantics
+
+- Il runtime paper e ora side-aware anche per gli short:
+  - strategie attive possono aprire e chiudere posizioni short
+  - `ExecutionEngine` gestisce open, cover, PnL e fee in modo direzionale
+  - `OpenAttemptCoordinator` non ricade piu implicitamente su long quando uno short non e supportato
+  - `SystemServer`, chart markers e telemetry distinguono in modo esplicito `BUY` / `SELL` / `SHORT` / `COVER`
+- Questo non rende il progetto live-ready:
+  - execution resta solo `paper`
+  - backtest moderno e analytics/reporting vanno ancora verificati end-to-end sul lato short
+
+### Pulse UI consolidata
+
+- La UI operativa attiva e ora una sola:
+  - Pulse su `/`
+- Il vecchio monitor compatto non e piu una superficie separata:
+  - `/compact` viene normalizzato a `/`
+- Pulse usa:
+  - `GET /api/pulse`
+  - `GET /api/pulse/stream`
+- Pulse espone anche azioni operatore strette e gia previste dal backend:
+  - resume manuale dei bot in pausa per `max_drawdown_reached`
+  - storico trade per bot
+
+### Trimming e hygiene recenti
+
+- Sono entrate varie patch di trimming che hanno ridotto wrapper e rumore intorno a `TradingBot` senza cambiare il perimetro di sicurezza del runtime.
+- Il prossimo cleanup tecnico emerso dai commit recenti e dalla cronologia locale riguarda soprattutto il logging, non la safety di base.
+- Verifica attuale:
+  - al `2026-04-21` `npm test` passa sul repository corrente
+
+### Focus operativo successivo
+
+- Il focus immediato non e aggiungere nuova logica trading, ma ridurre i log al minimo utile.
+- Subito dopo, la repo va preparata per un launcher con due modalita di avvio:
+  - `Normal`
+  - `Debug`
+- In modalita `Debug`, una seconda finestra dovra permettere di scegliere quali parametri della run salvare in `jsonl`.
+- Prima dell'implementazione del launcher serve fissare il contratto dei dati di output:
+  - quali record sono eventi append-only
+  - quali campi sono snapshot dell'ultimo stato noto
+  - quali metriche vanno aggiornate come singolo numero o contatore aggregato invece di generare una nuova riga a ogni tick
+
 ## Config runtime attiva
 
 File: `src/data/bots.config.json`
@@ -418,12 +463,13 @@ Nota historical preload:
 La dashboard locale viene servita da `SystemServer` e usa asset statici browser-ready.
 
 Route UI:
-- dashboard completa: `http://127.0.0.1:3000/`
-- monitor compatto: `http://127.0.0.1:3000/compact`
+- Pulse UI: `http://127.0.0.1:3000/`
 
 Endpoint principali:
 - `GET /api/system`
 - `GET /api/bots`
+- `GET /api/pulse`
+- `GET /api/pulse/stream`
 - `GET /api/prices`
 - `GET /api/positions`
 - `GET /api/events`
@@ -446,9 +492,9 @@ Campi diagnostici rilevanti ora esposti:
 - diagnostica MTF RSI entry: `mtfDominantFrame`, `mtfAdjustmentApplied`, `mtfResolvedTargetDistanceCapPct`, `mtfParamFallbackReason`, `mtfParamResolutionReason`
 - latency di pipeline
 
-Il monitor compatto su `/compact` resta separato dalla dashboard completa: mostra strip globali/portfolio/safety, una tabella bot densa e due sole righe footer per ultimo trade e ultimo evento rischio. Include un filtro locale `abnormal only`; non espone controlli operativi e non mostra feed log.
+Pulse e oggi l'unica UI operativa del repository: mostra stato di sistema, card bot, pannello focus, chart, eventi recenti, storico trade e resume manuale quando il backend lo consente. Resta una superficie di osservabilita e controllo stretto, non un piano di decisione trading.
 
-Auto-apertura monitor compatto:
+Auto-apertura Pulse:
 
 ```bash
 AUTO_OPEN_COMPACT_UI=true npm start
@@ -456,9 +502,9 @@ AUTO_OPEN_COMPACT_UI=true npm start
 
 Opzioni:
 - `AUTO_OPEN_COMPACT_UI=true` oppure `COMPACT_UI=true`
-- `COMPACT_UI_ROUTE=/compact`
+- `COMPACT_UI_ROUTE=/` oppure un path custom valido
 
-Il backend puo chiedere al sistema operativo di aprire la route compatta nel browser predefinito. Il controllo affidabile della dimensione finestra non e garantito tra browser e piattaforme senza introdurre un launcher browser-specifico, quindi l'apertura automatica usa la finestra predefinita del browser.
+Il backend puo chiedere al sistema operativo di aprire Pulse nel browser predefinito. Il controllo affidabile della dimensione finestra non e garantito tra browser e piattaforme senza introdurre un launcher browser-specifico, quindi l'apertura automatica usa la finestra predefinita del browser.
 
 ## Logging
 
@@ -473,6 +519,11 @@ Nota:
 - `LOG_TYPE=verbose` mantiene i dump completi di contesto/feature per debug approfondito
 - gli eventi di rischio critici per max drawdown non vengono piu persi in `verbose`
 - il runtime continua a emettere metadata strutturati per stato, blocchi e chiusure
+
+Direzione del prossimo cleanup:
+- separare meglio log operativi umani, telemetry strutturata e futura cattura debug `jsonl`
+- evitare duplicazione tick-by-tick quando basta un contatore o un ultimo valore osservato
+- tenere stabili i campi che dovranno essere selezionabili dal launcher in modalita `Debug`
 
 ## Avvio
 
@@ -512,7 +563,9 @@ npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false
 - Nessun ordine reale su exchange.
 - Nessuna live readiness end-to-end.
 - Nessuna parita completa del backtest moderno con il runtime attivo.
-- Nessun supporto short completo.
+- Short support presente nel runtime paper ma non ancora dichiarato completamente chiuso su replay, reporting e audit end-to-end.
+- Nessun launcher dedicato per scegliere la modalita di avvio o il profilo di cattura debug.
+- Nessun contratto definitivo per l'output `jsonl` delle run debug.
 
 ## Struttura repository
 
@@ -556,6 +609,10 @@ Hotspot da trattare con cautela:
 - `BacktestEngine` oggi e un ponte verso il legacy, non il runtime finale di replay.
 - Il path live futuro resta nel repository ma non deve essere riattivato accidentalmente dal runtime attivo.
 - Il prossimo lavoro utile resta:
+  - cleanup del logging
+  - definizione del contratto launcher `Normal` / `Debug`
+  - definizione dei campi run da catturare in `jsonl`
+  - classificazione dei parametri di output tra eventi, snapshot e contatori numerici
   - backtest moderno piu integrato
-  - audit short support
+  - audit finale short support
   - miglioramenti incrementali di performance e architettura

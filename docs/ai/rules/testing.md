@@ -18,6 +18,7 @@ Test expectations by change type:
 - Strategy economics policy changes: update `tests/entryEconomicsEstimator.test.js`; include baseline-missing-config, explicit-config, invalid-config fallback, and unrelated-strategy cases
 - Risk sizing/cooldown policy changes: update `tests/riskManager.test.js`; include disabled/missing baseline cases and tests proving loss cooldown behavior is unchanged
 - telemetry-only MTF changes: update `tests/tradingBotTelemetry.test.js` and `tests/systemServer.test.js` before broad runtime tests
+- launcher/debug capture changes: update `tests/systemServer.test.js` and any focused launcher/config serialization tests; cover startup-mode selection, capture-field validation, and output-shape stability when behavior is observable
 
 Behavior-sensitive areas needing lock coverage:
 
@@ -35,6 +36,7 @@ Behavior-sensitive areas needing lock coverage:
 - market stream REST fallback lifecycle and teardown idempotency
 - exit reason shaping and lifecycle reporting
 - operator-facing telemetry fields consumed by dashboard/API
+- launcher mode selection and debug-capture field/schema stability once implemented
 
 Current tests that should move with these behaviors:
 
@@ -46,7 +48,7 @@ Current tests that should move with these behaviors:
 - `tests/mtfParamResolver.test.js`: pure RSI MTF resolution and baseline fallback policy
 - `tests/mtfContextAggregator.test.js`: dominant internal MTF frame aggregation
 - `tests/mtfContextService.test.js`: optional MTF frame snapshot construction
-- `tests/tradingBotTelemetry.test.js`: compact/full telemetry field shape, including MTF entry diagnostics
+- `tests/tradingBotTelemetry.test.js`: operator-facing telemetry field shape, including MTF entry diagnostics
 - `tests/tradingBot.test.js`: full tick-path coverage for the same runtime behaviors
 - `tests/systemServer.test.js`: Pulse UI/API payload behavior and published Architect diagnostics pass-through
 

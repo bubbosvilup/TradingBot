@@ -22,6 +22,10 @@ Default operating assumptions:
 - Do not move `architectCoordinator`, latch logic, telemetry shaping, or outcome shaping back into `TradingBot`.
 - Keep paper-trading safety intact. The current runtime already rejects live execution.
 - Keep Pulse UI work in `SystemServer` / `public/`; it is observability/control-surface presentation, not trading decision logic.
+- Keep launcher preparation in startup/UI/config plumbing; `Normal` / `Debug` selection and debug-capture field selection must not leak into trading decisions.
+- Keep future debug `jsonl` capture deliberate:
+  - append-only events for high-cardinality timelines
+  - rolling latest-value snapshots/counters for numeric state that would otherwise explode log volume
 - Preserve the current Architect/entry/exit consistency guards:
   - entry blocks on pending challenger hysteresis
   - managed-recovery invalidation has post-entry grace/confirmation
@@ -37,3 +41,4 @@ Primary use cases:
 - runtime safety review
 - UI/dashboard fixes that avoid collateral damage in core trading paths
 - Pulse UI changes that preserve the existing static frontend model
+- launcher/debug-capture planning that preserves runtime safety and keeps output schemas intentional
