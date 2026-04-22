@@ -89,6 +89,8 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
     });
     const maxDrawdownPct = this.riskManager.getProfile(params.riskProfile, params.riskOverrides || null).maxDrawdownPct;
     const releasedEntryNotionalUsdt = params.closedTrade.quantity * params.closedTrade.entryPrice;
+    // Paper runtime short accounting releases full entry notional on close just like longs.
+    // Balance/equity metrics here are not realistic leveraged margin accounting.
     const updatedBalance = params.signalState.availableBalanceUsdt + releasedEntryNotionalUsdt + params.closedTrade.netPnl;
     // Max drawdown is a hard runtime pause that must be cleared by an explicit external resume.
     // This coordinator only records the paused state; it does not auto-resume or soften the policy.

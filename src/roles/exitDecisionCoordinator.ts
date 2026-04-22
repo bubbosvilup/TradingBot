@@ -94,6 +94,14 @@ function getRsiExitFloorNetPnlUsdt(exitPolicy: ExitPolicy | null | undefined) {
   return Math.max(baseFloor, 0);
 }
 
+function usesRsiThresholdExitPolicy(exitPolicy: ExitPolicy | null | undefined) {
+  return Boolean(exitPolicy?.qualification?.rsiThresholdExit);
+}
+
+function usesPriceTargetExitPolicy(exitPolicy: ExitPolicy | null | undefined) {
+  return Boolean(exitPolicy?.recovery?.priceTargetExit);
+}
+
 function matchesInvalidationMode(architectState: any, mode: InvalidationMode) {
   const blockReason = architectState?.blockReason || null;
   if (mode === "family_mismatch") {
@@ -258,7 +266,8 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
     });
     const inManagedRecovery = isManagedRecoveryPosition(params.position);
     const managedRecoveryPolicy = getManagedRecoveryPolicy(params.exitPolicy);
-    const meanReversionPosition = params.position.strategyId === "rsiReversion";
+    const usesRsiThresholdExit = usesRsiThresholdExitPolicy(params.exitPolicy);
+    const usesPriceTargetExit = usesPriceTargetExitPolicy(params.exitPolicy);
     const priceTargetHit = inManagedRecovery
       ? Boolean(params.managedRecoveryTarget?.hit)
       : decisionReasons.includes("reversion_price_target_hit");
@@ -306,7 +315,7 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
     }
 
     if (isExitActionForSide(params.position.side, params.decision.action) && params.signalState.exitSignalStreak >= params.exitConfirmationTicks) {
-      if (meanReversionPosition && rsiExitThresholdHit) {
+      if (usesRsiThresholdExit && rsiExitThresholdHit) {
         const estimatedExitEconomics = params.estimateExitEconomics(params.position, params.tick.price);
         const exitFloorNetPnlUsdt = getRsiExitFloorNetPnlUsdt(params.exitPolicy);
         if (estimatedExitEconomics.netPnl < exitFloorNetPnlUsdt) {
@@ -334,14 +343,14 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
       }
 
       return {
-        exitMechanism: meanReversionPosition && priceTargetHit
+        exitMechanism: usesPriceTargetExit && priceTargetHit
           ? "recovery"
           : null,
         exitNow: true,
-        lifecycleEvent: meanReversionPosition && priceTargetHit
+        lifecycleEvent: usesPriceTargetExit && priceTargetHit
           ? POSITION_LIFECYCLE_EVENTS.PRICE_TARGET_HIT
           : null,
-        reason: meanReversionPosition && priceTargetHit
+        reason: usesPriceTargetExit && priceTargetHit
           ? buildExitReason(decisionReasons, "reversion_price_target_hit", params.exitConfirmationTicks)
           : [...decisionReasons, `exit_confirmed_${params.exitConfirmationTicks}ticks`]
       };

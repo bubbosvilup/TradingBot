@@ -14,10 +14,12 @@ const RSI_REVERSION_PRO: ExitPolicy = {
   qualification: {
     estimatedCostMultiplier: 1,
     minTickProfit: 0.05,
-    pnlExitFloorMode: "strict_net_positive"
+    pnlExitFloorMode: "strict_net_positive",
+    rsiThresholdExit: true
   },
   recovery: {
     maxConsecutiveEntries: 2,
+    priceTargetExit: true,
     targetOffsetPct: 0.015,
     targetSource: "emaSlow",
     timeoutMs: 30_000

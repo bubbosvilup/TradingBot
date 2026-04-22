@@ -213,6 +213,8 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
       kind: "opened",
       opened,
       statePatch: {
+        // Paper runtime short accounting uses the same full-notional balance reservation as longs.
+        // This is intentionally not a realistic leveraged margin model.
         availableBalanceUsdt: Math.max(0, params.availableBalanceUsdt - (opened.quantity * opened.entryPrice)),
         entrySignalStreak: 0,
         exitSignalStreak: 0,

@@ -53,10 +53,12 @@ function runExitDecisionCoordinatorTests() {
     qualification: {
       estimatedCostMultiplier: 1,
       minTickProfit: 0.05,
-      pnlExitFloorMode: "strict_net_positive"
+      pnlExitFloorMode: "strict_net_positive",
+      rsiThresholdExit: true
     },
     recovery: {
       maxConsecutiveEntries: 2,
+      priceTargetExit: true,
       targetOffsetPct: 0.015,
       targetSource: "emaSlow",
       timeoutMs: 60_000
@@ -380,7 +382,7 @@ function runExitDecisionCoordinatorTests() {
     position: createPosition({
       openedAt: 1_000,
       quantity: 1,
-      strategyId: "rsiReversion"
+      strategyId: "emaCross"
     }),
     resolveInvalidationLevel() {
       return null;
@@ -464,6 +466,55 @@ function runExitDecisionCoordinatorTests() {
   });
   if (!confirmedRsiPlan.exitNow || confirmedRsiPlan.transition !== undefined || confirmedRsiPlan.lifecycleEvent !== "RSI_EXIT_HIT" || confirmedRsiPlan.exitMechanism !== "qualification" || !confirmedRsiPlan.reason.includes("rsi_exit_confirmed") || !confirmedRsiPlan.reason.includes("exit_confirmed_2ticks")) {
     throw new Error(`rsi confirmed exit planning regressed: ${JSON.stringify(confirmedRsiPlan)}`);
+  }
+
+  const nonCapabilityPolicyPlan = coordinator.resolve({
+    decision: {
+      action: "sell",
+      confidence: 0.9,
+      reason: ["rsi_exit_threshold_hit", "reversion_price_target_hit"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics() {
+      return { netPnl: 0.01 };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy: {
+      ...exitPolicy,
+      qualification: {
+        ...exitPolicy.qualification,
+        rsiThresholdExit: false
+      },
+      recovery: {
+        ...exitPolicy.recovery,
+        priceTargetExit: false
+      }
+    },
+    managedRecoveryTarget: null,
+    minHoldMs: 15_000,
+    position: createPosition({
+      openedAt: 1_000,
+      quantity: 1,
+      strategyId: "rsiReversion"
+    }),
+    resolveInvalidationLevel() {
+      return null;
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 2
+    }),
+    tick: createTick({
+      price: 100.2,
+      timestamp: 20_000
+    })
+  });
+  if (!nonCapabilityPolicyPlan.exitNow
+    || nonCapabilityPolicyPlan.exitMechanism !== null
+    || nonCapabilityPolicyPlan.lifecycleEvent !== null
+    || nonCapabilityPolicyPlan.reason.includes("rsi_exit_confirmed")
+    || nonCapabilityPolicyPlan.reason.includes("rsi_exit_floor_failed")
+    || !nonCapabilityPolicyPlan.reason.includes("exit_confirmed_2ticks")) {
+    throw new Error(`strategy name alone should not enable RSI/price-target exit semantics: ${JSON.stringify(nonCapabilityPolicyPlan)}`);
   }
 
   const shortManagedRecoveryTargetPlan = coordinator.resolve({

@@ -389,6 +389,41 @@ function runStateStoreTests() {
     throw new Error(`portfolio kill switch should stay latched after it has triggered once: ${JSON.stringify(latchedPortfolioState)}`);
   }
 
+  let invalidModeRejected = false;
+  try {
+    portfolioStore.setPortfolioKillSwitchConfig({
+      enabled: true,
+      maxDrawdownPct: 5,
+      mode: "panic_liquidate"
+    });
+  } catch (error) {
+    invalidModeRejected = String(error?.message || "").includes("Unsupported portfolio kill switch mode");
+  }
+  if (!invalidModeRejected) {
+    throw new Error("portfolio kill switch should reject unsupported modes instead of silently normalizing them");
+  }
+
+  const restoredStatusStore = new StateStore();
+  restoredStatusStore.registerBot(createBotConfig({ id: "bot_restore", symbol: "SOL/USDT" }));
+  restoredStatusStore.updateBotState("bot_restore", {
+    status: "stopped"
+  });
+  restoredStatusStore.registerBot(createBotConfig({ id: "bot_restore", symbol: "SOL/USDT" }));
+  const restoredStatus = restoredStatusStore.getBotState("bot_restore");
+  if (restoredStatus?.status !== "idle") {
+    throw new Error(`registerBot should sanitize stale stopped state for enabled bots: ${JSON.stringify(restoredStatus)}`);
+  }
+
+  restoredStatusStore.updateBotState("bot_restore", {
+    pausedReason: "manual_pause",
+    status: "paused"
+  });
+  restoredStatusStore.registerBot(createBotConfig({ id: "bot_restore", symbol: "SOL/USDT" }));
+  const preservedPauseStatus = restoredStatusStore.getBotState("bot_restore");
+  if (preservedPauseStatus?.status !== "paused" || preservedPauseStatus?.pausedReason !== "manual_pause") {
+    throw new Error(`registerBot should preserve paused states with an existing reason across re-registration: ${JSON.stringify(preservedPauseStatus)}`);
+  }
+
   const originalDateNow = Date.now;
   try {
     Date.now = () => 1_000;

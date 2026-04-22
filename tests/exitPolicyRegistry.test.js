@@ -7,7 +7,12 @@ function runExitPolicyRegistryTests() {
   if (!rsiReversionPro || rsiReversionPro.id !== "RSI_REVERSION_PRO") {
     throw new Error(`named RSI reversion exit policy should resolve explicitly: ${JSON.stringify(rsiReversionPro)}`);
   }
-  if (rsiReversionPro.qualification.minTickProfit !== 0.05 || rsiReversionPro.recovery.targetSource !== "emaSlow" || rsiReversionPro.recovery.timeoutMs !== 30_000 || rsiReversionPro.recovery.maxConsecutiveEntries !== 2) {
+  if (rsiReversionPro.qualification.minTickProfit !== 0.05
+    || rsiReversionPro.qualification.rsiThresholdExit !== true
+    || rsiReversionPro.recovery.targetSource !== "emaSlow"
+    || rsiReversionPro.recovery.priceTargetExit !== true
+    || rsiReversionPro.recovery.timeoutMs !== 30_000
+    || rsiReversionPro.recovery.maxConsecutiveEntries !== 2) {
     throw new Error(`resolved RSI_REVERSION_PRO shape mismatch: ${JSON.stringify(rsiReversionPro)}`);
   }
 
@@ -15,7 +20,10 @@ function runExitPolicyRegistryTests() {
   if (!fastTimeout || fastTimeout.id !== "RSI_REVERSION_FAST_TIMEOUT" || fastTimeout.recovery.timeoutMs !== 15_000) {
     throw new Error(`RSI_REVERSION_FAST_TIMEOUT should be a genuinely shorter timeout policy: ${JSON.stringify(fastTimeout)}`);
   }
-  if (fastTimeout.qualification.minTickProfit !== rsiReversionPro.qualification.minTickProfit || fastTimeout.recovery.targetSource !== rsiReversionPro.recovery.targetSource) {
+  if (fastTimeout.qualification.minTickProfit !== rsiReversionPro.qualification.minTickProfit
+    || fastTimeout.qualification.rsiThresholdExit !== true
+    || fastTimeout.recovery.targetSource !== rsiReversionPro.recovery.targetSource
+    || fastTimeout.recovery.priceTargetExit !== true) {
     throw new Error(`fast timeout policy should only narrow timeout semantics: ${JSON.stringify(fastTimeout)}`);
   }
 
@@ -30,7 +38,7 @@ function runExitPolicyRegistryTests() {
     },
     exitPolicyId: "RSI_REVERSION_PRO"
   });
-  if (!overridden || overridden.recovery.timeoutMs !== 45_000 || overridden.qualification.minTickProfit !== 0.05) {
+  if (!overridden || overridden.recovery.timeoutMs !== 45_000 || overridden.qualification.minTickProfit !== 0.05 || overridden.qualification.rsiThresholdExit !== true || overridden.recovery.priceTargetExit !== true) {
     throw new Error(`exit policy override should preserve base blocks and override only requested fields: ${JSON.stringify(overridden)}`);
   }
   if (overridden.invalidation.modes.length !== 1 || overridden.invalidation.modes[0] !== "family_mismatch") {

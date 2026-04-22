@@ -8,12 +8,14 @@ import type { MarketKline, MarketTick, PriceSnapshot } from "../types/market.ts"
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 import type {
+  PortfolioKillSwitchMode,
   PortfolioKillSwitchConfig,
   PortfolioKillSwitchState,
   SymbolStateRetentionSnapshot
 } from "../types/runtime.ts";
 
 const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
+const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("./configLoader.ts");
 
 interface PerformanceHistoryPoint {
   time: number;
@@ -165,6 +167,20 @@ interface SymbolStateCleanupState {
 
 const DEFAULT_SYMBOL_STATE_RETENTION_MS = 30 * 60 * 1000;
 
+function isPortfolioKillSwitchMode(value: unknown): value is PortfolioKillSwitchMode {
+  return VALID_PORTFOLIO_KILL_SWITCH_MODES.has(value as PortfolioKillSwitchMode);
+}
+
+function normalizePortfolioKillSwitchMode(value: unknown): PortfolioKillSwitchMode {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return "block_entries_only";
+  }
+  if (isPortfolioKillSwitchMode(value)) {
+    return value;
+  }
+  throw new Error(`Unsupported portfolio kill switch mode "${String(value)}"`);
+}
+
 class StateStore {
   botConfigs: Map<string, BotConfig>;
   botStates: Map<string, BotRuntimeState>;
@@ -314,6 +330,11 @@ class StateStore {
       status: config.enabled ? "idle" : "stopped",
       ...(existingState || {}),
       botId: config.id,
+      status: !config.enabled
+        ? "stopped"
+        : existingState?.status === "paused" && existingState?.pausedReason
+          ? "paused"
+          : "idle",
       symbol: config.symbol
     });
     if (!this.orders.has(config.id)) {
@@ -943,7 +964,7 @@ class StateStore {
       maxDrawdownPct: Number.isFinite(Number(config?.maxDrawdownPct))
         ? Math.max(Number(config?.maxDrawdownPct), 0)
         : 0,
-      mode: config?.mode === "block_entries_only" ? "block_entries_only" : "block_entries_only"
+      mode: normalizePortfolioKillSwitchMode(config?.mode)
     };
     const initialEquityUsdt = this.getPortfolioInitialEquityUsdt();
     this.portfolioKillSwitchConfig = nextConfig;

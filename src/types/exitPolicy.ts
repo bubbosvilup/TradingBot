@@ -30,11 +30,13 @@ export type InvalidationMode =
 export interface ExitPolicy {
   id: string;
   qualification: {
+    rsiThresholdExit?: boolean;
     pnlExitFloorMode: ExitQualificationMode;
     estimatedCostMultiplier: number;
     minTickProfit?: number;
   };
   recovery: {
+    priceTargetExit?: boolean;
     targetSource: RecoveryTargetSource;
     targetOffsetPct: number;
     maxConsecutiveEntries?: number;

@@ -23,6 +23,7 @@ class IndicatorEngine {
       return null;
     }
 
+    // This is a simple-window RSI, not Wilder-smoothed RSI; strategy thresholds are calibrated to this exact implementation.
     let gains = 0;
     let losses = 0;
     for (let index = values.length - period; index < values.length; index += 1) {
@@ -61,4 +62,3 @@ class IndicatorEngine {
 module.exports = {
   IndicatorEngine
 };
-

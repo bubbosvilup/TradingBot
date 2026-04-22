@@ -321,5 +321,6 @@ class ConfigLoader {
 }
 
 module.exports = {
-  ConfigLoader
+  ConfigLoader,
+  VALID_PORTFOLIO_KILL_SWITCH_MODES
 };
