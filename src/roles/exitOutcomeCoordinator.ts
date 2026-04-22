@@ -95,6 +95,20 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
     // Max drawdown is a hard runtime pause that must be cleared by an explicit external resume.
     // This coordinator only records the paused state; it does not auto-resume or soften the policy.
     const pausedForDrawdown = params.nextPerformance.drawdown >= maxDrawdownPct;
+    const preservedPausedReason = !pausedForDrawdown
+      && params.lifecycleStatus === "paused"
+      && typeof params.signalState?.pausedReason === "string"
+      && params.signalState.pausedReason.trim() !== ""
+      ? params.signalState.pausedReason
+      : null;
+    const nextStatus = pausedForDrawdown
+      ? "paused"
+      : params.lifecycleStatus === "paused" && !preservedPausedReason
+        ? "running"
+        : params.lifecycleStatus;
+    const nextPausedReason = pausedForDrawdown
+      ? "max_drawdown_reached"
+      : preservedPausedReason;
     const closeReason = Array.isArray(params.closedTrade.exitReason)
       ? params.closedTrade.exitReason.join(",")
       : null;
@@ -112,20 +126,20 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
         ? Number(params.signalState.managedRecoveryConsecutiveCount || 0)
         : 0,
       realizedPnl: params.signalState.realizedPnl + params.closedTrade.netPnl,
-      status: pausedForDrawdown ? "paused" : params.lifecycleStatus,
-      pausedReason: pausedForDrawdown ? "max_drawdown_reached" : null
+      status: nextStatus,
+      pausedReason: nextPausedReason
     };
 
     return {
       compactRiskMetadata: {
         ...params.exitTelemetry,
-        botStatus: pausedForDrawdown ? "paused" : params.lifecycleStatus,
+        botStatus: nextStatus,
         cooldownReason: balancePatch.cooldownReason,
         cooldownUntil: balancePatch.cooldownUntil,
         closeClassification: params.classification.closeClassification,
         lossStreak: balancePatch.lossStreak,
         manualResumeRequired: pausedForDrawdown ? true : undefined,
-        pausedReason: pausedForDrawdown ? "max_drawdown_reached" : null,
+        pausedReason: nextPausedReason,
         status: "trade_closed"
       },
       compactSellMetadata: {

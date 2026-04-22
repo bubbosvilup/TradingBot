@@ -96,6 +96,9 @@ class RiskManager {
     if (params.positionOpen) {
       return { allowed: false, reason: "position_already_open" };
     }
+    if (params.state.status === "paused") {
+      return { allowed: false, reason: params.state.pausedReason || "bot_paused" };
+    }
     if (params.state.cooldownUntil && params.state.cooldownUntil > params.now) {
       return { allowed: false, reason: params.state.cooldownReason || "cooldown_active" };
     }

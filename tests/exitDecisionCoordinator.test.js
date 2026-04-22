@@ -508,13 +508,13 @@ function runExitDecisionCoordinatorTests() {
       timestamp: 20_000
     })
   });
-  if (!nonCapabilityPolicyPlan.exitNow
-    || nonCapabilityPolicyPlan.exitMechanism !== null
-    || nonCapabilityPolicyPlan.lifecycleEvent !== null
-    || nonCapabilityPolicyPlan.reason.includes("rsi_exit_confirmed")
-    || nonCapabilityPolicyPlan.reason.includes("rsi_exit_floor_failed")
-    || !nonCapabilityPolicyPlan.reason.includes("exit_confirmed_2ticks")) {
-    throw new Error(`strategy name alone should not enable RSI/price-target exit semantics: ${JSON.stringify(nonCapabilityPolicyPlan)}`);
+  if (nonCapabilityPolicyPlan.exitNow
+    || nonCapabilityPolicyPlan.exitMechanism !== undefined
+    || nonCapabilityPolicyPlan.lifecycleEvent !== undefined
+    || nonCapabilityPolicyPlan.reason.includes("rsi_exit_threshold_hit")
+    || nonCapabilityPolicyPlan.reason.includes("reversion_price_target_hit")
+    || nonCapabilityPolicyPlan.reason.includes("exit_confirmed_2ticks")) {
+    throw new Error(`disabled RSI/price-target capabilities should hard-block those exits: ${JSON.stringify(nonCapabilityPolicyPlan)}`);
   }
 
   const shortManagedRecoveryTargetPlan = coordinator.resolve({
@@ -564,6 +564,52 @@ function runExitDecisionCoordinatorTests() {
   });
   if (!shortManagedRecoveryTargetPlan.exitNow || shortManagedRecoveryTargetPlan.exitMechanism !== "recovery" || shortManagedRecoveryTargetPlan.lifecycleEvent !== "PRICE_TARGET_HIT") {
     throw new Error(`short managed recovery target should beat invalidation after confirmation: ${JSON.stringify(shortManagedRecoveryTargetPlan)}`);
+  }
+
+  const managedRecoveryTargetDisabledPlan = coordinator.resolve({
+    architectState: null,
+    decision: {
+      action: "hold",
+      confidence: 0.5,
+      reason: ["reversion_price_target_hit"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics(position, price) {
+      return { netPnl: (position.entryPrice - price) * position.quantity };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy: {
+      ...exitPolicy,
+      recovery: {
+        ...exitPolicy.recovery,
+        priceTargetExit: false
+      }
+    },
+    managedRecoveryTarget: {
+      hit: true
+    },
+    minHoldMs: 15_000,
+    position: createPosition({
+      lifecycleMode: "managed_recovery",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryStartedAt: 10_000,
+      openedAt: -50_000,
+      side: "short",
+      strategyId: "rsiReversion"
+    }),
+    resolveInvalidationLevel() {
+      return null;
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 2
+    }),
+    tick: createTick({
+      price: 98,
+      timestamp: 20_000
+    })
+  });
+  if (managedRecoveryTargetDisabledPlan.exitNow || managedRecoveryTargetDisabledPlan.reason.includes("reversion_price_target_hit")) {
+    throw new Error(`managed recovery target should be ignored when priceTargetExit is disabled: ${JSON.stringify(managedRecoveryTargetDisabledPlan)}`);
   }
 
   const shapedReasons = buildExitReason(["rsi_exit_threshold_hit", "emergency_stop", "managed_recovery_rsi_ignored", "reversion_price_target_hit"], "rsi_exit_confirmed", 2);

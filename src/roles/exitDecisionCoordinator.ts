@@ -65,6 +65,16 @@ function getDecisionReasons(decision: any) {
   return Array.isArray(decision?.reason) ? decision.reason : [];
 }
 
+function sanitizeDisabledExitReasons(decisionReasons: string[], params: {
+  priceTargetDisabled?: boolean;
+  rsiThresholdDisabled?: boolean;
+}) {
+  return decisionReasons.filter((reason) =>
+    !(params.rsiThresholdDisabled && reason === "rsi_exit_threshold_hit")
+    && !(params.priceTargetDisabled && reason === "reversion_price_target_hit")
+  );
+}
+
 function getProtectionStopMode(exitPolicy: ExitPolicy | null | undefined): ProtectionStopMode {
   const stopMode = String(exitPolicy?.protection?.stopMode || "fixed_pct");
   return stopMode === "structural_min" || stopMode === "atr_trailing" || stopMode === "fixed_pct"
@@ -256,9 +266,9 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
     tick: MarketTick;
   }): ExitPlan {
     const holdMs = params.tick.timestamp - params.position.openedAt;
-    const decisionReasons = getDecisionReasons(params.decision);
+    const rawDecisionReasons = getDecisionReasons(params.decision);
     const protectiveExit = resolveProtectiveExit({
-      decisionReasons,
+      decisionReasons: rawDecisionReasons,
       emergencyStopPct: params.emergencyStopPct,
       exitPolicy: params.exitPolicy,
       position: params.position,
@@ -268,8 +278,14 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
     const managedRecoveryPolicy = getManagedRecoveryPolicy(params.exitPolicy);
     const usesRsiThresholdExit = usesRsiThresholdExitPolicy(params.exitPolicy);
     const usesPriceTargetExit = usesPriceTargetExitPolicy(params.exitPolicy);
+    const rsiThresholdDisabled = rawDecisionReasons.includes("rsi_exit_threshold_hit") && !usesRsiThresholdExit;
+    const priceTargetDisabled = rawDecisionReasons.includes("reversion_price_target_hit") && !usesPriceTargetExit;
+    const decisionReasons = sanitizeDisabledExitReasons(rawDecisionReasons, {
+      priceTargetDisabled,
+      rsiThresholdDisabled
+    });
     const priceTargetHit = inManagedRecovery
-      ? Boolean(params.managedRecoveryTarget?.hit)
+      ? usesPriceTargetExit && Boolean(params.managedRecoveryTarget?.hit)
       : decisionReasons.includes("reversion_price_target_hit");
     const rsiExitThresholdHit = decisionReasons.includes("rsi_exit_threshold_hit");
 
@@ -315,6 +331,13 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
     }
 
     if (isExitActionForSide(params.position.side, params.decision.action) && params.signalState.exitSignalStreak >= params.exitConfirmationTicks) {
+      if (rsiThresholdDisabled || priceTargetDisabled) {
+        return {
+          exitNow: false,
+          reason: decisionReasons
+        };
+      }
+
       if (usesRsiThresholdExit && rsiExitThresholdHit) {
         const estimatedExitEconomics = params.estimateExitEconomics(params.position, params.tick.price);
         const exitFloorNetPnlUsdt = getRsiExitFloorNetPnlUsdt(params.exitPolicy);

@@ -247,6 +247,23 @@ function runRiskManagerTests() {
   if (drawdownBlocked.allowed || drawdownBlocked.reason !== "max_drawdown_reached") {
     throw new Error(`per-bot drawdown gating should stay distinguishable from the shared portfolio kill switch: ${JSON.stringify(drawdownBlocked)}`);
   }
+
+  const pausedBlocked = riskManager.canOpenTrade({
+    now: 1_000_000,
+    performance: {
+      drawdown: 0
+    },
+    positionOpen: false,
+    riskProfile: "medium",
+    state: {
+      ...baseState,
+      pausedReason: "manual_pause",
+      status: "paused"
+    }
+  });
+  if (pausedBlocked.allowed || pausedBlocked.reason !== "manual_pause") {
+    throw new Error(`paused bots should be blocked from opening trades: ${JSON.stringify(pausedBlocked)}`);
+  }
 }
 
 module.exports = {

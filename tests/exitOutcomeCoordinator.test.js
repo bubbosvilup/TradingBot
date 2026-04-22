@@ -87,6 +87,101 @@ async function runExitOutcomeCoordinatorTests() {
   if (closedOutcome.compactRiskMetadata.botStatus !== "paused" || closedOutcome.compactRiskMetadata.pausedReason !== "max_drawdown_reached" || closedOutcome.compactRiskMetadata.manualResumeRequired !== true) {
     throw new Error(`max drawdown pause should be explicit in compact risk metadata: ${JSON.stringify(closedOutcome.compactRiskMetadata)}`);
   }
+
+  const manuallyPausedOutcome = coordinator.buildClosedTradeOutcome({
+    classification: {
+      closeClassification: "confirmed_exit",
+      failedRsiExit: false,
+      rsiExit: false
+    },
+    closedTrade: {
+      closedAt: 6000,
+      entryPrice: 100,
+      exitPrice: 100.2,
+      exitReason: ["exit_signal"],
+      fees: 0.1,
+      netPnl: 0.1,
+      pnl: 0.2,
+      quantity: 0.5
+    },
+    exitTelemetry: {
+      exitEvent: "exit_signal",
+      lifecycleEvent: null,
+      policyId: "GENERIC"
+    },
+    feeRate: 0.001,
+    lifecycleStatus: "paused",
+    nextPerformance: {
+      avgTradePnlUsdt: 0,
+      drawdown: 1.2,
+      pnl: 0.1,
+      profitFactor: 1.1,
+      tradesCount: 2,
+      winRate: 50
+    },
+    positionWasManagedRecovery: false,
+    riskProfile: "medium",
+    signalState: {
+      availableBalanceUsdt: 900,
+      pausedReason: "manual_pause",
+      realizedPnl: 0,
+      status: "paused"
+    },
+    strategyId: "emaCross",
+    tickPrice: 100.2
+  });
+  if (manuallyPausedOutcome.statePatch.status !== "paused" || manuallyPausedOutcome.statePatch.pausedReason !== "manual_pause") {
+    throw new Error(`non-drawdown paused closes should preserve a coherent paused state: ${JSON.stringify(manuallyPausedOutcome.statePatch)}`);
+  }
+  if (manuallyPausedOutcome.compactRiskMetadata.botStatus !== "paused" || manuallyPausedOutcome.compactRiskMetadata.pausedReason !== "manual_pause") {
+    throw new Error(`compact risk metadata should preserve non-drawdown paused semantics after close: ${JSON.stringify(manuallyPausedOutcome.compactRiskMetadata)}`);
+  }
+
+  const normalizedPausedOutcome = coordinator.buildClosedTradeOutcome({
+    classification: {
+      closeClassification: "confirmed_exit",
+      failedRsiExit: false,
+      rsiExit: false
+    },
+    closedTrade: {
+      closedAt: 7000,
+      entryPrice: 100,
+      exitPrice: 100.1,
+      exitReason: ["exit_signal"],
+      fees: 0.1,
+      netPnl: 0.05,
+      pnl: 0.15,
+      quantity: 0.5
+    },
+    exitTelemetry: {
+      exitEvent: "exit_signal",
+      lifecycleEvent: null,
+      policyId: "GENERIC"
+    },
+    feeRate: 0.001,
+    lifecycleStatus: "paused",
+    nextPerformance: {
+      avgTradePnlUsdt: 0,
+      drawdown: 1,
+      pnl: 0.15,
+      profitFactor: 1.2,
+      tradesCount: 3,
+      winRate: 66.7
+    },
+    positionWasManagedRecovery: false,
+    riskProfile: "medium",
+    signalState: {
+      availableBalanceUsdt: 900,
+      pausedReason: null,
+      realizedPnl: 0,
+      status: "paused"
+    },
+    strategyId: "emaCross",
+    tickPrice: 100.1
+  });
+  if (normalizedPausedOutcome.statePatch.status === "paused" || normalizedPausedOutcome.statePatch.pausedReason !== null) {
+    throw new Error(`close outcomes must never persist paused+null states: ${JSON.stringify(normalizedPausedOutcome.statePatch)}`);
+  }
 }
 
 module.exports = {

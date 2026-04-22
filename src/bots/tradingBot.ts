@@ -654,6 +654,7 @@ class TradingBot extends BaseBot {
   resolveManagedRecoveryTarget(params: { context: any; position: PositionRecord }) {
     const policy = this.getExitPolicy();
     const recoveryTargetPolicy = resolveRecoveryTargetPolicy(policy);
+    const priceTargetExitEnabled = Boolean(policy?.recovery?.priceTargetExit);
     const resolvedTarget = resolveRecoveryTarget({
       context: params.context,
       position: params.position,
@@ -664,6 +665,8 @@ class TradingBot extends BaseBot {
     return {
       ...resolvedTarget,
       hit: Boolean(
+        priceTargetExitEnabled
+        &&
         Number.isFinite(Number(latestPrice))
         && Number.isFinite(Number(resolvedTarget.targetPrice))
         && isTargetHit(params.position.side, Number(latestPrice), Number(resolvedTarget.targetPrice))
@@ -1075,9 +1078,7 @@ class TradingBot extends BaseBot {
     const latchRefresh = this.postLossArchitectLatch.refresh();
     this.emitPostLossArchitectLatchTransition(latchRefresh.transition);
     state = latchRefresh.state || this.deps.store.getBotState(this.config.id);
-    // Max-drawdown pause is intentionally manual-only. Once this state is reached, ticks are ignored
-    // until an explicit external resume flips the bot back to running.
-    if (!state || (state.status === "paused" && state.pausedReason === "max_drawdown_reached")) {
+    if (!state) {
       return null;
     }
 
@@ -1586,6 +1587,19 @@ class TradingBot extends BaseBot {
     const preparedSnapshot = this.prepareTickSnapshot(tick);
     const botPrepareMs = elapsedMs(prepareTimer);
     if (!preparedSnapshot) {
+      if (typeof this.deps.store.recordTickLatencySample === "function") {
+        this.deps.store.recordTickLatencySample(this.config.symbol, {
+          botActionMs: 0,
+          botArchitectPhaseMs: 0,
+          botDecisionMs: 0,
+          botPrepareMs,
+          botTickMs: elapsedMs(tickTimer)
+        }, tick.timestamp);
+      }
+      return;
+    }
+
+    if (preparedSnapshot.state?.status === "stopped" || (preparedSnapshot.state?.status === "paused" && !preparedSnapshot.position)) {
       if (typeof this.deps.store.recordTickLatencySample === "function") {
         this.deps.store.recordTickLatencySample(this.config.symbol, {
           botActionMs: 0,
