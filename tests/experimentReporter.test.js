@@ -106,7 +106,7 @@ function runExperimentReporterTests() {
       throw new Error(`checkpoint report should be written to the configured report dir: ${latestPath}`);
     }
     const latestContent = fs.readFileSync(latestPath, "utf8");
-    if (!latestContent.includes("label=ctrlc_report") || !latestContent.includes("closedTradesCount=2")) {
+    if (!latestContent.includes("label=ctrlc_report") || !latestContent.includes("closedTradesCount=2") || !latestContent.includes("sideSummary=long_only")) {
       throw new Error(`checkpoint report content should include summary metrics: ${latestContent}`);
     }
     if (!latestContent.includes("managedRecoveryEntries=1") || !latestContent.includes("managedRecoveryClosedOutcomes=1") || !latestContent.includes("managedRecoveryOpenDeferredEvents=2") || !latestContent.includes("managedRecoveryUnpairedDeferredEvents=2") || !latestContent.includes("exitManagedRecoveryBreaker=1")) {
@@ -139,6 +139,85 @@ function runExperimentReporterTests() {
     });
     if (quarantinedReporter.isEnabled() !== false || quarantinedReporter.getLabel() !== "quarantined_allow_small_loss_floor05") {
       throw new Error("toxic allow_small_loss_floor05 experiment label should be quarantined out of active use");
+    }
+
+    store.closedTrades.set("bot_report", [
+      {
+        botId: "bot_report",
+        closedAt: 5_000,
+        entryPrice: 100,
+        entryReason: ["entry_signal"],
+        exitPrice: 99,
+        exitReason: ["reversion_price_target_hit"],
+        fees: 0.2,
+        id: "trade_report_short",
+        lifecycleEvent: "PRICE_TARGET_HIT",
+        lifecycleMode: "normal",
+        lifecycleState: "CLOSED",
+        netPnl: 0.8,
+        openedAt: 4_000,
+        pnl: 1,
+        quantity: 1,
+        reason: ["round_trip"],
+        side: "short",
+        strategyId: "rsiReversion",
+        symbol: "BTC/USDT"
+      }
+    ]);
+    reporter.writeCheckpoint();
+    const shortOnlyContent = fs.readFileSync(latestPath, "utf8");
+    if (!shortOnlyContent.includes("sideSummary=short_only")) {
+      throw new Error(`checkpoint report should mark short-only closed trades explicitly: ${shortOnlyContent}`);
+    }
+
+    store.closedTrades.set("bot_report", [
+      {
+        botId: "bot_report",
+        closedAt: 6_000,
+        entryPrice: 100,
+        entryReason: ["entry_signal"],
+        exitPrice: 101,
+        exitReason: ["take_profit_hit"],
+        fees: 0.2,
+        id: "trade_report_mixed_long",
+        lifecycleEvent: "PRICE_TARGET_HIT",
+        lifecycleMode: "normal",
+        lifecycleState: "CLOSED",
+        netPnl: 0.8,
+        openedAt: 5_000,
+        pnl: 1,
+        quantity: 1,
+        reason: ["round_trip"],
+        side: "long",
+        strategyId: "emaCross",
+        symbol: "BTC/USDT"
+      },
+      {
+        botId: "bot_report",
+        closedAt: 7_000,
+        entryPrice: 100,
+        entryReason: ["entry_signal"],
+        exitPrice: 99,
+        exitReason: ["reversion_price_target_hit"],
+        fees: 0.2,
+        id: "trade_report_mixed_short",
+        lifecycleEvent: "PRICE_TARGET_HIT",
+        lifecycleMode: "normal",
+        lifecycleState: "CLOSED",
+        netPnl: 0.8,
+        openedAt: 6_000,
+        pnl: 1,
+        quantity: 1,
+        reason: ["round_trip"],
+        side: "short",
+        strategyId: "rsiReversion",
+        symbol: "BTC/USDT"
+      }
+    ]);
+    reporter.writeCheckpoint();
+    const mixedContent = fs.readFileSync(latestPath, "utf8");
+    if (!mixedContent.includes("sideSummary=mixed")) {
+      throw new Error(`checkpoint report should mark mixed long/short aggregates explicitly: ${mixedContent}`);
     }
   } finally {
     console.error = originalConsoleError;

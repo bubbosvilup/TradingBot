@@ -19,9 +19,16 @@ Default operating assumptions:
 - Treat startup historical preload as bootstrap/store/history plumbing only: it seeds `StateStore` before observation, uses the same market source as `MarketStream`, and must not enter the hot tick path.
 - Keep `TradingBot` as orchestrator, not a dumping ground for extracted logic.
 - Do not reintroduce strategy-name branching into `src/bots/tradingBot.ts`.
+- Keep exit semantics policy-driven:
+  - use exit-policy capabilities instead of strategy-id coupling
+  - disabled exit semantics must not still fire through a fallback path
 - Do not move `architectCoordinator`, latch logic, telemetry shaping, or outcome shaping back into `TradingBot`.
 - Keep paper-trading safety intact. The current runtime already rejects live execution.
 - Keep Pulse UI work in `SystemServer` / `public/`; it is observability/control-surface presentation, not trading decision logic.
+- Keep paused state coherent and runtime-authoritative:
+  - paused bots must not reopen while paused
+  - open positions may still close while paused
+  - no persisted `paused` state without a non-empty `pausedReason`
 - Keep launcher preparation in startup/UI/config plumbing; `Normal` / `Debug` selection and debug-capture field selection must not leak into trading decisions.
 - Keep future debug `jsonl` capture deliberate:
   - append-only events for high-cardinality timelines

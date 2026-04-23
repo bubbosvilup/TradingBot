@@ -6,7 +6,38 @@
 
 const assert = require("node:assert/strict");
 
-const { BacktestEngine } = require("../src/engines/backtestEngine.ts");
+function loadBacktestEngineWithLegacyStrategyOverride(createStrategyOverride) {
+  const strategyPath = require.resolve("../legacy/strategy");
+  const backtestPath = require.resolve("../legacy/backtest");
+  const backtestEnginePath = require.resolve("../src/engines/backtestEngine.ts");
+  const originalStrategyModule = require(strategyPath);
+  const originalStrategyEntry = require.cache[strategyPath];
+
+  delete require.cache[backtestEnginePath];
+  delete require.cache[backtestPath];
+  delete require.cache[strategyPath];
+
+  require.cache[strategyPath] = {
+    ...originalStrategyEntry,
+    exports: {
+      ...originalStrategyModule,
+      createStrategy: createStrategyOverride
+    }
+  };
+
+  try {
+    return require(backtestEnginePath).BacktestEngine;
+  } finally {
+    delete require.cache[backtestEnginePath];
+    delete require.cache[backtestPath];
+    delete require.cache[strategyPath];
+    require.cache[strategyPath] = originalStrategyEntry;
+  }
+}
+
+function loadBacktestEngine() {
+  return require("../src/engines/backtestEngine.ts").BacktestEngine;
+}
 
 function makeCandle(timestamp, open, high, low, close, volume) {
   return [timestamp, open, high, low, close, volume];
@@ -163,6 +194,7 @@ async function runBacktestTests() {
     ...buildReplayEligibleHistories("TREND/USDT", 100, 0.25)
   };
 
+  const BacktestEngine = loadBacktestEngine();
   const engine = new BacktestEngine();
   const report = engine.compareStrategyModes({
     baseConfig: config,
@@ -219,6 +251,38 @@ async function runBacktestTests() {
   assert.equal(delegatedCalls[0].type, "compare");
   assert.equal(delegatedCalls[1].type, "job");
   assert.equal(delegatedCalls[2].type, "print");
+
+  const GuardrailBacktestEngine = loadBacktestEngineWithLegacyStrategyOverride((context) => ({
+    DECISION_STATES: {
+      BUY_READY: "buy_ready",
+      INCOMPLETE_SETUP: "incomplete_setup",
+      WAIT_VOLUME: "wait_volume"
+    },
+    buildMarketSnapshot(symbol) {
+      return {
+        action: "SELL",
+        decisionState: "buy_ready",
+        signal: "SELL candidate",
+        symbol
+      };
+    },
+    EXIT_REASON_CODES: {
+      BACKTEST_END: "backtest_end"
+    },
+    getBtcRegime: () => "risk-on",
+    getNeutralEligibleSymbols: () => new Set(),
+    pickBestCandidateSymbol: () => null
+  }));
+  const guardrailEngine = new GuardrailBacktestEngine();
+  assert.throws(
+    () => guardrailEngine.compareStrategyModes({
+      baseConfig: config,
+      symbolHistories: {
+        ...buildReplayEligibleHistories("SHORT/USDT", 50, -0.1)
+      }
+    }),
+    /Legacy replay\/backtest does not support short-entry semantics\. A flat-market SELL signal would be ignored or misinterpreted, so results would be misleading\./
+  );
 }
 
 module.exports = {

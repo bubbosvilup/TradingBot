@@ -311,6 +311,12 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - execution resta solo `paper`
   - backtest moderno e analytics/reporting vanno ancora verificati end-to-end sul lato short
 
+Backtest / replay status
+- The active paper runtime is side-aware and supports short positions.
+- The current backtest/replay path still runs through legacy replay modules via `BacktestEngine`.
+- That replay path is not short-parity with runtime. Flat-market short-entry semantics are hard-failed to avoid misleading reports.
+- Do not treat current backtest results as validation for short-capable strategies until replay parity is implemented.
+
 ### Pulse UI consolidata
 
 - La UI operativa attiva e ora una sola:
@@ -342,6 +348,59 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - quali record sono eventi append-only
   - quali campi sono snapshot dell'ultimo stato noto
   - quali metriche vanno aggiornate come singolo numero o contatore aggregato invece di generare una nuova riga a ogni tick
+
+## Aggiornamenti del 2026-04-22
+
+### Hardening finale pre-launcher
+
+- Chiuso il primo wave di audit runtime senza redesign architetturale.
+- `StateStore` ora valida esplicitamente la modalita del portfolio kill switch contro una singola source of truth condivisa e rifiuta valori non supportati invece di normalizzarli in silenzio.
+- `registerBot(...)` non ripristina piu uno stato `stopped` stale su bot ri-registrati abilitati.
+- `registerBot(...)` preserva invece stati `paused` gia validi quando esiste un `pausedReason` esplicito.
+- `paused` non deve piu esistere senza `pausedReason`:
+  - la chiusura di una posizione mentre il bot e in pausa preserva il reason esistente
+  - se manca un reason valido, il close path normalizza fuori da `paused`
+
+### Exit policy capability flags
+
+- Le semantiche di uscita di `rsiReversion` non sono piu abilitate per nome strategia.
+- Le capability attive sono ora policy-driven tramite:
+  - `exitPolicy.qualification.rsiThresholdExit`
+  - `exitPolicy.recovery.priceTargetExit`
+- Se una capability e `false`:
+  - quel trigger non deve causare una chiusura
+  - il coordinator non ricade piu su una generic exit confermata
+  - i reason string disabilitati non devono riapparire downstream come classificazione `qualification` o `recovery`
+- Il target di managed recovery rispetta anch'esso `recovery.priceTargetExit`.
+
+### Pause semantics operative
+
+- `paused` e ora autorevole a runtime:
+  - bot in pausa e flat: nessuna strategia/entry attempt
+  - bot in pausa con posizione aperta: le uscite restano consentite
+  - `RiskManager.canOpenTrade(...)` blocca sempre nuove aperture quando `status === "paused"`
+- Il resume manuale via `POST /api/bots/:botId/resume` resta volutamente stretto:
+  - funziona solo per `pausedReason=max_drawdown_reached`
+  - non e stato allargato ai pause reason generici
+
+### Note implementative fissate a documentazione
+
+- L'RSI corrente in `IndicatorEngine` resta intenzionalmente una simple-window RSI, non Wilder-smoothed RSI.
+- Le soglie della strategia sono calibrate su questa implementazione attuale; non cambiare l'algoritmo senza ritaratura esplicita.
+- L'accounting short del runtime paper resta una semplificazione full-notional:
+  - apertura short: riserva bilancio come un long
+  - chiusura short: rilascia il notional di entry come un long
+  - metriche balance/equity non vanno interpretate come margin accounting realistico
+
+### Verifica
+
+- Aggiornati test mirati per:
+  - capability flags exit authoritative
+  - managed recovery target gating
+  - paused bot flat vs paused bot con posizione
+  - preservazione di `pausedReason` dopo close
+  - validazione esplicita del kill switch mode
+- `npm test` passa sul repository corrente dopo il fix finale del paused-state dead end.
 
 ## Config runtime attiva
 
@@ -451,6 +510,10 @@ Nota historical preload:
 - Max drawdown pause per bot:
   - lascia il bot in `paused`
   - richiede resume manuale esplicito via `POST /api/bots/:botId/resume`
+- Pause non-drawdown:
+  - bloccano nuove entry come stato runtime autorevole
+  - possono convivere con una posizione aperta per permettere il close
+  - devono sempre mantenere un `pausedReason` esplicito
 - Portfolio kill switch:
   - blocca nuovi ingressi a livello di sistema
   - non forza ancora flatten globale
@@ -479,6 +542,11 @@ Endpoint principali:
 - `POST /api/bots/:botId/resume`
 
 `POST /api/bots/:botId/resume` e intenzionalmente stretto: funziona solo per bot in pausa con `pausedReason=max_drawdown_reached`, non riprende bot che non richiedono resume manuale e non bypassa un portfolio kill switch attivo.
+
+Semantica pause rilevante:
+- `pausedReason=max_drawdown_reached` indica una pausa con resume manuale esplicito esposta anche in Pulse.
+- altri `pausedReason` possono esistere come pause operative/runtime, ma non vengono ripresi tramite l'endpoint di manual resume.
+- lo stato runtime non deve mai persistere `status=paused` con `pausedReason` nullo o vuoto.
 
 Campi diagnostici rilevanti ora esposti:
 - stato portfolio kill switch
@@ -566,6 +634,7 @@ npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false
 - Short support presente nel runtime paper ma non ancora dichiarato completamente chiuso su replay, reporting e audit end-to-end.
 - Nessun launcher dedicato per scegliere la modalita di avvio o il profilo di cattura debug.
 - Nessun contratto definitivo per l'output `jsonl` delle run debug.
+- Exit capability flags e pause semantics sono ora allineate al runtime reale e sufficientemente stabili da poter essere usate come base del lavoro launcher/debug, senza riaprire prima questo audit safety.
 
 ## Struttura repository
 

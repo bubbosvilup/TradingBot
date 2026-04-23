@@ -16,6 +16,7 @@ Important repo facts:
 - `src/core/orchestrator.ts` currently enforces `market-mode=live`.
 - `src/core/orchestrator.ts` currently rejects `execution-mode=live`; execution remains paper-only.
 - `src/core/stateStore.ts` now evicts stale symbol-scoped state conservatively while preserving registered symbols and open-position symbols.
+- `src/core/stateStore.ts` now validates portfolio kill-switch mode against the shared config-loader source of truth, rejects unsupported modes explicitly, sanitizes stale restored `stopped` state on enabled bot re-registration, and preserves valid paused states only when they already have a real `pausedReason`.
 - `src/streams/marketStream.ts` now narrows REST fallback fetches to stale symbols and uses batch ticker fetches when possible.
 - `src/core/historicalBootstrapService.ts` owns startup-only historical preload. It uses the same `MarketStream`/ccxt Binance REST source, seeds `StateStore` through existing price/kline update paths, and runs before market stream/context/Architect/bots start.
 - `src/streams/marketStream.ts` guards shutdown so WS close during teardown cannot start REST fallback, and in-flight fallback snapshots are invalidated after stop; this keeps test teardown clean without muting production logs.
@@ -28,7 +29,22 @@ Important repo facts:
 - `reports/experiments/` still contains historical outputs for the quarantined label.
 - `src/core/architectService.ts` switch-delta publishing now compares challenger score against the true published incumbent score, not the candidate assessment's incumbent-regime score.
 - `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`, but the close path now takes a defensive position snapshot for planning/lifecycle/telemetry shaping and emits explicit `position_close_rejected` risk telemetry when `closePosition(...)` returns null.
+- `src/roles/exitPolicyRegistry.ts` now carries explicit runtime exit capabilities for RSI reversion policies:
+  - `qualification.rsiThresholdExit`
+  - `recovery.priceTargetExit`
+- `src/roles/exitDecisionCoordinator.ts` is now the authoritative exit capability gate:
+  - disabled RSI-threshold and price-target triggers are hard-blocked instead of falling through to generic exits
+  - managed recovery price-target behavior respects `recovery.priceTargetExit`
+  - disabled raw reason strings are sanitized before downstream lifecycle/telemetry code sees the final exit plan
+- `src/bots/tradingBot.ts` now treats paused state as runtime-authoritative for new entry work:
+  - paused + flat bot returns before strategy/entry evaluation
+  - paused + open position still reaches exit handling
+- `src/roles/exitOutcomeCoordinator.ts` now preserves coherent pause state on close:
+  - a bot closing while paused keeps its non-empty `pausedReason`
+  - runtime state must not persist `status === "paused"` with a null/empty reason
 - `src/engines/executionEngine.ts`, `src/roles/openAttemptCoordinator.ts`, `src/core/systemServer.ts`, and active strategies are now side-aware for first-class short handling in paper runtime and operator telemetry.
+- `src/engines/indicatorEngine.ts` still implements simple-window RSI, not Wilder-smoothed RSI; strategy thresholds are calibrated to that exact implementation.
+- `src/roles/openAttemptCoordinator.ts` and `src/roles/exitOutcomeCoordinator.ts` document short balance handling as a paper-only full-notional model, not realistic leveraged margin accounting.
 - `src/strategies/rsiReversion/config.json` now carries conservative short-horizon entry economics: `minExpectedNetEdgePct: 0.0015` and `maxTargetDistancePctForShortHorizon: 0.01`.
 - `src/strategies/rsiReversion/strategy.ts` declares explicit entry economics capabilities through `entryEconomicsPolicy`; shared economics code must use that policy surface instead of strategy-name branching.
 - MTF is enabled in `src/data/bots.config.json` and can be overridden with `MTF_ENABLED=false` / `MTF_ENABLED=true`; when absent or disabled, RSI entry behavior must remain baseline-identical.
@@ -53,7 +69,7 @@ Boundary map:
 - `mtfParamResolver`: pure MTF-driven RSI entry hint/cap resolution only; no sizing, cooldown, hold, or gate ownership
 - `entryEconomicsEstimator`: fee-aware edge estimate plus deterministic capture-gap, short-horizon target-distance diagnostics, and resolved cap computation from explicit strategy economics policy
 - `RiskManager`: drawdown gates, loss-streak policy, volatility-aware sizing penalties, and post-close cooldown timing
-- `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, `recoveryTargetResolver`: exit planning and shaping; managed-recovery invalidation grace and target-vs-invalidation precedence live here
+- `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, `recoveryTargetResolver`: exit planning and shaping; managed-recovery invalidation grace, target-vs-invalidation precedence, capability gating, and paused-close state coherence live here
 - `postLossArchitectLatch`: post-loss re-entry defense
 - `tradingBotTelemetry`: operator-facing metadata shaping, including full/Pulse-facing MTF publish and entry cap-resolution diagnostics
 - `StateStore`: single runtime state container

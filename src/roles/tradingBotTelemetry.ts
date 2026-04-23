@@ -274,6 +274,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     const entrySignalStreak = signalState?.entrySignalStreak ?? state.entrySignalStreak ?? 0;
     const mtfParamResolution = params.economics.mtfParamResolution || null;
     const publishedMtf = architect?.mtf || null;
+    const mtfEnabled = publishedMtf?.mtfEnabled === true;
 
     return {
       architectAuthoritative: Boolean(architect),
@@ -323,15 +324,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       maxTargetDistancePctForShortHorizon: Number.isFinite(Number(params.economics.maxTargetDistancePctForShortHorizon))
         ? Number(Number(params.economics.maxTargetDistancePctForShortHorizon).toFixed(4))
         : null,
-      mtfAdjustmentApplied: mtfParamResolution?.mtfAdjustmentApplied ?? null,
-      mtfDominantFrame: mtfParamResolution?.dominantTimeframe ?? null,
-      mtfParamFallbackReason: mtfParamResolution?.fallbackReason ?? null,
-      mtfParamResolutionReason: mtfParamResolution?.coherenceReason ?? null,
-      mtfResolvedTargetDistanceCapPct: Number.isFinite(Number(mtfParamResolution?.resolvedTargetDistanceCapPct))
-        ? Number(Number(mtfParamResolution?.resolvedTargetDistanceCapPct).toFixed(4))
-        : null,
-      mtfTargetDistanceProfile: mtfParamResolution?.targetDistanceProfile ?? null,
-      mtfDominantTimeframe: mtfParamResolution?.dominantTimeframe ?? null,
       minExpectedNetEdgePct: Number(params.economics.minExpectedNetEdgePct.toFixed(4)),
       minNotionalUsdt: Number(params.tradeConstraints.minNotionalUsdt.toFixed(4)),
       minQuantity: Number(params.tradeConstraints.minQuantity.toFixed(8)),
@@ -348,13 +340,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       publisherLastObservedAt: params.architectState.publisher?.lastObservedAt || null,
       publisherLastPublishedAt: params.architectState.publisher?.lastPublishedAt || null,
       publishedFamily: architect?.recommendedFamily || null,
-      publishedMtfAgreement: publishedMtf ? publishedMtf.mtfAgreement : null,
-      publishedMtfDominantFrame: publishedMtf ? publishedMtf.mtfDominantFrame : null,
-      publishedMtfDominantTimeframe: publishedMtf ? publishedMtf.mtfDominantTimeframe : null,
-      publishedMtfEnabled: publishedMtf ? publishedMtf.mtfEnabled : false,
-      publishedMtfInstability: publishedMtf ? publishedMtf.mtfInstability : null,
-      publishedMtfMetaRegime: publishedMtf ? publishedMtf.mtfMetaRegime : null,
-      publishedMtfSufficientFrames: publishedMtf ? publishedMtf.mtfSufficientFrames : false,
       publishedRegime: architect?.marketRegime || null,
       publishedUpdatedAt: architect?.updatedAt || null,
       quantity: Number.isFinite(Number(params.quantity)) ? Number(Number(params.quantity).toFixed(8)) : 0,
@@ -374,7 +359,27 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       targetFamily: params.architectState.actionableFamily || null,
       tickSymbol,
       tickSymbolMatch,
-      tickTimestamp: params.tick?.timestamp || null
+      tickTimestamp: params.tick?.timestamp || null,
+      ...(mtfEnabled
+        ? {
+            mtfAdjustmentApplied: Boolean(mtfParamResolution?.mtfAdjustmentApplied),
+            mtfDominantFrame: mtfParamResolution?.dominantTimeframe ?? null,
+            mtfDominantTimeframe: mtfParamResolution?.dominantTimeframe ?? null,
+            mtfParamFallbackReason: mtfParamResolution?.fallbackReason ?? null,
+            mtfParamResolutionReason: mtfParamResolution?.coherenceReason ?? null,
+            mtfResolvedTargetDistanceCapPct: Number.isFinite(Number(mtfParamResolution?.resolvedTargetDistanceCapPct))
+              ? Number(Number(mtfParamResolution?.resolvedTargetDistanceCapPct).toFixed(4))
+              : null,
+            mtfTargetDistanceProfile: mtfParamResolution?.targetDistanceProfile ?? null,
+            publishedMtfAgreement: publishedMtf.mtfAgreement,
+            publishedMtfDominantFrame: publishedMtf.mtfDominantFrame,
+            publishedMtfDominantTimeframe: publishedMtf.mtfDominantTimeframe,
+            publishedMtfEnabled: true,
+            publishedMtfInstability: publishedMtf.mtfInstability,
+            publishedMtfMetaRegime: publishedMtf.mtfMetaRegime,
+            publishedMtfSufficientFrames: publishedMtf.mtfSufficientFrames
+          }
+        : {})
     };
   }
 

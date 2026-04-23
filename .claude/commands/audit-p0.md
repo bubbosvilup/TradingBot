@@ -6,3 +6,5 @@ Focus first on:
 - `allow_small_loss_floor05` quarantine
 - managed recovery breaker safety
 - dashboard breakage without spilling into runtime logic
+- exit-policy capability gating for RSI-threshold / price-target semantics
+- paused-state coherence and explicit resume boundaries

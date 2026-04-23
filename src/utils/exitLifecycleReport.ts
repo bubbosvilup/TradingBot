@@ -150,7 +150,7 @@ function buildCloseSnapshots(params: {
   events: EventLike[];
 }) {
   const sellQueues = new Map<string, EventLike[]>();
-  for (const event of params.events.filter((entry) => entry.message === "SELL")) {
+  for (const event of params.events.filter((entry) => entry.message === "SELL" || entry.message === "COVER")) {
     const botId = String(event.metadata?.botId || "");
     const executionTimestamp = asNumber(event.metadata?.executionTimestamp);
     const key = `${botId}|${executionTimestamp ?? "unknown"}`;
@@ -235,7 +235,7 @@ function analyzeLatch(events: EventLike[]) {
   const activations = events.filter((entry) => entry.message === "post_loss_architect_latch_activated");
   const blocks = events.filter((entry) => entry.message === "entry_blocked" && entry.metadata?.reason === "post_loss_architect_latch");
   const releases = events.filter((entry) => entry.message === "post_loss_architect_latch_released");
-  const buys = events.filter((entry) => entry.message === "BUY");
+  const buys = events.filter((entry) => entry.message === "BUY" || entry.message === "SHORT");
 
   const laterEntries = [];
   for (const release of releases) {

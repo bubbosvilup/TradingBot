@@ -305,6 +305,58 @@ function runExitLifecycleReportTests() {
   if (!rendered.includes("Exit Lifecycle Report") || !rendered.includes("Managed recovery") || !rendered.includes("pairedClosed") || !rendered.includes("Post-loss latch")) {
     throw new Error(`rendered report should stay human-readable and compact: ${rendered}`);
   }
+
+  const shortReport = buildExitLifecycleReport({
+    closedTrades: [
+      createClosedTrade({
+        botId: "bot_short",
+        closedAt: 9_000,
+        exitReason: ["reversion_price_target_hit"],
+        id: "trade_short",
+        lifecycleEvent: "PRICE_TARGET_HIT",
+        netPnl: 0.6,
+        side: "short"
+      })
+    ],
+    events: [
+      createEvent("COVER", 9_000, {
+        botId: "bot_short",
+        closeClassification: "confirmed_exit",
+        executionTimestamp: 9_000,
+        exitEvent: "reversion_price_target_hit",
+        exitMechanism: "recovery",
+        lifecycleEvent: "PRICE_TARGET_HIT",
+        policyId: "RSI_REVERSION_PRO",
+        signalToExecutionMs: 160
+      })
+    ]
+  });
+  if (shortReport.summary.byCloseClassification.confirmed_exit.count !== 1
+    || shortReport.summary.byPolicyId.RSI_REVERSION_PRO.count !== 1
+    || shortReport.timing.avgSignalToExecutionMsByCloseReason.reversion_price_target_hit !== 160) {
+    throw new Error(`short COVER closes should retain structured log enrichment in exit lifecycle reporting: ${JSON.stringify(shortReport)}`);
+  }
+
+  const shortLatchReport = buildExitLifecycleReport({
+    closedTrades: [],
+    events: [
+      createEvent("post_loss_architect_latch_released", 10_000, {
+        botId: "bot_short_latch",
+        freshPublishCount: 3,
+        lastPublishedAt: 10_000
+      }),
+      createEvent("SHORT", 10_500, {
+        botId: "bot_short_latch",
+        decisionConfidence: 0.77,
+        expectedNetEdgePct: 0.0044
+      })
+    ]
+  });
+  if (shortLatchReport.latch.releasedWithLaterEntryCount !== 1
+    || shortLatchReport.latch.laterEntryAvgDecisionConfidence !== 0.77
+    || shortLatchReport.latch.laterEntryAvgExpectedNetEdgePct !== 0.0044) {
+    throw new Error(`post-loss latch analysis should count later SHORT entries as valid resumptions: ${JSON.stringify(shortLatchReport.latch)}`);
+  }
 }
 
 module.exports = {

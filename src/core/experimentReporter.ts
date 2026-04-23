@@ -102,6 +102,7 @@ function buildReportLine1(label: string, elapsedMs: number, m: Record<string, un
     `elapsedMs=${elapsedMs}`,
     `totalNetPnl=${m.totalNetPnl ?? "null"}`,
     `closedTradesCount=${m.closedTradesCount ?? 0}`,
+    `sideSummary=${m.sideSummary ?? "none"}`,
     `avgNetPnl=${m.avgNetPnl ?? "null"}`,
     `winRate=${m.winRate ?? "null"}`,
     `profitFactor=${m.profitFactor ?? "null"}`,
@@ -374,11 +375,18 @@ class ExperimentReporter implements ExperimentReporterInstance {
     let totalWins = 0;
     let managedRecoveryNetPnl = 0;
     let managedRecoveryPnlCount = 0;
+    let hasLongTrades = false;
+    let hasShortTrades = false;
 
     for (const trade of allClosedTrades) {
       const netPnl = Number(trade.netPnl || trade.pnl || 0);
       totalNetPnl += netPnl;
       if (netPnl > 0) totalWins += 1;
+      if (trade.side === "short") {
+        hasShortTrades = true;
+      } else {
+        hasLongTrades = true;
+      }
 
       const bucket = classifyExit(trade);
       switch (bucket) {
@@ -420,6 +428,13 @@ class ExperimentReporter implements ExperimentReporterInstance {
     const grossLoss = Math.abs(allClosedTrades.filter((t) => Number(t.netPnl || t.pnl || 0) < 0).reduce((s, t) => s + Number(t.netPnl || t.pnl || 0), 0));
     const profitFactor = grossLoss > 0 ? round(grossProfit / grossLoss) : null;
     const managedRecoveryAvgNetPnl = managedRecoveryPnlCount > 0 ? round(managedRecoveryNetPnl / managedRecoveryPnlCount) : null;
+    const sideSummary = totalTrades <= 0
+      ? "none"
+      : hasLongTrades && hasShortTrades
+        ? "mixed"
+        : hasShortTrades
+          ? "short_only"
+          : "long_only";
 
     // Entry counters from bot state
     const botStates = store.botStates instanceof Map ? Array.from(store.botStates.values()) : [];
@@ -461,6 +476,7 @@ class ExperimentReporter implements ExperimentReporterInstance {
     return {
       totalNetPnl: round(totalNetPnl, 2),
       closedTradesCount: totalTrades,
+      sideSummary,
       totalAccountedExits,
       reconciliationError,
       avgNetPnl,

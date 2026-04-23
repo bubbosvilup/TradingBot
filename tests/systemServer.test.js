@@ -441,6 +441,98 @@ async function runSystemServerTests() {
     throw new Error("observed-only payload did not preserve non-authoritative observed state");
   }
 
+  const shortStore = new StateStore();
+  shortStore.registerBot({
+    allowedStrategies: ["emaCross", "rsiReversion"],
+    id: "bot_short",
+    symbol: "ETH/USDT",
+    strategy: "rsiReversion",
+    enabled: true,
+    riskProfile: "medium"
+  });
+  shortStore.updatePrice({
+    price: 2480,
+    receivedAt: now,
+    source: "mock",
+    symbol: "ETH/USDT",
+    timestamp: now
+  });
+  shortStore.updateKline({
+    close: 2480,
+    closedAt: now,
+    high: 2490,
+    interval: "1m",
+    isClosed: true,
+    low: 2470,
+    open: 2485,
+    openedAt: now - 60000,
+    receivedAt: now,
+    source: "ws",
+    symbol: "ETH/USDT",
+    timestamp: now,
+    volume: 7.2
+  });
+  shortStore.setPosition("bot_short", {
+    botId: "bot_short",
+    confidence: 0.82,
+    entryPrice: 2500,
+    id: "position-short-open",
+    notes: ["overbought_mean_reversion"],
+    openedAt: now - 45_000,
+    quantity: 0.5,
+    side: "short",
+    strategyId: "rsiReversion",
+    symbol: "ETH/USDT"
+  });
+  shortStore.appendClosedTrade("bot_short", {
+    botId: "bot_short",
+    closedAt: now - 5_000,
+    entryPrice: 2520,
+    entryReason: ["overbought_mean_reversion"],
+    exitPrice: 2490,
+    exitReason: ["reversion_price_target_hit"],
+    fees: 0.3,
+    id: "trade-short-1",
+    netPnl: 14.7,
+    openedAt: now - 95_000,
+    pnl: 15,
+    quantity: 0.5,
+    reason: ["reversion_price_target_hit"],
+    side: "short",
+    strategyId: "rsiReversion",
+    symbol: "ETH/USDT"
+  });
+  const shortServer = new SystemServer({
+    executionMode: "paper",
+    feeRate: 0.001,
+    feedMode: "live",
+    logger: { info() {} },
+    port: 3110,
+    startedAt: now - 1000,
+    store: shortStore
+  });
+  const shortTrades = shortServer.buildTradesPayload();
+  if (!Array.isArray(shortTrades) || shortTrades.length !== 1 || shortTrades[0].side !== "short" || shortTrades[0].exitReason[0] !== "reversion_price_target_hit") {
+    throw new Error(`trades payload should surface short closed trades explicitly: ${JSON.stringify(shortTrades)}`);
+  }
+  const shortChart = shortServer.buildChartPayload("ETH/USDT");
+  const shortEntryMarker = shortChart.markers.find((marker) => String(marker.text || "").startsWith("SHORT "));
+  const shortExitMarker = shortChart.markers.find((marker) => String(marker.text || "").startsWith("COVER "));
+  if (!shortEntryMarker || !shortExitMarker) {
+    throw new Error(`chart payload should label short entry/exit markers as SHORT/COVER: ${JSON.stringify(shortChart.markers)}`);
+  }
+  if (shortEntryMarker.shape !== "arrowDown" || shortExitMarker.shape !== "arrowUp") {
+    throw new Error(`short chart markers should preserve directional arrow semantics: ${JSON.stringify(shortChart.markers)}`);
+  }
+  const shortPositions = shortServer.buildPositionsPayload();
+  const shortPulse = shortServer.buildPulsePayload({ botId: "bot_short" });
+  if (!Array.isArray(shortPositions) || shortPositions.length !== 1 || shortPositions[0].side !== "short") {
+    throw new Error(`positions payload should surface open shorts with normalized side: ${JSON.stringify(shortPositions)}`);
+  }
+  if (shortPulse.botCards[0].position.state !== "short" || !String(shortPulse.botCards[0].position.label).startsWith("SHORT ")) {
+    throw new Error(`pulse payload should render open short positions explicitly: ${JSON.stringify(shortPulse.botCards[0].position)}`);
+  }
+
   const syntheticStore = new StateStore();
   syntheticStore.registerBot({
     allowedStrategies: ["emaCross", "rsiReversion"],

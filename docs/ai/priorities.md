@@ -24,6 +24,9 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: add conservative volatility-aware sizing and win-specific reentry cooldown controls in `RiskManager`.
 - Completed: harden the exit tick path with defensive position snapshots and explicit close-failure telemetry.
 - Completed: fix Architect switch-delta incumbent score comparison basis.
+- Completed: make exit-policy capability flags authoritative for RSI-threshold and price-target exits, including managed recovery target gating.
+- Completed: make paused state runtime-authoritative for new-entry suppression while still allowing close handling on open positions.
+- Completed: eliminate the paused-state dead end by forbidding persisted `paused` state without a non-empty `pausedReason`.
 - Continue: reduce architect/latch/publish cadence rigidity where evidence shows churn remains.
 
 ## P2
@@ -32,7 +35,7 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: reduce REST fallback cost with stale-symbol narrowing and batch ticker fetches.
 - Completed: harden market stream teardown so shutdown does not leave REST fallback snapshots logging after tests finish.
 - In progress: integrate backtest with the modern runtime through `src/engines/backtestEngine.ts`; full replay parity is still not done.
-- In progress: realign repo documentation with the current Pulse UI, short-side runtime support, and post-trimming architecture shape.
+- Completed: realign repo documentation with the current Pulse UI, short-side runtime support, authoritative exit capabilities, and coherent paused-state behavior.
 - Next: clean up the current logging noise without regressing structured telemetry, risk signals, or test visibility.
 - Next: define a launcher-ready runtime surface with explicit startup modes `Normal` and `Debug`.
 - Next: prepare a debug-run capture contract for `jsonl`, including which fields are append-only event records versus rolling numeric counters/snapshots.

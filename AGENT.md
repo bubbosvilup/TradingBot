@@ -18,6 +18,14 @@ Prefer extracting focused roles over growing the bot further.
 
 Preserve behavior unless the task explicitly asks for semantic changes.
 
+Current safety-sensitive invariants to preserve:
+
+- do not reintroduce strategy-name coupling for exit semantics; use exit policy capabilities instead
+- if an exit capability is disabled, it must not still close positions through a fallback path or downstream raw-reason reclassification
+- `status === "paused"` must remain runtime-authoritative for new entries
+- runtime state must never persist `status === "paused"` with a null/empty `pausedReason`
+- manual resume through the server remains intentionally limited to `pausedReason === "max_drawdown_reached"`
+
 ## Current role boundaries
 - `Context*` services: produce market/context inputs
 - `HistoricalBootstrapService`: startup-only history preload into `StateStore`
@@ -33,6 +41,7 @@ Preserve behavior unless the task explicitly asks for semantic changes.
 - `entryCoordinator`: entry gating / signal-state coordination
 - `openAttemptCoordinator`: open attempt / execution rejection flow
 - `entryOutcomeCoordinator`: final entry outcome shaping
+- `exitDecisionCoordinator`: exit trigger authority, capability gating, and downstream-safe exit reason shaping
 - `exitOutcomeCoordinator`: final close outcome shaping
 
 ## Keep out of TradingBot
@@ -54,6 +63,8 @@ Avoid putting these back into `TradingBot`:
 - Keep historical preload startup-only and store-centered; do not add per-tick history fetches
 - Keep strategy economics policy explicit in strategy/economics surfaces; do not reintroduce strategy-id or symbol-name branching in shared economics code
 - Keep volatility sizing conservative: it may reduce or preserve size only, never increase it
+- Keep exit semantics policy-driven: do not reintroduce strategy-id branching or disabled-trigger fallbacks
+- Keep paused-state semantics coherent: paused bots may still close existing positions, but must not reopen while paused
 - Keep operator-facing log names/fields stable unless explicitly asked to change them
 - Keep Pulse as the single operator UI surface; do not reintroduce a second dashboard architecture
 - Keep launcher mode selection and debug-capture configuration in startup/UI/config plumbing, not in trading decision paths

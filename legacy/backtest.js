@@ -233,6 +233,8 @@ function buildSymbolBreakdown(trades) {
     });
 }
 
+const UNSUPPORTED_SHORT_REPLAY_MESSAGE = "Legacy replay/backtest does not support short-entry semantics. A flat-market SELL signal would be ignored or misinterpreted, so results would be misleading.";
+
 function scoreMode(stats, portfolioValue, initialBalance) {
   const pnlPct = initialBalance > 0 ? ((portfolioValue - initialBalance) / initialBalance) * 100 : 0;
   return (
@@ -282,6 +284,10 @@ function replayStrategyMode(options) {
       context.state.candleData[symbol] = candleSet;
       const snapshot = context.strategy.buildMarketSnapshot(symbol, candleSet);
       markets[symbol] = snapshot;
+      const hasOpenPosition = context.state.positions.some((position) => position.symbol === symbol);
+      if (!hasOpenPosition && (snapshot?.action === "SELL" || snapshot?.signal === "SELL candidate")) {
+        throw new Error(UNSUPPORTED_SHORT_REPLAY_MESSAGE);
+      }
       processedSnapshots += 1;
       if (snapshot.decisionState === context.strategy.DECISION_STATES.BUY_READY) buyReadyCount += 1;
       if (snapshot.decisionState === context.strategy.DECISION_STATES.WAIT_VOLUME) waitCount += 1;
@@ -456,5 +462,6 @@ function compareStrategyModes(options) {
 module.exports = {
   compareStrategyModes,
   replayStrategyMode,
-  SUPPORTED_STRATEGY_MODES
+  SUPPORTED_STRATEGY_MODES,
+  UNSUPPORTED_SHORT_REPLAY_MESSAGE
 };

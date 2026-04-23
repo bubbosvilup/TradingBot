@@ -13,9 +13,14 @@ Current runtime posture:
 - historical preload is optional by default in config; required mode must abort startup on preload failure before market stream/context/Architect/bots start
 - `TradingBot` stays passive for MTF and may only pass published diagnostics through generic context/economics paths
 - `TradingBot` exit handling uses a defensive position snapshot for planning/lifecycle/telemetry, while execution still closes through `ExecutionEngine` and `StateStore`
+- exit semantics for RSI-threshold and recovery price-target behavior are now explicitly capability-driven through exit policy; disabled semantics must not still close via fallback paths
 - shared entry economics uses explicit strategy policy for RSI economics, MTF cap opt-in, and capture-gap cap configuration; the baseline capture-gap cap remains `0.03`
 - `RiskManager` owns volatility-aware sizing and post-win cooldown controls; volatility sizing cannot increase size and loss cooldown behavior must remain unchanged
 - manual resume for bot-level max-drawdown pauses is explicit through `POST /api/bots/:botId/resume` and must not bypass an active portfolio kill switch
+- paused state is runtime-authoritative for new entries regardless of pause reason, but open positions may still close while paused
+- runtime state must never persist `status === "paused"` with a null/empty `pausedReason`
+- `IndicatorEngine` RSI is still simple-window, not Wilder-smoothed; thresholds are calibrated to the current implementation
+- short balance/equity accounting remains a paper-only full-notional simplification, not realistic margin accounting
 
 Safe-change rules:
 
@@ -28,10 +33,12 @@ Safe-change rules:
 - preserve protective-stop priority when changing invalidation or recovery ordering
 - preserve entry blocking during Architect challenger hysteresis
 - preserve baseline-identical RSI entry behavior when MTF diagnostics are absent or disabled
+- preserve policy-authoritative exit behavior when exit capabilities are disabled
 - keep MTF raw timeframe mapping in frame config / aggregation plumbing, not in `TradingBot` or downstream strategy logic
 - preserve baseline capture-gap cap behavior when `captureGapCapPct` is absent or invalid
 - preserve baseline sizing when volatility sizing is disabled or `volatilityRisk` is missing/invalid
 - preserve stronger post-loss cooldown semantics when adding post-win cooldown nuance
+- do not widen manual-resume API behavior unless explicitly requested; fix paused-state coherence at the state write site first
 
 P0-specific guidance:
 

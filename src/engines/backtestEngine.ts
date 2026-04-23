@@ -46,7 +46,7 @@ class BacktestEngine {
     }
     return {
       capabilities: this.getCapabilities(),
-      message: "Backtest engine bridges modern callers to the preserved legacy backtest modules while replay migration is still in progress.",
+      message: "Backtest engine bridges modern callers to preserved legacy replay modules. Paper runtime supports shorts, but current replay/backtest is still legacy-backed, long-only, and not valid for short-capable strategy validation.",
       ok: true
     };
   }

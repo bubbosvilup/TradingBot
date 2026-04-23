@@ -170,6 +170,126 @@ function runTradingBotTelemetryTests() {
     || fullEntryDiagnostics.publishedMtfMetaRegime !== "range") {
     throw new Error(`full entry diagnostics should expose canonical and published MTF fields: ${JSON.stringify(fullEntryDiagnostics)}`);
   }
+
+  const mtfDisabledDiagnostics = telemetry.buildEntryDiagnostics({
+    architectState: {
+      actionableFamily: "mean_reversion",
+      architect: {
+        contextMaturity: 0.8,
+        marketRegime: "range",
+        mtf: {
+          mtfAgreement: null,
+          mtfDominantFrame: null,
+          mtfDominantTimeframe: null,
+          mtfEnabled: false,
+          mtfInstability: null,
+          mtfMetaRegime: null,
+          mtfReadyFrameCount: 0,
+          mtfSufficientFrames: false
+        },
+        recommendedFamily: "mean_reversion",
+        signalAgreement: 0.76,
+        symbol: "BTC/USDT",
+        updatedAt: 123000
+      },
+      architectAgeMs: 1000,
+      architectStale: false,
+      blockReason: null,
+      currentFamily: "mean_reversion",
+      entryMaturityThreshold: 0.25,
+      familyMatch: true,
+      publisher: {
+        lastObservedAt: 123000,
+        lastPublishedAt: 123000
+      },
+      ready: true,
+      staleThresholdMs: 90000,
+      usable: true
+    },
+    context: {
+      indicators: {
+        rsi: 30.12345
+      }
+    },
+    contextSnapshot: {
+      features: {
+        contextRsi: 31.23456,
+        dataQuality: 0.9,
+        maturity: 0.8,
+        rsiIntensity: 0.4
+      },
+      postSwitchCoveragePct: 0.7,
+      rollingMaturity: 0.8,
+      symbol: "BTC/USDT",
+      windowMode: "rolling_full"
+    },
+    decision: {
+      action: "buy",
+      confidence: 0.88,
+      reason: ["rsi_oversold"]
+    },
+    economics: {
+      ...mtfEconomics,
+      mtfParamResolution: {
+        ...mtfParamResolution,
+        fallbackReason: "mtf_disabled",
+        mtfAdjustmentApplied: false
+      }
+    },
+    entryMaturityThreshold: 0.25,
+    postLossArchitectLatch: {
+      activatedAt: null,
+      active: false,
+      blocking: false,
+      freshPublishCount: 0,
+      requiredPublishes: 1,
+      strategyId: null
+    },
+    profile: {
+      entryDebounceTicks: 1
+    },
+    quantity: 1,
+    riskGate: {
+      allowed: true,
+      reason: "allowed"
+    },
+    signalEvaluated: true,
+    signalState: {
+      entrySignalStreak: 1
+    },
+    state: {},
+    strategyId: "rsiReversion",
+    tick: {
+      price: 100,
+      symbol: "BTC/USDT",
+      timestamp: 124000
+    },
+    tradeConstraints: {
+      minNotionalUsdt: 10,
+      minQuantity: 0.0001
+    }
+  });
+  const omittedMtfKeys = [
+    "mtfAdjustmentApplied",
+    "mtfDominantFrame",
+    "mtfDominantTimeframe",
+    "mtfParamFallbackReason",
+    "mtfParamResolutionReason",
+    "mtfResolvedTargetDistanceCapPct",
+    "mtfTargetDistanceProfile",
+    "publishedMtfAgreement",
+    "publishedMtfDominantFrame",
+    "publishedMtfDominantTimeframe",
+    "publishedMtfEnabled",
+    "publishedMtfInstability",
+    "publishedMtfMetaRegime",
+    "publishedMtfSufficientFrames"
+  ];
+  for (const key of omittedMtfKeys) {
+    if (Object.prototype.hasOwnProperty.call(mtfDisabledDiagnostics, key)) {
+      throw new Error(`mtf-disabled entry diagnostics should omit ${key}: ${JSON.stringify(mtfDisabledDiagnostics)}`);
+    }
+  }
 }
 
 module.exports = {
