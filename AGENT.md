@@ -25,6 +25,22 @@ Current safety-sensitive invariants to preserve:
 - `status === "paused"` must remain runtime-authoritative for new entries
 - runtime state must never persist `status === "paused"` with a null/empty `pausedReason`
 - manual resume through the server remains intentionally limited to `pausedReason === "max_drawdown_reached"`
+- keep the current telemetry family split explicit:
+  - `event` = append-only causal facts
+  - `state` = rolling latest snapshot
+  - `counter` = aggregates
+  - `summary` = UI/derived surfaces
+- keep detailed event ownership stable:
+  - `entry_gate_allowed` / `entry_gate_blocked` are the canonical detailed entry records
+  - `trade_closed` is the canonical detailed exit record
+  - `BUY` / `SHORT` / `SELL` / `COVER` / `RISK_CHANGE` remain compact lifecycle transitions
+  - `managed_recovery_exited` and `failed_rsi_exit` are semantic annotations, not full close-payload duplicates
+- keep exit classification structured-first:
+  - prefer `exitPlan` / lifecycle metadata over reason-string inference
+  - allow reason-string fallback only where the current structured RSI model is still ambiguous
+- keep the two MTF instability thresholds distinct:
+  - `mtf.instabilityThreshold` default `0.5` = architect usability/blocking
+  - `mtfParamResolver` `0.25` = stricter parameter-widening coherence gate
 
 ## Current role boundaries
 - `Context*` services: produce market/context inputs
@@ -69,6 +85,8 @@ Avoid putting these back into `TradingBot`:
 - Keep Pulse as the single operator UI surface; do not reintroduce a second dashboard architecture
 - Keep launcher mode selection and debug-capture configuration in startup/UI/config plumbing, not in trading decision paths
 - When preparing debug `jsonl` capture, distinguish append-only event records from rolling numeric snapshots/counters; do not dump every tick-sized detail by default
+- Keep architect append-only events causal-only; broad context feature dumps belong to state/snapshot surfaces instead
+- Keep `resolvedMtf*` distinct from `publishedMtf*`; local/resolved entry inputs must not be documented or treated as architect-published state
 - Add tests for extracted roles when behavior is non-trivial
 - Run:
   - `npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false`

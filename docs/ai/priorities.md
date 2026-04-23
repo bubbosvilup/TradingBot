@@ -27,7 +27,8 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: make exit-policy capability flags authoritative for RSI-threshold and price-target exits, including managed recovery target gating.
 - Completed: make paused state runtime-authoritative for new-entry suppression while still allowing close handling on open positions.
 - Completed: eliminate the paused-state dead end by forbidding persisted `paused` state without a non-empty `pausedReason`.
-- Continue: reduce architect/latch/publish cadence rigidity where evidence shows churn remains.
+- Completed: make `classifyClosedTrade` structured-first via exit lifecycle metadata, with reason-string fallback only for the bounded ambiguous RSI subcase.
+- Completed: expose architect usability MTF instability gating through `mtf.instabilityThreshold` while preserving the default `0.5`.
 
 ## P2
 
@@ -37,7 +38,7 @@ Work top-down unless a task explicitly says otherwise.
 - In progress: integrate backtest with the modern runtime through `src/engines/backtestEngine.ts`; full replay parity is still not done.
 - Completed: realign repo documentation with the current Pulse UI, short-side runtime support, authoritative exit capabilities, and coherent paused-state behavior.
 - Completed: close the current short-facing runtime/report audit loop with legacy replay guardrails, short-aware report matching, `ExperimentReporter` sideSummary, and `SystemServer` short-report regression coverage.
-- Next: clean up the current logging noise without regressing structured telemetry, risk signals, or test visibility.
+- Completed: logging cleanup P2 across entry, Architect, and exit telemetry ownership; `trade_closed` is now the canonical detailed exit event and compact lifecycle events stay compact.
 - Next: define a launcher-ready runtime surface with explicit startup modes `Normal` and `Debug`.
 - Next: prepare a debug-run capture contract for `jsonl`, including which fields are append-only event records versus rolling numeric counters/snapshots.
 
@@ -68,3 +69,11 @@ Priority notes:
 - Debug capture design should separate:
   - high-cardinality append-only events for `jsonl`
   - rolling numeric state that should be updated as a single latest value instead of duplicated on every tick
+- Logging ownership already fixed for v18:
+  - entry gate events are the detailed entry record
+  - architect events carry causal publish/decision facts only
+  - `trade_closed` is the detailed exit record
+  - `BUY` / `SHORT` / `SELL` / `COVER` / `RISK_CHANGE` remain compact lifecycle transitions
+- MTF thresholds intentionally remain split:
+  - `mtf.instabilityThreshold` default `0.5` = architect usability/blocking threshold
+  - `mtfParamResolver` `0.25` = stricter parameter-widening coherence threshold

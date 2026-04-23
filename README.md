@@ -22,6 +22,25 @@ Nota importante:
 - Il runtime attivo non deve inizializzare o percorrere accidentalmente il path live.
 - La presenza di codice live nel repository non implica live readiness.
 
+## Current status (v18)
+
+- Runtime paper/live-data stabile sullo stato corrente del repository.
+- Nessun P0 aperto.
+- Fix P1 pre-v19 completati:
+  - `classifyClosedTrade` usa prima metadata strutturati di exit (`exitPlan` / `lifecycleEvent`) e lascia il reason-string matching solo come fallback limitato nei casi RSI strutturalmente ambigui
+  - `mtf.instabilityThreshold` controlla ora il gate Architect lato usability con default invariato `0.5`
+- Audit 22-23 aprile completato:
+  - coerenza paused-state
+  - exit capability flags authoritative
+  - validazione esplicita del portfolio kill switch
+  - short support runtime paper end-to-end
+- Logging cleanup P2 completato:
+  - ownership entry chiarita
+  - payload Architect slim
+  - `trade_closed` come evento canonico di exit
+- Hot-path allocation issues gia verificati e bloccati da test; il codice production era gia allineato.
+- `npm test` passa sullo stato corrente.
+
 ## Flusso architetturale
 
 ```text
@@ -246,19 +265,21 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
   - `publishedMtfDominantTimeframe`
   - `publishedMtfSufficientFrames`
   - `publishedMtfMetaRegime`
-  - `mtfDominantFrame`
-  - `mtfAdjustmentApplied`
-  - `mtfResolvedTargetDistanceCapPct`
-  - `mtfParamFallbackReason`
-  - `mtfParamResolutionReason`
+  - `resolvedMtfDominantFrame`
+  - `resolvedMtfAdjustmentApplied`
+  - `resolvedMtfTargetDistanceCapPct`
+  - `resolvedMtfTargetDistanceProfile`
+  - `resolvedMtfFallbackReason`
+  - `resolvedMtfResolutionReason`
 - I metadata compatti `SETUP` / `BLOCK_CHANGE` includono ora:
   - `targetDistancePct`
   - `maxTargetDistancePctForShortHorizon`
-  - `mtfAdjustmentApplied`
-  - `mtfResolvedTargetDistanceCapPct`
-  - `mtfParamFallbackReason`
-  - `mtfParamResolutionReason`
-  - `mtfDominantFrame`
+  - `resolvedMtfAdjustmentApplied`
+  - `resolvedMtfTargetDistanceCapPct`
+  - `resolvedMtfTargetDistanceProfile`
+  - `resolvedMtfFallbackReason`
+  - `resolvedMtfResolutionReason`
+  - `resolvedMtfDominantFrame`
 - `/api/bots` preserva `architectPublished.mtf` come diagnostica server-facing.
 
 ### Historical startup preload
@@ -314,7 +335,8 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
 Backtest / replay status
 - The active paper runtime is side-aware and supports short positions.
 - The current backtest/replay path still runs through legacy replay modules via `BacktestEngine`.
-- That replay path is not short-parity with runtime. Flat-market short-entry semantics are hard-failed to avoid misleading reports.
+- Replay is not in parity with the active runtime.
+- Flat-market short-entry semantics are hard-failed to avoid misleading reports.
 - Do not treat current backtest results as validation for short-capable strategies until replay parity is implemented.
 
 ### Report / export clarity
@@ -468,6 +490,11 @@ Config rilevante per `rsiReversion`:
 
 Nota MTF:
 - la config default corrente abilita `mtf.enabled`
+- `mtf.instabilityThreshold` governa il blocco Architect/usability ed e `0.5` di default
+- il resolver `mtfParamResolver` usa invece una soglia distinta `0.25` per consentire widening conservativo dei parametri RSI
+- le due soglie non sono equivalenti:
+  - `0.5` = gate Architect su instabilita MTF alta
+  - `0.25` = gate piu stretto per la sola risoluzione dei parametri entry
 - `MTF_ENABLED=false` spegne MTF a runtime; `MTF_ENABLED=true` lo forza acceso anche se il JSON viene spento
 - quando MTF e assente o disabilitato, il comportamento RSI resta baseline-identico
 
@@ -573,7 +600,7 @@ Campi diagnostici rilevanti ora esposti:
 - diagnostica Architect published/observed/synthetic
 - diagnostica MTF published: `architectPublished.mtf`
 - diagnostica short-horizon edge: `targetDistancePct` e `maxTargetDistancePctForShortHorizon`
-- diagnostica MTF RSI entry: `mtfDominantFrame`, `mtfAdjustmentApplied`, `mtfResolvedTargetDistanceCapPct`, `mtfParamFallbackReason`, `mtfParamResolutionReason`
+- diagnostica MTF RSI entry: `resolvedMtfDominantFrame`, `resolvedMtfAdjustmentApplied`, `resolvedMtfTargetDistanceCapPct`, `resolvedMtfTargetDistanceProfile`, `resolvedMtfFallbackReason`, `resolvedMtfResolutionReason`
 - latency di pipeline
 
 Pulse e oggi l'unica UI operativa del repository: mostra stato di sistema, card bot, pannello focus, chart, eventi recenti, storico trade e resume manuale quando il backend lo consente. Resta una superficie di osservabilita e controllo stretto, non un piano di decisione trading.
@@ -604,10 +631,26 @@ Nota:
 - gli eventi di rischio critici per max drawdown non vengono piu persi in `verbose`
 - il runtime continua a emettere metadata strutturati per stato, blocchi e chiusure
 
-Direzione del prossimo cleanup:
-- separare meglio log operativi umani, telemetry strutturata e futura cattura debug `jsonl`
-- evitare duplicazione tick-by-tick quando basta un contatore o un ultimo valore osservato
-- tenere stabili i campi che dovranno essere selezionabili dal launcher in modalita `Debug`
+Modello corrente delle superfici:
+- `event`: fatti causali append-only come `entry_gate_allowed`, `entry_gate_blocked`, `trade_closed` ed eventi Architect publish/change/hold.
+- `state`: snapshot rolling di stato runtime come cooldown, latch, bot status e stato Architect corrente.
+- `counter`: aggregati come entry counts, blocked counts e contatori diagnostici.
+- `summary`: superfici derivate/UI come Pulse e payload dashboard.
+
+Ownership fissata dopo il cleanup P2:
+- Gli eventi `entry_gate_allowed` / `entry_gate_blocked` sono il record dettagliato canonico della decisione entry.
+- `BUY` / `SHORT` sono transizioni lifecycle compatte di open.
+- `trade_closed` e la singola source of truth dettagliata per la causalita di exit.
+- `SELL` / `COVER` / `RISK_CHANGE` restano transizioni lifecycle compatte.
+- `managed_recovery_exited` e `failed_rsi_exit` restano tag semantici/annotation events, non duplicati del payload completo di close.
+- Gli eventi Architect append-only mantengono i fatti causali di publish/hold/change e non riecheggiano piu l'intero context snapshot.
+- `classifyClosedTrade` e ora structured-first:
+  - usa prima `exitPlan` / `lifecycleEvent`
+  - usa il reason-string matching solo come fallback stretto quando il modello strutturato RSI non distingue da solo i sottocasi
+- `resolvedMtf*` indica input/decisione locale risolta nel tick path.
+- `publishedMtf*` indica stato MTF gia pubblicato dall'Architect.
+
+Lo schema debug/jsonl definitivo non e ancora formalizzato. Il lavoro residuo e solo fissare esplicitamente queste categorie in un contratto stabile, non riaprire il cleanup dei payload gia chiuso.
 
 ## Avvio
 
@@ -647,9 +690,10 @@ npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false
 - Nessun ordine reale su exchange.
 - Nessuna live readiness end-to-end.
 - Nessuna parita completa del backtest moderno con il runtime attivo.
-- Short support presente nel runtime paper ma non ancora dichiarato completamente chiuso su replay, reporting e audit end-to-end.
+- Replay/backtest resta legacy-backed e non valida strategie short-capable.
 - Nessun launcher dedicato per scegliere la modalita di avvio o il profilo di cattura debug.
-- Nessun contratto definitivo per l'output `jsonl` delle run debug.
+- Nessun contratto definitivo per l'output `jsonl` delle run debug; oggi esiste solo il groundwork di ownership/categorie logging.
+- Pulse/UI richiede ancora stabilizzazione operativa, ma resta l'unica superficie UI attiva.
 - Exit capability flags e pause semantics sono ora allineate al runtime reale e sufficientemente stabili da poter essere usate come base del lavoro launcher/debug, senza riaprire prima questo audit safety.
 
 ## Struttura repository
@@ -694,10 +738,16 @@ Hotspot da trattare con cautela:
 - `BacktestEngine` oggi e un ponte verso il legacy, non il runtime finale di replay.
 - Il path live futuro resta nel repository ma non deve essere riattivato accidentalmente dal runtime attivo.
 - Il prossimo lavoro utile resta:
-  - cleanup del logging
-  - definizione del contratto launcher `Normal` / `Debug`
-  - definizione dei campi run da catturare in `jsonl`
-  - classificazione dei parametri di output tra eventi, snapshot e contatori numerici
-  - backtest moderno piu integrato
-  - audit finale short support
-  - miglioramenti incrementali di performance e architettura
+  - launcher `Normal` / `Debug`
+  - formalizzazione minima del contratto `jsonl`
+  - backtest moderno con parity reale
+  - miglioramenti incrementali di UI, performance e architettura
+
+## Roadmap minima
+
+- v18 -> chiuso dopo documentazione finale e release-finalization
+- v19 -> launcher + UI stabilization minima
+- v20 -> backtesting moderno/parity
+- v21 -> UI/observability seria
+- v22 -> espansione strategie
+- v23+ -> refine + live testing graduale
