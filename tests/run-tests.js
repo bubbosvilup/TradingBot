@@ -24,6 +24,7 @@ const { runPerformanceMonitorTests } = require("./performanceMonitor.test");
 const { runOrchestratorTests } = require("./orchestrator.test");
 const { runPositionLifecycleManagerTests } = require("./positionLifecycleManager.test");
 const { runPostLossArchitectLatchTests } = require("./postLossArchitectLatch.test");
+const { runPulseUiTests } = require("./pulseUi.test");
 const { runRiskManagerTests } = require("./riskManager.test");
 const { runRecoveryTargetResolverTests } = require("./recoveryTargetResolver.test");
 const { runRegimeDetectorTests } = require("./regimeDetector.test");
@@ -74,6 +75,7 @@ async function main() {
     { name: "orchestrator", run: async () => runOrchestratorTests() },
     { name: "postLossArchitectLatch", run: async () => runPostLossArchitectLatchTests() },
     { name: "positionLifecycleManager", run: async () => runPositionLifecycleManagerTests() },
+    { name: "pulseUi", run: async () => runPulseUiTests() },
     { name: "riskManager", run: async () => runRiskManagerTests() },
     { name: "recoveryTargetResolver", run: async () => runRecoveryTargetResolverTests() },
     { name: "regimeDetector", run: async () => runRegimeDetectorTests() },

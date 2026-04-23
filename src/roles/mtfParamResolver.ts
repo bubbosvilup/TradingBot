@@ -5,6 +5,8 @@ import type { MtfHorizonFrameId, MtfPublishDiagnostics } from "../types/mtf.ts";
 const RSI_MIN_EXPECTED_NET_EDGE_FLOOR = 0.0015;
 const DEFAULT_BUY_RSI = 33;
 const DEFAULT_SELL_RSI = 58;
+// Resolver-level coherence gate for parameter widening. This is intentionally stricter
+// than the architect usability gate (`mtf.instabilityThreshold`, default 0.5).
 const DEFAULT_MAX_INSTABILITY = 0.25;
 const DEFAULT_MIN_AGREEMENT = 0.75;
 

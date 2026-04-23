@@ -464,23 +464,16 @@ class ArchitectService {
     publishedPayloadChanged: boolean;
     publisherMetadataOnly: boolean;
   }) {
-    const features = params.context?.features || {};
     const candidate = params.candidate;
     const published = params.published;
     const candidateMtf = candidate.mtf || null;
     const publishedMtf = published.mtf || null;
     return {
-      candidateAbsoluteConviction: this.roundMetric(candidate.absoluteConviction),
-      candidateContextMaturity: this.roundMetric(candidate.contextMaturity),
       candidateDecisionStrength: this.roundMetric(candidate.decisionStrength),
       candidateMarketRegime: candidate.marketRegime,
       candidateObservedAt: candidate.updatedAt,
-      candidateRangeScore: this.roundMetric(candidate.regimeScores?.range),
       candidateRecommendedFamily: candidate.recommendedFamily,
       candidateSignalAgreement: this.roundMetric(candidate.signalAgreement),
-      candidateSummary: candidate.summary,
-      candidateTrendScore: this.roundMetric(candidate.regimeScores?.trend),
-      candidateVolatileScore: this.roundMetric(candidate.regimeScores?.volatile),
       candidateMtfAgreement: candidateMtf ? candidateMtf.mtfAgreement : null,
       candidateMtfDominantFrame: candidateMtf ? candidateMtf.mtfDominantFrame : null,
       candidateMtfDominantTimeframe: candidateMtf ? candidateMtf.mtfDominantTimeframe : null,
@@ -489,36 +482,15 @@ class ArchitectService {
       candidateMtfMetaRegime: candidateMtf ? candidateMtf.mtfMetaRegime : null,
       candidateMtfReadyFrameCount: candidateMtf ? candidateMtf.mtfReadyFrameCount : 0,
       candidateMtfSufficientFrames: candidateMtf ? candidateMtf.mtfSufficientFrames : false,
-      contextBreakoutInstability: this.roundMetric(features.breakoutInstability),
-      contextBreakoutQuality: this.roundMetric(features.breakoutQuality),
-      contextChopiness: this.roundMetric(features.chopiness),
-      contextDataQuality: this.roundMetric(features.dataQuality),
-      contextDirectionalEfficiency: this.roundMetric(features.directionalEfficiency),
-      contextEffectiveWindowSpanMs: Number(params.context?.effectiveWindowSpanMs || 0),
-      contextFeatureConflict: this.roundMetric(features.featureConflict),
-      contextPostSwitchCoveragePct: params.context?.postSwitchCoveragePct === null || params.context?.postSwitchCoveragePct === undefined
-        ? null
-        : this.roundMetric(params.context.postSwitchCoveragePct),
-      contextReversionStretch: this.roundMetric(features.reversionStretch),
-      contextRollingMaturity: this.roundMetric(params.context?.rollingMaturity),
-      contextSlopeConsistency: this.roundMetric(features.slopeConsistency),
-      contextVolatilityRisk: this.roundMetric(features.volatilityRisk),
-      contextWindowMode: params.context?.windowMode || "rolling_full",
       incumbentScore: params.incumbentScore === undefined ? null : this.roundMetric(params.incumbentScore),
       previousRegime: params.previousRegime || null,
       publishOutcome: params.publishOutcome || "published",
-      publishedAbsoluteConviction: this.roundMetric(published.absoluteConviction),
-      publishedContextMaturity: this.roundMetric(published.contextMaturity),
       publishedDecisionStrength: this.roundMetric(published.decisionStrength),
       publishedMarketRegime: published.marketRegime,
       publishedPayloadChanged: params.publishedPayloadChanged,
       publishedPayloadUpdatedAt: published.updatedAt,
-      publishedRangeScore: this.roundMetric(published.regimeScores?.range),
       publishedRecommendedFamily: published.recommendedFamily,
       publishedSignalAgreement: this.roundMetric(published.signalAgreement),
-      publishedSummary: published.summary,
-      publishedTrendScore: this.roundMetric(published.regimeScores?.trend),
-      publishedVolatileScore: this.roundMetric(published.regimeScores?.volatile),
       publishedMtfAgreement: publishedMtf ? publishedMtf.mtfAgreement : null,
       publishedMtfDominantFrame: publishedMtf ? publishedMtf.mtfDominantFrame : null,
       publishedMtfDominantTimeframe: publishedMtf ? publishedMtf.mtfDominantTimeframe : null,
@@ -531,22 +503,15 @@ class ArchitectService {
       publisherChallengerRegime: params.publisher.challengerRegime || null,
       publisherChallengerRequired: params.publisher.challengerRequired,
       publisherHysteresisActive: params.publisher.hysteresisActive,
-      publisherLastObservedAt: params.publisher.lastObservedAt,
-      publisherLastPublishedAt: params.publisher.lastPublishedAt,
       publisherLastRegimeSwitchAt: params.publisher.lastRegimeSwitchAt,
       publisherLastRegimeSwitchFrom: params.publisher.lastRegimeSwitchFrom,
       publisherLastRegimeSwitchTo: params.publisher.lastRegimeSwitchTo,
       publisherMetadataOnly: params.publisherMetadataOnly,
-      publisherNextPublishAt: params.publisher.nextPublishAt,
       publisherPublishIntervalMs: params.publisher.publishIntervalMs,
-      publisherReady: params.publisher.ready,
       symbol: params.symbol,
       warmupMs: this.warmupMs,
-      trendBias: candidate.trendBias || params.context?.trendBias || "neutral",
       updatedAt: published.updatedAt,
-      via: params.via || null,
-      volatilityState: candidate.volatilityState || params.context?.volatilityState || "normal",
-      structureState: candidate.structureState || params.context?.structureState || "choppy"
+      via: params.via || null
     };
   }
 

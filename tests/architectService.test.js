@@ -264,6 +264,24 @@ function runArchitectServiceTests() {
   if (!customInitialPublish || customInitialPublish.metadata.publisherPublishIntervalMs !== customPublishIntervalMs || customInitialPublish.metadata.warmupMs !== customWarmupMs) {
     throw new Error(`architect publish diagnostics should expose the configured cadence settings: ${JSON.stringify(customInitialPublish)}`);
   }
+  const prunedArchitectStateKeys = [
+    "contextDataQuality",
+    "contextDirectionalEfficiency",
+    "contextSlopeConsistency",
+    "contextWindowMode",
+    "publisherLastObservedAt",
+    "publisherLastPublishedAt",
+    "publisherNextPublishAt",
+    "publisherReady",
+    "trendBias",
+    "volatilityState",
+    "structureState"
+  ];
+  for (const key of prunedArchitectStateKeys) {
+    if (Object.prototype.hasOwnProperty.call(customInitialPublish.metadata, key)) {
+      throw new Error(`architect publish diagnostics should stop echoing rolling state field ${key}: ${JSON.stringify(customInitialPublish)}`);
+    }
+  }
 
   gatedStore.setContextSnapshot(symbol, {
     ...createContext(symbol, 16_000, true, "trend"),
@@ -304,17 +322,11 @@ function runArchitectServiceTests() {
   if (!initialPublish) {
     throw new Error("missing architect_published audit log");
   }
-  if (initialPublish.metadata.candidateTrendScore !== 0.67 || initialPublish.metadata.publishedRangeScore !== 0.24 || initialPublish.metadata.publishedVolatileScore !== 0.15) {
-    throw new Error("architect publish log missing regime score diagnostics");
+  if (initialPublish.metadata.candidateMarketRegime !== "trend" || initialPublish.metadata.publishedMarketRegime !== "trend" || initialPublish.metadata.candidateRecommendedFamily !== "trend_following" || initialPublish.metadata.publishedRecommendedFamily !== "trend_following") {
+    throw new Error("architect publish log missing canonical regime/family diagnostics");
   }
-  if (initialPublish.metadata.contextDataQuality !== 0.92 || initialPublish.metadata.contextDirectionalEfficiency !== 0.62 || initialPublish.metadata.contextSlopeConsistency !== 0.59) {
-    throw new Error("architect publish log missing context feature diagnostics");
-  }
-  if (initialPublish.metadata.contextWindowMode !== "rolling_full" || initialPublish.metadata.publisherLastRegimeSwitchAt !== null) {
-    throw new Error("initial architect publish diagnostics should show the full rolling context with no prior regime switch");
-  }
-  if (initialPublish.metadata.trendBias !== "bullish" || initialPublish.metadata.volatilityState !== "normal" || initialPublish.metadata.structureState !== "trending") {
-    throw new Error("architect publish log missing state labels");
+  if (initialPublish.metadata.publishOutcome !== "published" || initialPublish.metadata.publisherLastRegimeSwitchAt !== null) {
+    throw new Error("initial architect publish diagnostics should keep publish outcome and switch semantics");
   }
 
   store.setContextSnapshot(symbol, createContext(symbol, 45_000, true, "range-small"));
@@ -354,14 +366,17 @@ function runArchitectServiceTests() {
   if (!heldAudit || heldAudit.metadata.publishedMarketRegime !== "trend" || heldAudit.metadata.candidateMarketRegime !== "range") {
     throw new Error("missing architect held-cycle diagnostics");
   }
-  if (heldAudit.metadata.publishOutcome !== "held" || heldAudit.metadata.contextReversionStretch !== 0.2 || heldAudit.metadata.contextBreakoutInstability !== 0.1) {
+  if (heldAudit.metadata.publishOutcome !== "held" || heldAudit.metadata.incumbentScore !== 0.67 || heldAudit.metadata.publisherChallengerCount !== 1) {
     throw new Error("held-cycle diagnostic fields are incomplete");
   }
   if (heldAudit.metadata.publishedPayloadChanged !== false || heldAudit.metadata.publisherMetadataOnly !== true) {
     throw new Error("held-cycle log did not distinguish payload stability from publisher metadata refresh");
   }
-  if (heldAudit.metadata.publishedPayloadUpdatedAt !== 30_000 || heldAudit.metadata.candidateObservedAt !== 60_000 || heldAudit.metadata.publisherLastPublishedAt !== 60_000) {
+  if (heldAudit.metadata.publishedPayloadUpdatedAt !== 30_000 || heldAudit.metadata.candidateObservedAt !== 60_000) {
     throw new Error("held-cycle log timestamp semantics are incorrect");
+  }
+  if (Object.prototype.hasOwnProperty.call(heldAudit.metadata, "contextReversionStretch") || Object.prototype.hasOwnProperty.call(heldAudit.metadata, "contextBreakoutInstability")) {
+    throw new Error(`held-cycle diagnostics should stop echoing context snapshot fields: ${JSON.stringify(heldAudit)}`);
   }
 
   const incumbentBasisStore = new StateStore();

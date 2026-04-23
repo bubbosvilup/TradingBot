@@ -19,6 +19,7 @@ export interface MtfFrameConfig {
 export interface MtfRuntimeConfig {
   enabled?: boolean;
   frames?: MtfFrameConfig[];
+  /** Architect-level usability gate. Default 0.5; separate from the stricter resolver-level 0.25 threshold. */
   instabilityThreshold?: number;
 }
 

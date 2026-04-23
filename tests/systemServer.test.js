@@ -914,11 +914,9 @@ async function runSystemServerTests() {
 
   const publicDir = fs.mkdtempSync(path.join(os.tmpdir(), "tradingbot-public-"));
   try {
-    fs.mkdirSync(path.join(publicDir, "ui"), { recursive: true });
     fs.writeFileSync(path.join(publicDir, "index.html"), "<!doctype html><title>pulse</title>");
     fs.writeFileSync(path.join(publicDir, "pulse.js"), "window.__pulseLoaded = true;");
     fs.writeFileSync(path.join(publicDir, "styles.css"), "body{background:#000;}");
-    fs.writeFileSync(path.join(publicDir, "ui", "chartAdapter.js"), "window.ChartAdapter = { create() {} };");
 
     const assetServer = new SystemServer({
       architectWarmupMs: 20_000,
@@ -930,18 +928,6 @@ async function runSystemServerTests() {
       startedAt: now - 1000,
       store
     });
-
-    const jsResponse = createResponseRecorder();
-    assetServer.handleRequest({
-      headers: { host: "127.0.0.1:3104" },
-      url: "/ui/chartAdapter.js"
-    }, jsResponse);
-    if (jsResponse.statusCode !== 200 || !String(jsResponse.headers?.["Content-Type"] || "").includes("application/javascript")) {
-      throw new Error(`system server should serve dashboard JS assets from public/ui: ${JSON.stringify(jsResponse)}`);
-    }
-    if (!String(jsResponse.body).includes("ChartAdapter")) {
-      throw new Error("system server did not return the public JS dashboard asset body");
-    }
 
     const indexResponse = createResponseRecorder();
     assetServer.handleRequest({
@@ -1039,14 +1025,6 @@ async function runSystemServerTests() {
       throw new Error(`UI auto-open should request the single Pulse route without launching a browser in tests: ${JSON.stringify(openedUrls)}`);
     }
 
-    const tsResponse = createResponseRecorder();
-    assetServer.handleRequest({
-      headers: { host: "127.0.0.1:3104" },
-      url: "/ui/chartAdapter.ts"
-    }, tsResponse);
-    if (tsResponse.statusCode !== 404) {
-      throw new Error(`system server should not serve raw TypeScript dashboard assets anymore: ${JSON.stringify(tsResponse)}`);
-    }
   } finally {
     fs.rmSync(publicDir, { force: true, recursive: true });
   }

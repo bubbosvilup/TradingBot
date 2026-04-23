@@ -38,6 +38,17 @@ function runRegimeDetectorTests() {
   if (detector.detect(rangeSeries) !== "range") {
     throw new Error(`range classification regressed: ${detector.detect(rangeSeries)}`);
   }
+
+  const onlyRecentWindowShouldMatter = [
+    80, 180,
+    100, 100.2, 100.1, 100.3, 100.2,
+    100.1, 100.3, 100.2, 100.1, 100.2,
+    100.3, 100.2, 100.1, 100.2, 100.3,
+    100.2, 100.1, 100.2, 100.3, 100.2
+  ];
+  if (detector.detect(onlyRecentWindowShouldMatter) !== "range") {
+    throw new Error(`regime detector should ignore pre-window extremes: ${detector.detect(onlyRecentWindowShouldMatter)}`);
+  }
 }
 
 module.exports = {

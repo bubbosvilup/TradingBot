@@ -159,8 +159,8 @@ function runTradingBotTelemetryTests() {
       minQuantity: 0.0001
     }
   });
-  if (fullEntryDiagnostics.mtfDominantFrame !== "medium"
-    || fullEntryDiagnostics.mtfDominantTimeframe !== "medium"
+  if (fullEntryDiagnostics.resolvedMtfDominantFrame !== "medium"
+    || fullEntryDiagnostics.resolvedMtfAdjustmentApplied !== true
     || fullEntryDiagnostics.publishedMtfEnabled !== true
     || fullEntryDiagnostics.publishedMtfAgreement !== 0.8
     || fullEntryDiagnostics.publishedMtfInstability !== 0.2
@@ -169,6 +169,18 @@ function runTradingBotTelemetryTests() {
     || fullEntryDiagnostics.publishedMtfSufficientFrames !== true
     || fullEntryDiagnostics.publishedMtfMetaRegime !== "range") {
     throw new Error(`full entry diagnostics should expose canonical and published MTF fields: ${JSON.stringify(fullEntryDiagnostics)}`);
+  }
+  const omittedRollingStateKeys = [
+    "cooldownUntil",
+    "postLossArchitectLatchActivatedAt",
+    "postLossArchitectLatchFreshPublishCount",
+    "postLossArchitectLatchRequiredPublishes",
+    "postLossArchitectLatchStrategyId"
+  ];
+  for (const key of omittedRollingStateKeys) {
+    if (Object.prototype.hasOwnProperty.call(fullEntryDiagnostics, key)) {
+      throw new Error(`entry diagnostics should stop echoing rolling-state field ${key}: ${JSON.stringify(fullEntryDiagnostics)}`);
+    }
   }
 
   const mtfDisabledDiagnostics = telemetry.buildEntryDiagnostics({
@@ -270,13 +282,12 @@ function runTradingBotTelemetryTests() {
     }
   });
   const omittedMtfKeys = [
-    "mtfAdjustmentApplied",
-    "mtfDominantFrame",
-    "mtfDominantTimeframe",
-    "mtfParamFallbackReason",
-    "mtfParamResolutionReason",
-    "mtfResolvedTargetDistanceCapPct",
-    "mtfTargetDistanceProfile",
+    "resolvedMtfAdjustmentApplied",
+    "resolvedMtfDominantFrame",
+    "resolvedMtfFallbackReason",
+    "resolvedMtfResolutionReason",
+    "resolvedMtfTargetDistanceCapPct",
+    "resolvedMtfTargetDistanceProfile",
     "publishedMtfAgreement",
     "publishedMtfDominantFrame",
     "publishedMtfDominantTimeframe",

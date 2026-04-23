@@ -176,6 +176,7 @@ class TradingBot extends BaseBot {
       maxArchitectStateAgeMs: this.maxArchitectStateAgeMs,
       minEntryContextMaturity: this.minEntryContextMaturity,
       minPostSwitchEntryContextMaturity: this.minPostSwitchEntryContextMaturity,
+      mtfInstabilityThreshold: this.config.mtf?.instabilityThreshold,
       store: this.deps.store,
       strategyRegistry: this.deps.strategyRegistry,
       strategySwitcher: this.deps.strategySwitcher
@@ -468,9 +469,6 @@ class TradingBot extends BaseBot {
         skipBotStateWrite: true
       });
     }
-    if (outcome.entryOpenedMetadata) {
-      this.deps.logger.bot(this.config, "entry_opened", outcome.entryOpenedMetadata);
-    }
     if (outcome.compactBuyMetadata) {
       this.emitCompactDescriptor(this.telemetry.buildCompactBuyDescriptor(outcome.compactBuyMetadata));
     }
@@ -483,6 +481,7 @@ class TradingBot extends BaseBot {
     this.deps.store.updateBotState(this.config.id, outcome.statePatch);
     const latchActivation = this.postLossArchitectLatch.activateOnLoss(outcome.latchActivation);
     this.emitPostLossArchitectLatchTransition(latchActivation.transition);
+    this.deps.logger.bot(this.config, "trade_closed", outcome.detailedExitLogMetadata);
     this.logCompactRiskChange(outcome.compactRiskMetadata);
     if (outcome.failedRsiExitLogMetadata) {
       this.deps.logger.bot(this.config, "failed_rsi_exit", outcome.failedRsiExitLogMetadata);
@@ -545,19 +544,37 @@ class TradingBot extends BaseBot {
     return state;
   }
 
-  classifyClosedTrade(closedTrade: any) {
+  classifyClosedTrade(closedTrade: any, exitPlan?: Pick<ExitPlan, "lifecycleEvent"> | null) {
     const exitReasons = Array.isArray(closedTrade?.exitReason)
       ? closedTrade.exitReason
       : Array.isArray(closedTrade?.reason)
         ? closedTrade.reason
         : [];
-    const rsiExit = this.isRsiExitReason(exitReasons);
-    const failedRsiExit = rsiExit && Number(closedTrade?.netPnl) < 0;
+    const lifecycleEvent = exitPlan?.lifecycleEvent || closedTrade?.lifecycleEvent || null;
+    const rsiExit = this.isStructuredRsiExit({
+      exitReasons,
+      lifecycleEvent
+    });
+    const failedRsiExit = lifecycleEvent === POSITION_LIFECYCLE_EVENTS.FAILED_RSI_EXIT
+      || (rsiExit && Number(closedTrade?.netPnl) < 0);
     return {
       closeClassification: failedRsiExit ? "failed_rsi_exit" : "confirmed_exit",
       failedRsiExit,
       rsiExit
     } as ExitClassification;
+  }
+
+  isStructuredRsiExit(params: { exitReasons: string[]; lifecycleEvent?: string | null }) {
+    if (params.lifecycleEvent === POSITION_LIFECYCLE_EVENTS.FAILED_RSI_EXIT) {
+      return true;
+    }
+    if (params.lifecycleEvent === POSITION_LIFECYCLE_EVENTS.RSI_EXIT_HIT) {
+      return this.isRsiExitReason(params.exitReasons);
+    }
+    if (params.lifecycleEvent) {
+      return false;
+    }
+    return this.isRsiExitReason(params.exitReasons);
   }
 
   isRsiExitReason(exitReasons: string[]) {
@@ -1513,7 +1530,7 @@ class TradingBot extends BaseBot {
       });
       return;
     }
-    const closeClassification = this.classifyClosedTrade(closedTrade);
+    const closeClassification = this.classifyClosedTrade(closedTrade, exitPlan);
     const closedLifecycleEvent = resolveLifecycleEventFromReasons(
       Array.isArray(closedTrade.exitReason) ? closedTrade.exitReason : [],
       closeClassification.closeClassification

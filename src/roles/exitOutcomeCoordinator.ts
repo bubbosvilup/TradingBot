@@ -40,6 +40,7 @@ export interface ClosedTradeOutcomeParams {
 }
 
 export interface ClosedTradeOutcome {
+  detailedExitLogMetadata: Record<string, unknown>;
   compactRiskMetadata: Record<string, unknown>;
   compactSellMetadata: Record<string, unknown>;
   failedRsiExitLogMetadata?: Record<string, unknown>;
@@ -67,6 +68,25 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
 
   toFixed(value: unknown, digits: number) {
     return Number(Number(value || 0).toFixed(digits));
+  }
+
+  buildDetailedExitLogMetadata(params: ClosedTradeOutcomeParams, closeReason: string | null) {
+    return {
+      ...params.exitTelemetry,
+      closeClassification: params.classification.closeClassification,
+      closeReason,
+      entryPrice: this.toFixed(params.closedTrade.entryPrice, 4),
+      exitPrice: this.toFixed(params.closedTrade.exitPrice, 4),
+      feeRate: this.toFixed(params.feeRate, 6),
+      fees: this.toFixed(params.closedTrade.fees, 4),
+      grossPnl: this.toFixed(params.closedTrade.pnl, 4),
+      latestPrice: this.toFixed(params.tickPrice, 4),
+      netPnl: this.toFixed(params.closedTrade.netPnl, 4),
+      outcome: params.closedTrade.netPnl > 0 ? "profit" : params.closedTrade.netPnl < 0 ? "loss" : "flat",
+      quantity: this.toFixed(params.closedTrade.quantity, 8),
+      side: params.closedTrade.side,
+      strategy: params.strategyId
+    };
   }
 
   buildDeferredManagedRecoveryOutcome(params: DeferredManagedRecoveryParams) {
@@ -130,45 +150,38 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
       pausedReason: nextPausedReason
     };
 
+    const detailedExitLogMetadata = this.buildDetailedExitLogMetadata(params, closeReason);
+
     return {
+      detailedExitLogMetadata,
       compactRiskMetadata: {
-        ...params.exitTelemetry,
         botStatus: nextStatus,
         cooldownReason: balancePatch.cooldownReason,
         cooldownUntil: balancePatch.cooldownUntil,
-        closeClassification: params.classification.closeClassification,
         lossStreak: balancePatch.lossStreak,
         manualResumeRequired: pausedForDrawdown ? true : undefined,
         pausedReason: nextPausedReason,
         status: "trade_closed"
       },
       compactSellMetadata: {
-        ...params.exitTelemetry,
         closeClassification: params.classification.closeClassification,
         closeReason,
-        entryPrice: this.toFixed(params.closedTrade.entryPrice, 4),
-        exitPrice: this.toFixed(params.closedTrade.exitPrice, 4),
-        feeRate: this.toFixed(params.feeRate, 6),
-        fees: this.toFixed(params.closedTrade.fees, 4),
-        grossPnl: this.toFixed(params.closedTrade.pnl, 4),
+        exitEvent: params.exitTelemetry.exitEvent || null,
+        exitMechanism: params.exitTelemetry.exitMechanism || null,
+        lifecycleEvent: params.exitTelemetry.lifecycleEvent || null,
         latestPrice: this.toFixed(params.tickPrice, 4),
-        netPnl: this.toFixed(params.closedTrade.netPnl, 4),
         outcome: params.closedTrade.netPnl > 0 ? "profit" : params.closedTrade.netPnl < 0 ? "loss" : "flat",
         quantity: this.toFixed(params.closedTrade.quantity, 8),
         side: params.closedTrade.side,
-        strategy: params.strategyId
+        strategy: params.strategyId,
+        ...(params.exitTelemetry.protectionMode
+          ? { protectionMode: params.exitTelemetry.protectionMode }
+          : {})
       },
       failedRsiExitLogMetadata: params.classification.failedRsiExit
         ? {
-            ...params.exitTelemetry,
             closeClassification: params.classification.closeClassification,
             closeReason,
-            cooldownReason: balancePatch.cooldownReason,
-            entryPrice: this.toFixed(params.closedTrade.entryPrice, 4),
-            exitPrice: this.toFixed(params.closedTrade.exitPrice, 4),
-            fees: this.toFixed(params.closedTrade.fees, 4),
-            grossPnl: this.toFixed(params.closedTrade.pnl, 4),
-            netPnl: this.toFixed(params.closedTrade.netPnl, 4),
             side: params.closedTrade.side,
             strategy: params.strategyId
           }
@@ -180,9 +193,13 @@ class ExitOutcomeCoordinator implements ExitOutcomeCoordinatorInstance {
       },
       managedRecoveryExitedLogMetadata: params.positionWasManagedRecovery
         ? {
-            ...params.exitTelemetry,
             closeClassification: params.classification.closeClassification,
             closeReason,
+            exitEvent: params.exitTelemetry.exitEvent || null,
+            exitMechanism: params.exitTelemetry.exitMechanism || null,
+            invalidationLevel: params.exitTelemetry.invalidationLevel || null,
+            invalidationMode: params.exitTelemetry.invalidationMode || null,
+            lifecycleEvent: params.exitTelemetry.lifecycleEvent || null,
             strategy: params.strategyId
           }
         : undefined,

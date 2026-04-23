@@ -3,8 +3,6 @@
 (function registerPulse(globalScope) {
   const refs = {
     botCards: document.getElementById("bot-cards"),
-    chart: document.getElementById("focus-chart"),
-    chartLegend: document.getElementById("chart-legend"),
     focusArchitect: document.getElementById("focus-architect"),
     focusEvents: document.getElementById("focus-events"),
     focusSymbolNote: document.getElementById("focus-symbol-note"),
@@ -29,13 +27,11 @@
   };
 
   const state = {
-    chartAdapter: null,
-    chartPayload: null,
     events: [],
+    eventsRequestSeq: 0,
     pulse: null,
     pulsePollingInterval: null,
     pulseStream: null,
-    chartPollingInterval: null,
     focusDataBotId: null,
     selectedBotId: null
   };
@@ -93,6 +89,12 @@
       throw new Error(payload?.error || `Request failed: ${response.status}`);
     }
     return payload;
+  }
+
+  function stopPulsePolling() {
+    if (!state.pulsePollingInterval) return;
+    clearInterval(state.pulsePollingInterval);
+    state.pulsePollingInterval = null;
   }
 
   function selectedCard() {
@@ -159,20 +161,28 @@
   }
 
   function renderPositionDetails() {
-    const position = state.chartPayload?.position || null;
-    const latestPrice = state.chartPayload?.lastPrice ?? position?.currentPrice ?? null;
+    const card = selectedCard();
+    const position = card?.position || null;
+    const latestPrice = state.pulse?.latestPrice ?? card?.latestPrice ?? position?.currentPrice ?? null;
     const details = position
-      ? [
+      ? (position.state && position.state !== "flat"
+        ? [
         ["Entry", formatPrice(position.entryPrice)],
         ["Current", formatPrice(latestPrice)],
-        ["Unrealized PnL", formatMoney(selectedCard()?.position?.pnlUsdt)],
-        ["Hold time", formatDuration(Date.now() - asNumber(position.openedAt, Date.now()))]
+        ["Status", String(position.state || "").toUpperCase()],
+        ["Unrealized PnL", formatMoney(position.pnlUsdt)]
       ]
+        : [
+        ["State", "FLAT"],
+        ["Current", formatPrice(latestPrice)],
+        ["Status", "FLAT"],
+        ["Unrealized PnL", "$0.00"]
+      ])
       : [
         ["State", "FLAT"],
         ["Current", formatPrice(latestPrice)],
-        ["Unrealized PnL", "$0.00"],
-        ["Hold time", "n/a"]
+        ["Status", "n/a"],
+        ["Unrealized PnL", "$0.00"]
       ];
 
     refs.positionDetails.innerHTML = details.map(([label, value]) => `
@@ -194,25 +204,6 @@
         <p>${escapeHtml(event.message || event.type || "event")}</p>
       </article>
     `).join("");
-  }
-
-  function renderChart() {
-    if (!state.chartAdapter && refs.chart && globalScope.ChartAdapter) {
-      state.chartAdapter = globalScope.ChartAdapter.create({
-        container: refs.chart,
-        legendNode: refs.chartLegend,
-        titleNode: null
-      });
-    }
-    if (!state.chartAdapter || !state.chartPayload) return;
-    state.chartAdapter.update({
-      candles: {},
-      lastPrice: state.chartPayload.lastPrice,
-      lineData: Array.isArray(state.chartPayload.lineData) ? state.chartPayload.lineData : [],
-      markers: [],
-      position: state.chartPayload.position,
-      symbol: state.chartPayload.symbol
-    });
   }
 
   function renderFocusPanel() {
@@ -243,7 +234,6 @@
     refs.historyButton.disabled = !history.enabled;
     refs.historyButton.title = history.reason || "";
     refs.historyButton.dataset.botId = focus.botId || "";
-    renderChart();
   }
 
   function render() {
@@ -275,29 +265,23 @@
     applyPulse(await fetchJson(`/api/pulse${query}`));
   }
 
-  async function loadChart() {
-    const focus = selectedFocus();
-    if (!focus?.symbol) return;
-    state.chartPayload = await fetchJson(`/api/chart?symbol=${encodeURIComponent(focus.symbol)}`);
-  }
-
   async function loadEvents() {
     const focus = selectedFocus();
-    const events = focus?.botId
-      ? await fetchJson(`/api/events?botId=${encodeURIComponent(focus.botId)}&limit=5`)
+    const botId = focus?.botId || null;
+    const requestId = ++state.eventsRequestSeq;
+    const events = botId
+      ? await fetchJson(`/api/events?botId=${encodeURIComponent(botId)}&limit=5`)
       : [];
+    if (requestId !== state.eventsRequestSeq || state.selectedBotId !== botId) {
+      return;
+    }
     state.events = Array.isArray(events) ? events : [];
-  }
-
-  async function refreshChart() {
-    await loadChart();
-    renderFocusPanel();
   }
 
   async function refreshFocusData() {
     const focus = selectedFocus();
     state.focusDataBotId = focus?.botId || null;
-    await Promise.all([loadChart(), loadEvents()]);
+    await loadEvents();
     renderFocusPanel();
   }
 
@@ -334,6 +318,7 @@
     if (!card) return;
     state.selectedBotId = card.getAttribute("data-bot-id");
     state.focusDataBotId = null;
+    state.events = [];
     await safeRefresh("pulse", refreshPulse);
   });
 
@@ -368,10 +353,16 @@
       return;
     }
 
+    stopPulsePolling();
+    if (state.pulseStream) {
+      state.pulseStream.close();
+      state.pulseStream = null;
+    }
     const es = new EventSource("/api/pulse/stream");
     state.pulseStream = es;
     es.onmessage = (event) => {
       try {
+        stopPulsePolling();
         applyPulse(JSON.parse(event.data));
       } catch (error) {
         refs.refreshStatus.textContent = `pulse stream parse failed: ${error?.message || error}`;
@@ -379,10 +370,10 @@
     };
     es.onerror = () => {
       es.close();
+      state.pulseStream = null;
       fallbackToPolling();
     };
   }
 
   startPulseStream();
-  state.chartPollingInterval = setInterval(() => safeRefresh("chart", refreshChart), 2000);
 })(window);

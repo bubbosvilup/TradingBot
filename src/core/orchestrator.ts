@@ -211,6 +211,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     .filter((bot: any) => bot.enabled)
     .map((bot: any) => ({
       ...bot,
+      mtf: bot.mtf || mtfConfig,
       postLossArchitectLatchPublishesRequired: Number.isFinite(Number(bot.postLossArchitectLatchPublishesRequired))
         ? Math.max(Number(bot.postLossArchitectLatchPublishesRequired), 1)
         : postLossLatchMinFreshPublications

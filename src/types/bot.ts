@@ -1,6 +1,7 @@
 // Module responsibility: bot configuration and runtime lifecycle contracts.
 
 import type { RecommendedFamily } from "./architect.ts";
+import type { MtfRuntimeConfig } from "./mtf.ts";
 
 export type ArchitectSyncStatus = "pending" | "synced" | "waiting_flat";
 
@@ -30,6 +31,7 @@ export interface BotConfig {
   allowedStrategies?: string[];
   initialBalanceUsdt?: number;
   maxArchitectStateAgeMs?: number;
+  mtf?: MtfRuntimeConfig;
   postLossArchitectLatchPublishesRequired?: number;
 }
 

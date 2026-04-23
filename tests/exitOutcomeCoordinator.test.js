@@ -72,6 +72,9 @@ async function runExitOutcomeCoordinatorTests() {
   if (closedOutcome.statePatch.lastExecutionAt !== 5000 || closedOutcome.recordExecutionAt !== 5000) {
     throw new Error(`closed trade outcome should preserve execution timestamps: ${JSON.stringify(closedOutcome)}`);
   }
+  if (!closedOutcome.detailedExitLogMetadata || closedOutcome.detailedExitLogMetadata.netPnl !== -0.1999 || closedOutcome.detailedExitLogMetadata.policyId !== "RSI_REVERSION_PRO") {
+    throw new Error(`closed trade outcome should expose one canonical detailed exit payload: ${JSON.stringify(closedOutcome.detailedExitLogMetadata)}`);
+  }
   if (!closedOutcome.failedRsiExitLogMetadata || closedOutcome.failedRsiExitLogMetadata.closeClassification !== "failed_rsi_exit") {
     throw new Error(`failed RSI exits should still shape failed_rsi_exit log metadata: ${JSON.stringify(closedOutcome.failedRsiExitLogMetadata)}`);
   }
@@ -80,6 +83,16 @@ async function runExitOutcomeCoordinatorTests() {
   }
   if (closedOutcome.compactSellMetadata.outcome !== "loss" || closedOutcome.compactRiskMetadata.status !== "trade_closed") {
     throw new Error(`closed trade outcome should preserve compact SELL/RISK_CHANGE semantics: ${JSON.stringify(closedOutcome)}`);
+  }
+  for (const key of ["entryPrice", "exitPrice", "fees", "grossPnl", "netPnl", "policyId", "signalTimestamp", "executionTimestamp"]) {
+    if (Object.prototype.hasOwnProperty.call(closedOutcome.compactSellMetadata, key)) {
+      throw new Error(`compact SELL payload should stay compact and omit ${key}: ${JSON.stringify(closedOutcome.compactSellMetadata)}`);
+    }
+  }
+  for (const key of ["exitEvent", "exitMechanism", "closeReason", "policyId", "netPnl"]) {
+    if (Object.prototype.hasOwnProperty.call(closedOutcome.compactRiskMetadata, key)) {
+      throw new Error(`compact RISK_CHANGE payload should stay state-oriented and omit ${key}: ${JSON.stringify(closedOutcome.compactRiskMetadata)}`);
+    }
   }
   if (closedOutcome.statePatch.status !== "paused" || closedOutcome.statePatch.pausedReason !== "max_drawdown_reached") {
     throw new Error(`max drawdown should still hard-pause the bot state: ${JSON.stringify(closedOutcome.statePatch)}`);

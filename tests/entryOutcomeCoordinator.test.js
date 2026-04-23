@@ -123,7 +123,7 @@ async function runEntryOutcomeCoordinatorTests() {
       lastTradeAt: 2_600
     }
   });
-  if (opened.gateLog?.message !== "entry_gate_allowed" || opened.entryEvaluated.outcome !== "opened" || opened.entryOpenedMetadata?.publishedRegime !== "trend" || opened.compactBuyMetadata?.quantity !== 0.5 || opened.recordExecutionAt !== 2500 || opened.lastNonCooldownBlockReason !== null) {
+  if (opened.gateLog?.message !== "entry_gate_allowed" || opened.entryEvaluated.outcome !== "opened" || opened.entryOpenedMetadata !== undefined || opened.compactBuyMetadata?.quantity !== 0.5 || opened.recordExecutionAt !== 2500 || opened.lastNonCooldownBlockReason !== null) {
     throw new Error(`opened entry outcomes should preserve allowed/opened logger handoff semantics: ${JSON.stringify(opened)}`);
   }
 }

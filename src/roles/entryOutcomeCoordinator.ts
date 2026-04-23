@@ -43,7 +43,6 @@ export interface EntryOutcomePlan {
   compactBuyMetadata?: Record<string, unknown>;
   entryBlockedReason?: string | null;
   entryEvaluated: EntryEvaluationPlan;
-  entryOpenedMetadata?: Record<string, unknown>;
   gateLog?: {
     message: "entry_gate_allowed" | "entry_gate_blocked";
     metadata: Record<string, unknown>;
@@ -360,15 +359,6 @@ class EntryOutcomeCoordinator implements EntryOutcomeCoordinatorInstance {
         state: params.state,
         strategyId: params.strategyId,
         tick: params.tick
-      },
-      entryOpenedMetadata: {
-        decisionStrength: params.publishedArchitect ? this.toFixedNumber(params.publishedArchitect.decisionStrength, 4) : null,
-        publishedFamily: params.publishedArchitect?.recommendedFamily || null,
-        publishedRegime: params.publishedArchitect?.marketRegime || null,
-        signalAgreement: params.publishedArchitect ? this.toFixedNumber(params.publishedArchitect.signalAgreement, 4) : null,
-        side: this.getDecisionSide(params.decision),
-        strategy: params.strategyId,
-        symbol: this.symbol
       },
       gateLog: {
         message: "entry_gate_allowed",

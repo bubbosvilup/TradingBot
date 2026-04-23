@@ -218,9 +218,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     reason: string;
   }) {
     return {
-      postLossArchitectLatchActive: params.postLossArchitectLatch?.active ?? null,
-      postLossArchitectLatchFreshPublishCount: params.postLossArchitectLatch?.freshPublishCount ?? null,
-      postLossArchitectLatchRequiredPublishes: params.postLossArchitectLatch?.requiredPublishes ?? null,
       reason: params.reason
     };
   }
@@ -234,7 +231,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     const strategyRsi = Number.isFinite(Number(strategyRsiRaw))
       ? Number(Number(strategyRsiRaw).toFixed(4))
       : null;
-    const cooldownUntil = signalState?.cooldownUntil || state.cooldownUntil || null;
     const estimatedFeePct = params.economics.estimatedEntryFeePct + params.economics.estimatedExitFeePct;
     const estimatedCostPct = estimatedFeePct + params.economics.estimatedSlippagePct;
     const contextMaturity = architect?.contextMaturity ?? params.contextSnapshot?.features?.maturity ?? null;
@@ -264,12 +260,6 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       && contextMaturity !== null
       && contextMaturity < entryMaturityThreshold;
     const architectPublishedAt = params.architectState.publisher?.lastPublishedAt || architect?.updatedAt || null;
-    const architectSymbol = architect?.symbol || null;
-    const architectSymbolMatch = architectSymbol ? architectSymbol === this.symbol : null;
-    const contextSymbol = params.contextSnapshot?.symbol || null;
-    const contextSymbolMatch = contextSymbol ? contextSymbol === this.symbol : null;
-    const tickSymbol = params.tick?.symbol || null;
-    const tickSymbolMatch = tickSymbol ? tickSymbol === this.symbol : null;
     const debounceRequired = params.profile?.entryDebounceTicks ?? null;
     const entrySignalStreak = signalState?.entrySignalStreak ?? state.entrySignalStreak ?? 0;
     const mtfParamResolution = params.economics.mtfParamResolution || null;
@@ -288,16 +278,11 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       architectRsiIntensity,
       architectStale: params.architectState.architectStale,
       architectStaleThresholdMs: params.architectState.staleThresholdMs,
-      architectSymbol,
-      architectSymbolMatch,
       architectUpdatedAt: architect?.updatedAt || null,
       architectUsable: params.architectState.usable,
       botId: this.botId,
-      contextSymbol,
-      contextSymbolMatch,
-      cooldownActive: Boolean(cooldownUntil && params.tick?.timestamp && cooldownUntil > params.tick.timestamp),
+      cooldownActive: Boolean((signalState?.cooldownUntil || state.cooldownUntil || null) && params.tick?.timestamp && (signalState?.cooldownUntil || state.cooldownUntil || null) > params.tick.timestamp),
       cooldownReason: signalState?.cooldownReason || state.cooldownReason || null,
-      cooldownUntil,
       currentFamily: params.architectState.currentFamily,
       contextMaturity: contextMaturity === null ? null : Number(Number(contextMaturity).toFixed(4)),
       contextWindowMode,
@@ -329,11 +314,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       minQuantity: Number(params.tradeConstraints.minQuantity.toFixed(8)),
       notionalUsdt: Number(params.economics.notionalUsdt.toFixed(4)),
       postLossArchitectLatchActive: params.postLossArchitectLatch.active,
-      postLossArchitectLatchActivatedAt: params.postLossArchitectLatch.activatedAt,
       postLossArchitectLatchBlocking: params.postLossArchitectLatch.blocking,
-      postLossArchitectLatchFreshPublishCount: params.postLossArchitectLatch.freshPublishCount,
-      postLossArchitectLatchRequiredPublishes: params.postLossArchitectLatch.requiredPublishes,
-      postLossArchitectLatchStrategyId: params.postLossArchitectLatch.strategyId,
       postSwitchCoveragePct,
       postSwitchWarmupActive,
       postSwitchWarmupReason: postSwitchWarmupActive ? "post_switch_context_immature" : null,
@@ -357,20 +338,17 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       strategyRsiSource: strategyRsi === null ? null : "strategy_indicator_snapshot",
       symbol: this.symbol,
       targetFamily: params.architectState.actionableFamily || null,
-      tickSymbol,
-      tickSymbolMatch,
       tickTimestamp: params.tick?.timestamp || null,
       ...(mtfEnabled
         ? {
-            mtfAdjustmentApplied: Boolean(mtfParamResolution?.mtfAdjustmentApplied),
-            mtfDominantFrame: mtfParamResolution?.dominantTimeframe ?? null,
-            mtfDominantTimeframe: mtfParamResolution?.dominantTimeframe ?? null,
-            mtfParamFallbackReason: mtfParamResolution?.fallbackReason ?? null,
-            mtfParamResolutionReason: mtfParamResolution?.coherenceReason ?? null,
-            mtfResolvedTargetDistanceCapPct: Number.isFinite(Number(mtfParamResolution?.resolvedTargetDistanceCapPct))
+            resolvedMtfAdjustmentApplied: Boolean(mtfParamResolution?.mtfAdjustmentApplied),
+            resolvedMtfDominantFrame: mtfParamResolution?.dominantTimeframe ?? null,
+            resolvedMtfFallbackReason: mtfParamResolution?.fallbackReason ?? null,
+            resolvedMtfResolutionReason: mtfParamResolution?.coherenceReason ?? null,
+            resolvedMtfTargetDistanceCapPct: Number.isFinite(Number(mtfParamResolution?.resolvedTargetDistanceCapPct))
               ? Number(Number(mtfParamResolution?.resolvedTargetDistanceCapPct).toFixed(4))
               : null,
-            mtfTargetDistanceProfile: mtfParamResolution?.targetDistanceProfile ?? null,
+            resolvedMtfTargetDistanceProfile: mtfParamResolution?.targetDistanceProfile ?? null,
             publishedMtfAgreement: publishedMtf.mtfAgreement,
             publishedMtfDominantFrame: publishedMtf.mtfDominantFrame,
             publishedMtfDominantTimeframe: publishedMtf.mtfDominantTimeframe,

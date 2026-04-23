@@ -127,9 +127,8 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
 ### UI e serving
 
 - La dashboard non dipende piu da import browser di file TypeScript raw da `src/ui/*.ts`.
-- `public/index.html` carica asset JS servibili dal browser:
-  - `/ui/chartAdapter.js`
-- `SystemServer` serve la UI dal path statico `public/ui/`.
+- `public/index.html` carica gli asset browser serviti da `public/`.
+- `SystemServer` serve la UI Pulse dagli asset statici pubblici del repository.
 
 ### Backtest e prep futura
 
@@ -603,7 +602,7 @@ Campi diagnostici rilevanti ora esposti:
 - diagnostica MTF RSI entry: `resolvedMtfDominantFrame`, `resolvedMtfAdjustmentApplied`, `resolvedMtfTargetDistanceCapPct`, `resolvedMtfTargetDistanceProfile`, `resolvedMtfFallbackReason`, `resolvedMtfResolutionReason`
 - latency di pipeline
 
-Pulse e oggi l'unica UI operativa del repository: mostra stato di sistema, card bot, pannello focus, chart, eventi recenti, storico trade e resume manuale quando il backend lo consente. Resta una superficie di osservabilita e controllo stretto, non un piano di decisione trading.
+Pulse e oggi l'unica UI operativa del repository: mostra stato di sistema, card bot, pannello focus, dettagli posizione, eventi recenti, storico trade e resume manuale quando il backend lo consente. Resta una superficie di osservabilita e controllo stretto, non un piano di decisione trading.
 
 Auto-apertura Pulse:
 

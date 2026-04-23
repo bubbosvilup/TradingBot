@@ -34,7 +34,7 @@ const RISK_OVERRIDE_RULES: Record<string, RiskOverrideRule> = {
   postExitReentryGuardMs: { type: "number", min: 1 },
   volatilitySizingEnabled: { type: "boolean" },
   volatilitySizingMinPenalty: { type: "number", max: 1, minExclusive: 0 },
-  volatilitySizingMultiplier: { type: "number", min: 0 },
+  volatilitySizingMultiplier: { type: "number", max: 1, min: 0 },
   winReentryCooldownMs: { type: "number", min: 1 }
 };
 

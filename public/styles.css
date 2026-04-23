@@ -202,26 +202,6 @@ button:disabled {
   gap: 0.5rem;
 }
 
-.chart-block {
-  background: #0d141d;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  margin: 1rem 0;
-  padding: 0.75rem;
-}
-
-.chart-legend {
-  color: var(--muted);
-  font-size: 0.85rem;
-  min-height: 1.2rem;
-}
-
-.chart-canvas {
-  height: 360px;
-  margin-top: 0.5rem;
-  width: 100%;
-}
-
 .position-block,
 .events-block {
   border-top: 1px solid var(--border);

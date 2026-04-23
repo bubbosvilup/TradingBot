@@ -108,6 +108,7 @@ function createHarness(strategyEvaluate, options = {}) {
     id: "bot_test",
     initialBalanceUsdt: options.initialBalanceUsdt ?? 1000,
     maxArchitectStateAgeMs: options.maxArchitectStateAgeMs,
+    mtf: options.mtfConfig,
     postLossArchitectLatchPublishesRequired: options.postLossArchitectLatchPublishesRequired,
     riskProfile: options.riskProfile || "medium",
     strategy: options.strategy || "testStrategy",
@@ -313,6 +314,58 @@ function runTradingBotTests() {
     }), {
       strategy: "emaCross"
     });
+    const structuredClassificationHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.5,
+      reason: ["neutral_signal"]
+    }), {
+      strategy: "rsiReversion"
+    });
+    const structuredFailedRsiClassification = structuredClassificationHarness.bot.classifyClosedTrade(
+      { netPnl: -0.25, exitReason: ["unrelated_reason"] },
+      { exitMechanism: "qualification", lifecycleEvent: "FAILED_RSI_EXIT" }
+    );
+    if (structuredFailedRsiClassification.closeClassification !== "failed_rsi_exit"
+      || structuredFailedRsiClassification.failedRsiExit !== true
+      || structuredFailedRsiClassification.rsiExit !== true) {
+      throw new Error(`FAILED_RSI_EXIT should classify from structured exit metadata even without matching reason strings: ${JSON.stringify(structuredFailedRsiClassification)}`);
+    }
+    const structuredConfirmedRsiClassification = structuredClassificationHarness.bot.classifyClosedTrade(
+      { netPnl: 0.15, exitReason: ["rsi_exit_confirmed"] },
+      { exitMechanism: "qualification", lifecycleEvent: "RSI_EXIT_HIT" }
+    );
+    if (structuredConfirmedRsiClassification.closeClassification !== "confirmed_exit"
+      || structuredConfirmedRsiClassification.failedRsiExit !== false
+      || structuredConfirmedRsiClassification.rsiExit !== true) {
+      throw new Error(`RSI_EXIT_HIT should remain a confirmed RSI exit from structured metadata with minimal reason fallback for the ambiguous qualification subcase: ${JSON.stringify(structuredConfirmedRsiClassification)}`);
+    }
+    const structuredProtectiveClassification = structuredClassificationHarness.bot.classifyClosedTrade(
+      { netPnl: -0.4, exitReason: ["unrelated_reason"] },
+      { exitMechanism: "protection", lifecycleEvent: "PROTECTIVE_STOP_HIT" }
+    );
+    if (structuredProtectiveClassification.closeClassification !== "confirmed_exit"
+      || structuredProtectiveClassification.failedRsiExit !== false
+      || structuredProtectiveClassification.rsiExit !== false) {
+      throw new Error(`PROTECTIVE_STOP_HIT should not be inferred as an RSI exit from unrelated reason strings: ${JSON.stringify(structuredProtectiveClassification)}`);
+    }
+    const structuredInvalidationClassification = structuredClassificationHarness.bot.classifyClosedTrade(
+      { netPnl: -0.1, exitReason: ["unrelated_reason"] },
+      { exitMechanism: "invalidation", lifecycleEvent: "REGIME_INVALIDATION" }
+    );
+    if (structuredInvalidationClassification.closeClassification !== "confirmed_exit"
+      || structuredInvalidationClassification.failedRsiExit !== false
+      || structuredInvalidationClassification.rsiExit !== false) {
+      throw new Error(`REGIME_INVALIDATION should remain a confirmed non-RSI exit from structured metadata: ${JSON.stringify(structuredInvalidationClassification)}`);
+    }
+    const structuredTimeoutClassification = structuredClassificationHarness.bot.classifyClosedTrade(
+      { netPnl: 0.05, exitReason: ["unrelated_reason"] },
+      { exitMechanism: "recovery", lifecycleEvent: "RECOVERY_TIMEOUT" }
+    );
+    if (structuredTimeoutClassification.closeClassification !== "confirmed_exit"
+      || structuredTimeoutClassification.failedRsiExit !== false
+      || structuredTimeoutClassification.rsiExit !== false) {
+      throw new Error(`RECOVERY_TIMEOUT should remain a confirmed recovery exit from structured metadata: ${JSON.stringify(structuredTimeoutClassification)}`);
+    }
     const normalProfile = normalExitHarness.bot.deps.riskManager.getProfile(normalExitHarness.config.riskProfile);
     const protectivePlan = normalExitHarness.bot.shouldExitPosition({
       decision: {
@@ -474,9 +527,9 @@ function runTradingBotTests() {
     if (!closeSnapshotTrade || closeSnapshotHarness.store.getPosition("bot_test")) {
       throw new Error(`defensive position snapshot should not change successful close execution: ${JSON.stringify(closeSnapshotTrade)}`);
     }
-    const closeSnapshotSellLog = closeSnapshotHarness.botLogs.find((entry) => entry.message === "SELL");
-    if (!closeSnapshotSellLog || closeSnapshotSellLog.metadata.positionStatus !== "ACTIVE" || closeSnapshotSellLog.metadata.timeoutRemainingMs !== null) {
-      throw new Error(`exit telemetry should use the pre-close defensive position snapshot, not later store mutations: ${JSON.stringify(closeSnapshotSellLog)}`);
+    const closeSnapshotTradeClosedLog = closeSnapshotHarness.botLogs.find((entry) => entry.message === "trade_closed");
+    if (!closeSnapshotTradeClosedLog || closeSnapshotTradeClosedLog.metadata.positionStatus !== "ACTIVE" || closeSnapshotTradeClosedLog.metadata.timeoutRemainingMs !== null) {
+      throw new Error(`exit telemetry should use the pre-close defensive position snapshot, not later store mutations: ${JSON.stringify(closeSnapshotTradeClosedLog)}`);
     }
     process.env.LOG_TYPE = testDefaultLogType;
 
@@ -964,15 +1017,19 @@ function runTradingBotTests() {
     strategyDebugSellHarness.bot.onMarketTick({ price: 100.4, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     clock += 1_000;
     strategyDebugSellHarness.bot.onMarketTick({ price: 100.4, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const strategyDebugTradeClosedLog = strategyDebugSellHarness.botLogs.find((entry) => entry.message === "trade_closed");
     const strategyDebugSellLog = strategyDebugSellHarness.botLogs.find((entry) => entry.message === "SELL");
-    if (!strategyDebugSellLog || !String(strategyDebugSellLog.metadata.closeReason || "").includes("rsi_exit_confirmed")) {
-      throw new Error(`strategy_debug SELL log should preserve the explicit exit reason: ${JSON.stringify(strategyDebugSellLog)}`);
+    if (!strategyDebugTradeClosedLog || !String(strategyDebugTradeClosedLog.metadata.closeReason || "").includes("rsi_exit_confirmed")) {
+      throw new Error(`strategy_debug trade_closed log should preserve the explicit exit reason: ${JSON.stringify(strategyDebugTradeClosedLog)}`);
     }
-    if (!strategyDebugSellLog || strategyDebugSellLog.metadata.entryPrice !== 100 || strategyDebugSellLog.metadata.exitPrice !== 100.4 || strategyDebugSellLog.metadata.grossPnl !== 0.2 || strategyDebugSellLog.metadata.fees !== 0.1002 || strategyDebugSellLog.metadata.netPnl !== 0.0998) {
-      throw new Error(`strategy_debug SELL log should expose structured PnL fields: ${JSON.stringify(strategyDebugSellLog)}`);
+    if (!strategyDebugTradeClosedLog || strategyDebugTradeClosedLog.metadata.entryPrice !== 100 || strategyDebugTradeClosedLog.metadata.exitPrice !== 100.4 || strategyDebugTradeClosedLog.metadata.grossPnl !== 0.2 || strategyDebugTradeClosedLog.metadata.fees !== 0.1002 || strategyDebugTradeClosedLog.metadata.netPnl !== 0.0998) {
+      throw new Error(`strategy_debug trade_closed log should expose structured PnL fields: ${JSON.stringify(strategyDebugTradeClosedLog)}`);
     }
-    if (strategyDebugSellLog.metadata.policyId !== "RSI_REVERSION_PRO" || strategyDebugSellLog.metadata.positionStatus !== "EXITING" || strategyDebugSellLog.metadata.exitEvent !== "rsi_exit_confirmed" || strategyDebugSellLog.metadata.exitMechanism !== "qualification" || strategyDebugSellLog.metadata.lifecycleEvent !== "RSI_EXIT_HIT" || strategyDebugSellLog.metadata.signalTimestamp !== clock || strategyDebugSellLog.metadata.executionTimestamp !== clock || strategyDebugSellLog.metadata.signalToExecutionMs !== 0) {
-      throw new Error(`strategy_debug SELL log should expose exit policy and timing diagnostics: ${JSON.stringify(strategyDebugSellLog)}`);
+    if (strategyDebugTradeClosedLog.metadata.policyId !== "RSI_REVERSION_PRO" || strategyDebugTradeClosedLog.metadata.positionStatus !== "EXITING" || strategyDebugTradeClosedLog.metadata.exitEvent !== "rsi_exit_confirmed" || strategyDebugTradeClosedLog.metadata.exitMechanism !== "qualification" || strategyDebugTradeClosedLog.metadata.lifecycleEvent !== "RSI_EXIT_HIT" || strategyDebugTradeClosedLog.metadata.signalTimestamp !== clock || strategyDebugTradeClosedLog.metadata.executionTimestamp !== clock || strategyDebugTradeClosedLog.metadata.signalToExecutionMs !== 0) {
+      throw new Error(`strategy_debug trade_closed log should expose exit policy and timing diagnostics: ${JSON.stringify(strategyDebugTradeClosedLog)}`);
+    }
+    if (!strategyDebugSellLog || strategyDebugSellLog.metadata.entryPrice !== undefined || strategyDebugSellLog.metadata.policyId !== undefined || strategyDebugSellLog.metadata.netPnl !== undefined) {
+      throw new Error(`strategy_debug SELL log should stay compact after canonical trade_closed emission: ${JSON.stringify(strategyDebugSellLog)}`);
     }
     if (strategyDebugSellHarness.bot.getExitPolicy()?.id !== "RSI_REVERSION_PRO") {
       throw new Error(`rsiReversion exit policy should resolve from strategy config metadata: ${JSON.stringify(strategyDebugSellHarness.bot.getExitPolicy())}`);
@@ -1038,8 +1095,12 @@ function runTradingBotTests() {
     if (!failedRsiExitLog || failedRsiExitLog.metadata.closeClassification !== "failed_rsi_exit") {
       throw new Error(`negative RSI exit should emit failed_rsi_exit log: ${JSON.stringify(failedRsiExitLog)}`);
     }
+    const failedRsiTradeClosedLog = failedRsiExitHarness.botLogs.find((entry) => entry.message === "trade_closed" && entry.metadata.closeClassification === "failed_rsi_exit");
+    if (!failedRsiTradeClosedLog || !String(failedRsiTradeClosedLog.metadata.closeReason || "").includes("rsi_exit_confirmed")) {
+      throw new Error(`negative RSI exit should emit canonical trade_closed causality: ${JSON.stringify(failedRsiTradeClosedLog)}`);
+    }
     const failedRsiSellLog = failedRsiExitHarness.botLogs.find((entry) => entry.message === "SELL" && entry.metadata.closeClassification === "failed_rsi_exit");
-    if (!failedRsiSellLog || !String(failedRsiSellLog.metadata.closeReason || "").includes("rsi_exit_confirmed")) {
+    if (!failedRsiSellLog || failedRsiSellLog.metadata.netPnl !== undefined || !String(failedRsiSellLog.metadata.closeReason || "").includes("rsi_exit_confirmed")) {
       throw new Error(`negative RSI exit SELL log should carry failed_rsi_exit classification and rsi_exit_confirmed reason: ${JSON.stringify(failedRsiSellLog)}`);
     }
     if (!failedRsiState.postLossArchitectLatchActive || failedRsiState.postLossArchitectLatchStrategyId !== "rsiReversion") {
@@ -1157,8 +1218,12 @@ function runTradingBotTests() {
       throw new Error(`managed recovery should exit on confirmed price target hit: ${JSON.stringify(managedRecoveryTargetTrade)}`);
     }
     const managedRecoveryExitedLog = managedRecoveryTargetHarness.botLogs.find((entry) => entry.message === "managed_recovery_exited");
-    if (!managedRecoveryExitedLog || managedRecoveryExitedLog.metadata.positionStatus !== "EXITING" || managedRecoveryExitedLog.metadata.exitEvent !== "reversion_price_target_hit" || managedRecoveryExitedLog.metadata.exitMechanism !== "recovery" || managedRecoveryExitedLog.metadata.lifecycleEvent !== "PRICE_TARGET_HIT") {
+    if (!managedRecoveryExitedLog || managedRecoveryExitedLog.metadata.positionStatus !== undefined || managedRecoveryExitedLog.metadata.exitEvent !== "reversion_price_target_hit" || managedRecoveryExitedLog.metadata.exitMechanism !== "recovery" || managedRecoveryExitedLog.metadata.lifecycleEvent !== "PRICE_TARGET_HIT") {
       throw new Error(`managed recovery exit log should expose recovery exit telemetry: ${JSON.stringify(managedRecoveryExitedLog)}`);
+    }
+    const managedRecoveryTradeClosedLog = managedRecoveryTargetHarness.botLogs.find((entry) => entry.message === "trade_closed" && entry.metadata.exitMechanism === "recovery");
+    if (!managedRecoveryTradeClosedLog || managedRecoveryTradeClosedLog.metadata.positionStatus !== "EXITING") {
+      throw new Error(`managed recovery should keep canonical detailed exit telemetry on trade_closed: ${JSON.stringify(managedRecoveryTradeClosedLog)}`);
     }
 
     clock += 10_000;
@@ -1465,7 +1530,7 @@ function runTradingBotTests() {
       throw new Error(`post-loss architect latch test should be triggered by the defensive stop path: ${JSON.stringify(postLossClosedTrade)}`);
     }
     const protectiveStopSellLog = postLossLatchHarness.botLogs.find((entry) => entry.message === "SELL" && String(entry.metadata.closeReason || "").includes("protective_stop_exit"));
-    if (!protectiveStopSellLog || protectiveStopSellLog.metadata.exitMechanism !== "protection" || protectiveStopSellLog.metadata.protectionMode !== "fixed_pct" || protectiveStopSellLog.metadata.lifecycleEvent !== "PROTECTIVE_STOP_HIT") {
+    if (!protectiveStopSellLog || protectiveStopSellLog.metadata.exitMechanism !== "protection" || protectiveStopSellLog.metadata.protectionMode !== "fixed_pct" || protectiveStopSellLog.metadata.lifecycleEvent !== "PROTECTIVE_STOP_HIT" || protectiveStopSellLog.metadata.netPnl !== undefined) {
       throw new Error(`protective stop exits should log explicit protection telemetry: ${JSON.stringify(protectiveStopSellLog)}`);
     }
     if (!postLossState.postLossArchitectLatchActive || postLossState.postLossArchitectLatchFreshPublishCount !== 0 || postLossState.postLossArchitectLatchStrategyId !== "rsiReversion") {
@@ -1491,8 +1556,8 @@ function runTradingBotTests() {
       throw new Error("missing entry_gate_blocked log for post_loss_architect_latch");
     }
     const postLossBlockedLog = postLossLatchHarness.botLogs.find((entry) => entry.message === "entry_blocked" && entry.metadata.reason === "post_loss_architect_latch");
-    if (!postLossBlockedLog || postLossBlockedLog.metadata.postLossArchitectLatchFreshPublishCount !== 0 || postLossBlockedLog.metadata.postLossArchitectLatchRequiredPublishes !== 2) {
-      throw new Error(`post-loss architect latch blocked log should expose latch progress: ${JSON.stringify(postLossBlockedLog)}`);
+    if (!postLossBlockedLog || Object.keys(postLossBlockedLog.metadata).some((key) => key !== "reason" && key !== "botId" && key !== "symbol")) {
+      throw new Error(`post-loss architect latch blocked log should stay compact and transition-only: ${JSON.stringify(postLossBlockedLog)}`);
     }
     if (postLossBlockedState.postLossArchitectLatchFreshPublishCount !== 0) {
       throw new Error("stale architect state should not increment the post-loss architect latch");
@@ -1996,6 +2061,66 @@ function runTradingBotTests() {
     }
     if (unclearHarness.store.getBotState("bot_test").architectSyncStatus !== "pending") {
       throw new Error("unclear architect state should keep bot sync status pending");
+    }
+
+    clock += 10_000;
+    const defaultMtfInstabilityHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        mtf: {
+          mtfAgreement: 0.4,
+          mtfDominantFrame: "medium",
+          mtfDominantTimeframe: "15m",
+          mtfEnabled: true,
+          mtfInstability: 0.9,
+          mtfMetaRegime: "trend",
+          mtfReadyFrameCount: 3,
+          mtfSufficientFrames: true
+        },
+        updatedAt: clock
+      })
+    });
+    const defaultMtfInstabilityState = defaultMtfInstabilityHarness.bot.evaluateArchitectStateForTick(
+      defaultMtfInstabilityHarness.bot.createTickSnapshot({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock }),
+      clock
+    );
+    if (defaultMtfInstabilityState.blockReason !== "mtf_instability_high" || defaultMtfInstabilityState.usable) {
+      throw new Error(`default architect MTF instability threshold should still block at 0.5: ${JSON.stringify(defaultMtfInstabilityState)}`);
+    }
+
+    clock += 10_000;
+    const overriddenMtfInstabilityHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.91,
+      reason: ["buy_signal"]
+    }), {
+      mtfConfig: {
+        enabled: true,
+        instabilityThreshold: 0.95
+      },
+      publishedArchitect: createTrendArchitect({
+        mtf: {
+          mtfAgreement: 0.4,
+          mtfDominantFrame: "medium",
+          mtfDominantTimeframe: "15m",
+          mtfEnabled: true,
+          mtfInstability: 0.9,
+          mtfMetaRegime: "trend",
+          mtfReadyFrameCount: 3,
+          mtfSufficientFrames: true
+        },
+        updatedAt: clock
+      })
+    });
+    const overriddenMtfInstabilityState = overriddenMtfInstabilityHarness.bot.evaluateArchitectStateForTick(
+      overriddenMtfInstabilityHarness.bot.createTickSnapshot({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock }),
+      clock
+    );
+    if (overriddenMtfInstabilityState.blockReason === "mtf_instability_high" || !overriddenMtfInstabilityState.usable) {
+      throw new Error(`configured architect MTF instability threshold should override the default 0.5 gating: ${JSON.stringify(overriddenMtfInstabilityState)}`);
     }
 
     clock += 10_000;
@@ -2517,7 +2642,7 @@ function runTradingBotTests() {
     clock += 1_000;
     mtfMediumTargetDistanceHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     const mtfMediumAllowedLog = mtfMediumTargetDistanceHarness.botLogs.find((entry) => entry.message === "entry_gate_allowed");
-    if (!mtfMediumTargetDistanceHarness.store.getPosition("bot_test") || !mtfMediumAllowedLog || mtfMediumAllowedLog.metadata.maxTargetDistancePctForShortHorizon !== 0.015 || mtfMediumAllowedLog.metadata.mtfAdjustmentApplied !== true) {
+    if (!mtfMediumTargetDistanceHarness.store.getPosition("bot_test") || !mtfMediumAllowedLog || mtfMediumAllowedLog.metadata.maxTargetDistancePctForShortHorizon !== 0.015 || mtfMediumAllowedLog.metadata.resolvedMtfAdjustmentApplied !== true) {
       throw new Error(`coherent medium MTF should widen the cap enough for the same entry: ${JSON.stringify(mtfMediumAllowedLog)}`);
     }
 
@@ -2551,7 +2676,7 @@ function runTradingBotTests() {
       entry.message === "entry_gate_blocked"
       && entry.metadata.blockReason === "target_distance_exceeds_short_horizon"
     );
-    if (mtfUnstableTargetDistanceHarness.store.getPosition("bot_test") || !mtfUnstableBlockedLog || mtfUnstableBlockedLog.metadata.maxTargetDistancePctForShortHorizon !== 0.01 || mtfUnstableBlockedLog.metadata.mtfParamFallbackReason !== "mtf_instability_above_threshold") {
+    if (mtfUnstableTargetDistanceHarness.store.getPosition("bot_test") || !mtfUnstableBlockedLog || mtfUnstableBlockedLog.metadata.maxTargetDistancePctForShortHorizon !== 0.01 || mtfUnstableBlockedLog.metadata.resolvedMtfFallbackReason !== "mtf_instability_above_threshold") {
       throw new Error(`below-coherence MTF should keep baseline target-distance blocking: ${JSON.stringify(mtfUnstableBlockedLog)}`);
     }
 

@@ -36,6 +36,7 @@ function categorizeEvent(scope: string, level: string, message: string): LogCate
 
   if (message === "BUY" || message === "SHORT") return "trade_open";
   if (message === "SELL" || message === "COVER") return "trade_close";
+  if (message === "trade_closed") return "trade_close";
   if (message === "SETUP") return "setup";
   if (message === "BLOCK_CHANGE") return "blocked";
   if (message === "RISK_CHANGE") return "risk_change";
@@ -101,33 +102,6 @@ function shouldLog(logType: LogType, category: LogCategory) {
   return categorySets[logType].has(category);
 }
 
-// Noisy message patterns that should be deduplicated/throttled in minimal mode.
-const NOISY_MESSAGES = new Set([
-  "BLOCK_CHANGE",
-  "entry_blocked",
-  "managed_recovery_updated",
-  "architect_published"
-]);
-
-const DEDUPE_WINDOW_MS = 15_000; // suppress identical noisy messages within 15s
-const lastNoisyEmit = new Map<string, number>();
-
-function makeDedupeKey(message: string, metadata?: Record<string, unknown>): string {
-  if (message === "BLOCK_CHANGE") {
-    return `BLOCK_CHANGE|${metadata?.botId || ""}|${metadata?.blockReason || metadata?.reason || ""}`;
-  }
-  if (message === "entry_blocked") {
-    return `entry_blocked|${metadata?.botId || ""}|${metadata?.reason || ""}`;
-  }
-  if (message === "managed_recovery_updated") {
-    return `managed_recovery_updated|${metadata?.botId || ""}|${metadata?.status || ""}`;
-  }
-  if (message === "architect_published") {
-    return `architect_published|${metadata?.symbol || ""}|${metadata?.publishedMarketRegime || metadata?.marketRegime || ""}|${metadata?.publishedRecommendedFamily || metadata?.recommendedFamily || ""}`;
-  }
-  return `${message}|${JSON.stringify(metadata || {})}`;
-}
-
 function compactArchitectMetadata(metadata?: Record<string, unknown>) {
   if (!metadata) return metadata;
   return {
@@ -174,29 +148,12 @@ function omitUndefinedMetadata(value: unknown): unknown {
   );
 }
 
-function shouldSuppressNoisy(message: string, metadata?: Record<string, unknown>): boolean {
-  if (!NOISY_MESSAGES.has(message)) return false;
-  const key = makeDedupeKey(message, metadata);
-  const last = lastNoisyEmit.get(key) || 0;
-  return (Date.now() - last) < DEDUPE_WINDOW_MS;
-}
-
-function recordNoisyEmit(message: string, metadata?: Record<string, unknown>) {
-  const key = makeDedupeKey(message, metadata);
-  lastNoisyEmit.set(key, Date.now());
-}
-
 function createLogger(scope: string, options: { eventSink?: ((event: any) => void) | null; logType?: string | null } = {}) {
   const logType = resolveLogType(options.logType);
 
   function emit(level: string, message: string, metadata?: Record<string, unknown>) {
     const category = categorizeEvent(scope, level, message);
     if (!shouldLog(logType, category)) {
-      return;
-    }
-
-    // Deduplicate noisy messages in minimal mode only
-    if (logType === "minimal" && shouldSuppressNoisy(message, metadata)) {
       return;
     }
 
@@ -223,10 +180,6 @@ function createLogger(scope: string, options: { eventSink?: ((event: any) => voi
         scope,
         time
       });
-    }
-
-    if (logType === "minimal" && NOISY_MESSAGES.has(message)) {
-      recordNoisyEmit(message, metadata);
     }
   }
 

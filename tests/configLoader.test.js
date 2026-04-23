@@ -302,6 +302,38 @@ function runConfigLoaderTests() {
     ]
   }, "invalid riskOverrides.volatilitySizingMinPenalty");
 
+  {
+    const invalidVolatilityMultiplierRootDir = createTempConfigRoot({
+      bots: [
+        {
+          allowedStrategies: ["emaCross"],
+          enabled: true,
+          id: "bot_invalid_volatility_sizing_multiplier",
+          riskOverrides: {
+            volatilitySizingMultiplier: 2
+          },
+          riskProfile: "medium",
+          strategy: "emaCross",
+          symbol: "BTC/USDT"
+        }
+      ]
+    });
+    try {
+      new ConfigLoader(invalidVolatilityMultiplierRootDir).loadBotsConfig();
+      throw new Error("expected config load to fail with invalid riskOverrides.volatilitySizingMultiplier");
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      if (message === "expected config load to fail with invalid riskOverrides.volatilitySizingMultiplier") {
+        throw error;
+      }
+      if (!message.includes("invalid riskOverrides.volatilitySizingMultiplier")) {
+        throw new Error(`unexpected config validation error: ${error && error.stack ? error.stack : error}`);
+      }
+    } finally {
+      fs.rmSync(invalidVolatilityMultiplierRootDir, { force: true, recursive: true });
+    }
+  }
+
   expectConfigError({
     bots: [
       {

@@ -46,6 +46,28 @@ function runContextBuilderTests() {
   assertClose(fullWindow.features.netMoveRatio, 0.11, "rolling-full netMoveRatio should remain unchanged");
   assertClose(fullWindow.features.dataQuality, 0.9772727272727273, "rolling-full dataQuality should remain unchanged");
 
+  const sameLengthEffectiveTicks = builder.createSnapshot({
+    dataMode: "live",
+    effectiveTicks: ticks.slice(),
+    lastPublishedRegimeSwitchAt: ticks[0].timestamp,
+    lastPublishedRegimeSwitchFrom: "range",
+    lastPublishedRegimeSwitchTo: "trend",
+    maxWindowMs: 60_000,
+    observedAt: 1_200_000,
+    symbol: "BTC/USDT",
+    ticks,
+    warmupMs: 30_000
+  });
+
+  if (sameLengthEffectiveTicks.windowMode !== "rolling_full" || sameLengthEffectiveTicks.sampleSize !== 12 || sameLengthEffectiveTicks.effectiveSampleSize !== 12) {
+    throw new Error(`equal-length effective ticks should keep rolling-full semantics: ${JSON.stringify(sameLengthEffectiveTicks)}`);
+  }
+  if (sameLengthEffectiveTicks.summary !== fullWindow.summary) {
+    throw new Error(`equal-length effective ticks should preserve rolling-full summary: ${sameLengthEffectiveTicks.summary}`);
+  }
+  assertClose(sameLengthEffectiveTicks.features.netMoveRatio, fullWindow.features.netMoveRatio, "equal-length effective ticks should preserve feature inputs");
+  assertClose(sameLengthEffectiveTicks.rollingMaturity, fullWindow.rollingMaturity, "equal-length effective ticks should preserve rolling maturity");
+
   const postSwitch = builder.createSnapshot({
     dataMode: "live",
     effectiveTicks: ticks.slice(7),
