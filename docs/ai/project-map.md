@@ -7,7 +7,7 @@ Current runtime shape:
 - `src/bots/`: bot classes; `tradingBot.ts` is the top-level runtime orchestrator
 - `src/engines/`: execution, indicators, backtest engine adapter
 - `src/streams/`: market and user stream integration
-- `public/`: browser-ready dashboard adapters and static frontend; the active operator UI is the single Pulse entry point
+- `public/`: static browser frontend for the active Pulse operator UI; the live Pulse chart frontend was removed for v18 stability and no chart library is loaded in the active browser path
 - `tests/`: behavior lock for runtime, roles, store, server, and stream flows
 - `legacy/`: isolated old code, not the target architecture
 
@@ -23,7 +23,7 @@ Important repo facts:
 - `src/engines/backtestEngine.ts` is now a modern adapter over legacy backtest modules, not a full replay runtime.
 - `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses, and projects Pulse-focused operator payloads.
 - `src/core/systemServer.ts` serves the single Pulse dashboard entry point at `/` and static UI assets. `/compact` now normalizes to `/`; the dashboard remains UI/API-facing only and must not become a control plane.
-- `src/core/systemServer.ts` exposes additive `/api/pulse` server-side projection and `/api/pulse/stream` SSE for the operator-facing Pulse contract; chart data, filtered events/trades, and legacy API endpoints remain available separately.
+- `src/core/systemServer.ts` exposes additive `/api/pulse` server-side projection and `/api/pulse/stream` SSE for the operator-facing Pulse contract; the active Pulse frontend no longer renders a chart, while backend chart data, filtered events/trades, and legacy API endpoints remain available separately.
 - `src/core/systemServer.ts` short-facing report surfaces are now covered by regression tests:
   - `buildTradesPayload()` preserves `side: "short"`
   - `buildChartPayload()` emits `SHORT` / `COVER` markers
@@ -82,7 +82,7 @@ Boundary map:
 - `tradingBotTelemetry`: operator-facing metadata shaping, including full/Pulse-facing MTF publish and entry cap-resolution diagnostics
 - `StateStore`: single runtime state container
 - `BacktestEngine`: adapter boundary for future replay migration, not full runtime parity yet
-- `SystemServer` plus `public/`: dashboard/API surface, separate from core decision logic
+- `SystemServer` plus `public/`: Pulse UI/API surface, separate from core decision logic
 
 Hotspots to treat carefully:
 

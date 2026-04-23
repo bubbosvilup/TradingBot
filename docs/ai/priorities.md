@@ -56,7 +56,7 @@ Priority notes:
 
 - P0 safety and quarantine work outranks convenience refactors.
 - Dashboard work should stay decoupled from core trading logic where possible.
-- Compact monitor work should stay read-only and separate from operator controls.
+- The removed compact monitor/chart surfaces should not be reintroduced casually; Pulse remains the only active UI and should stay read-only/operator-scoped.
 - MTF work should remain behind `mtf.enabled` / `MTF_ENABLED`; raw timeframe mapping belongs in MTF frame config, not in downstream strategy/economics roles.
 - Historical preload remains a bootstrap/store/history concern. It must not move into `TradingBot`, downstream strategy roles, or the hot tick path.
 - RSI target-distance permissiveness may only come from coherent MTF medium/long internal frames and must remain observable in telemetry.
@@ -64,6 +64,7 @@ Priority notes:
 - Volatility-aware sizing may only reduce or preserve position size, and post-loss cooldown behavior must remain stronger than post-win cooldown behavior.
 - Avoid broad rewrites while the runtime is under active refactor.
 - Pulse remains the single operator UI entry point; keep it API-facing and separate from trading decisions.
+- The active Pulse frontend no longer includes chart rendering; keep any future chart work out of scope unless explicitly re-approved.
 - Treat active runtime short support and its current report/export surfaces as verified; replay/backtest parity remains explicitly out of scope and still incomplete.
 - Launcher prep should stay outside trading decision paths; mode selection and debug capture configuration belong in startup/UI/config plumbing.
 - Debug capture design should separate:

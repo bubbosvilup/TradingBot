@@ -16,6 +16,7 @@ Il progetto mantiene nel repository alcune fondamenta per lavori futuri come liv
 | Short support | Supporto short di prima classe nel runtime paper e nelle superfici report principali; replay/backtest parity ancora non completata |
 | MTF | Infrastruttura e diagnostica presenti, abilitato nella config default e spegnibile via env |
 | Historical preload | Preload startup-only da Binance/ccxt REST, opzionale e configurabile |
+/api/chart and buildChartPayload() are retained as backend-only/dormant chart data surfaces for future replay/UI work. Pulse does not currently consume them.
 
 Nota importante:
 - `execution-mode=live` fallisce esplicitamente in bootstrap.
@@ -160,8 +161,9 @@ Questi sono i lavori principali completati oggi e allineati al repository corren
 
 ### Monitor compatto locale
 
+- Nota storica: questa sezione descrive un passaggio intermedio poi superato; il monitor compatto separato non e piu una UI attiva distinta e `/compact` viene normalizzato a `/`.
 - Aggiunta una pagina dedicata `/compact` per osservabilita locale ad alta densita.
-- Il monitor compatto resta separato dalla dashboard completa e non introduce una seconda architettura frontend.
+- In quel passaggio il monitor compatto restava separato dalla dashboard completa senza introdurre una seconda architettura frontend attiva.
 - Il monitor compatto mostra solo stato runtime, portfolio, safety, righe bot dense, ultimo trade e ultimo evento rischio.
 - Aggiunto filtro locale `abnormal only` per restringere la vista a posizioni aperte, pause, resume manuali, recovery, kill switch o reason di blocco.
 - Aggiunta apertura automatica opt-in:
@@ -363,6 +365,7 @@ Backtest / replay status
 - Pulse usa:
   - `GET /api/pulse`
   - `GET /api/pulse/stream`
+- Il frontend Pulse attivo non carica piu una libreria chart browser e non usa piu `/api/chart`.
 - Pulse espone anche azioni operatore strette e gia previste dal backend:
   - resume manuale dei bot in pausa per `max_drawdown_reached`
   - storico trade per bot
