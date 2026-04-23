@@ -36,6 +36,7 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: harden market stream teardown so shutdown does not leave REST fallback snapshots logging after tests finish.
 - In progress: integrate backtest with the modern runtime through `src/engines/backtestEngine.ts`; full replay parity is still not done.
 - Completed: realign repo documentation with the current Pulse UI, short-side runtime support, authoritative exit capabilities, and coherent paused-state behavior.
+- Completed: close the current short-facing runtime/report audit loop with legacy replay guardrails, short-aware report matching, `ExperimentReporter` sideSummary, and `SystemServer` short-report regression coverage.
 - Next: clean up the current logging noise without regressing structured telemetry, risk signals, or test visibility.
 - Next: define a launcher-ready runtime surface with explicit startup modes `Normal` and `Debug`.
 - Next: prepare a debug-run capture contract for `jsonl`, including which fields are append-only event records versus rolling numeric counters/snapshots.
@@ -46,7 +47,7 @@ Work top-down unless a task explicitly says otherwise.
   - first window selects startup mode
   - `Debug` opens a second window for run-capture selection
   - selected capture fields persist into a `jsonl`-friendly config/runtime contract
-- Continue end-to-end audit of first-class short support across runtime, exits, telemetry, analytics, and operator UI.
+- Continue short work only on the remaining replay/backtest parity gap and any future low-priority reporting polish.
 - Continue hot-path micro-optimizations after the latest `ContextBuilder` allocation pass.
 - Continue architectural refinements after the latest trimming patches and role extraction work land.
 
@@ -62,7 +63,7 @@ Priority notes:
 - Volatility-aware sizing may only reduce or preserve position size, and post-loss cooldown behavior must remain stronger than post-win cooldown behavior.
 - Avoid broad rewrites while the runtime is under active refactor.
 - Pulse remains the single operator UI entry point; keep it API-facing and separate from trading decisions.
-- Treat short support as implemented but still audit-sensitive until replay/reporting/operator flows are explicitly re-checked end-to-end.
+- Treat active runtime short support and its current report/export surfaces as verified; replay/backtest parity remains explicitly out of scope and still incomplete.
 - Launcher prep should stay outside trading decision paths; mode selection and debug capture configuration belong in startup/UI/config plumbing.
 - Debug capture design should separate:
   - high-cardinality append-only events for `jsonl`

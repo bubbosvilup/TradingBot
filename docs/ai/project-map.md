@@ -24,6 +24,10 @@ Important repo facts:
 - `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses, and projects Pulse-focused operator payloads.
 - `src/core/systemServer.ts` serves the single Pulse dashboard entry point at `/` and static UI assets. `/compact` now normalizes to `/`; the dashboard remains UI/API-facing only and must not become a control plane.
 - `src/core/systemServer.ts` exposes additive `/api/pulse` server-side projection and `/api/pulse/stream` SSE for the operator-facing Pulse contract; chart data, filtered events/trades, and legacy API endpoints remain available separately.
+- `src/core/systemServer.ts` short-facing report surfaces are now covered by regression tests:
+  - `buildTradesPayload()` preserves `side: "short"`
+  - `buildChartPayload()` emits `SHORT` / `COVER` markers
+  - Pulse and positions payloads expose open short state clearly
 - `src/core/orchestrator.ts` can opt into opening the Pulse UI at startup through env flags, but this must remain explicit and non-essential to trading behavior.
 - `src/data/bots.config.json` now carries experiment label `quarantined_allow_small_loss_floor05`.
 - `reports/experiments/` still contains historical outputs for the quarantined label.
@@ -43,6 +47,10 @@ Important repo facts:
   - a bot closing while paused keeps its non-empty `pausedReason`
   - runtime state must not persist `status === "paused"` with a null/empty reason
 - `src/engines/executionEngine.ts`, `src/roles/openAttemptCoordinator.ts`, `src/core/systemServer.ts`, and active strategies are now side-aware for first-class short handling in paper runtime and operator telemetry.
+- `src/utils/exitLifecycleReport.ts` is now short-aware for runtime event enrichment:
+  - short close logs from `COVER` enrich report snapshots like long `SELL` closes
+  - latch analysis recognizes later `SHORT` entries alongside `BUY`
+- `src/core/experimentReporter.ts` now emits additive `sideSummary=long_only|short_only|mixed|none` in the text export without changing the broader report shape.
 - `src/engines/indicatorEngine.ts` still implements simple-window RSI, not Wilder-smoothed RSI; strategy thresholds are calibrated to that exact implementation.
 - `src/roles/openAttemptCoordinator.ts` and `src/roles/exitOutcomeCoordinator.ts` document short balance handling as a paper-only full-notional model, not realistic leveraged margin accounting.
 - `src/strategies/rsiReversion/config.json` now carries conservative short-horizon entry economics: `minExpectedNetEdgePct: 0.0015` and `maxTargetDistancePctForShortHorizon: 0.01`.

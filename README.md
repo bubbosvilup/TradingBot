@@ -13,7 +13,7 @@ Il progetto mantiene nel repository alcune fondamenta per lavori futuri come liv
 | Live order routing | Disabilitato dal runtime attivo |
 | Dashboard | Pulse UI statica servita da `public/` sulla route root `/` |
 | Backtest | Adapter moderno sopra il legacy, non ancora parita completa |
-| Short support | Supporto short di prima classe nel runtime paper, ancora da riallineare/auditare end-to-end |
+| Short support | Supporto short di prima classe nel runtime paper e nelle superfici report principali; replay/backtest parity ancora non completata |
 | MTF | Infrastruttura e diagnostica presenti, abilitato nella config default e spegnibile via env |
 | Historical preload | Preload startup-only da Binance/ccxt REST, opzionale e configurabile |
 
@@ -316,6 +316,22 @@ Backtest / replay status
 - The current backtest/replay path still runs through legacy replay modules via `BacktestEngine`.
 - That replay path is not short-parity with runtime. Flat-market short-entry semantics are hard-failed to avoid misleading reports.
 - Do not treat current backtest results as validation for short-capable strategies until replay parity is implemented.
+
+### Report / export clarity
+
+- Le superfici operator-facing principali del runtime attivo distinguono ora in modo esplicito gli short:
+  - `SystemServer.buildTradesPayload()` espone `side: "short"` sui closed trades
+  - `SystemServer.buildChartPayload()` usa marker `SHORT` / `COVER`
+  - Pulse e `buildPositionsPayload()` mostrano posizioni aperte short con side normalizzato e label esplicita
+- `exitLifecycleReport` e ora short-aware anche sui log evento:
+  - i close log `COVER` arricchiscono i close short come i `SELL` arricchiscono i close long
+  - il latch post-loss riconosce re-entry `SHORT` oltre ai re-entry `BUY`
+- `ExperimentReporter` aggiunge ora un indicatore additivo `sideSummary` nei report testuali:
+  - `long_only`
+  - `short_only`
+  - `mixed`
+  - `none`
+- Questo migliora chiarezza e regressione test sul runtime/reporting attivo, ma non equivale ancora a replay/backtest short parity.
 
 ### Pulse UI consolidata
 
