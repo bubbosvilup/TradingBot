@@ -1,4 +1,3 @@
-// Module responsibility: lightweight local regime hint for strategy diagnostics.
 // It is not the system-level routing brain; ArchitectService owns family recommendations.
 
 const RECENT_WINDOW_SIZE = 20;

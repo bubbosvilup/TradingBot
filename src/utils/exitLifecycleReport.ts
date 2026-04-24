@@ -1,5 +1,3 @@
-// Module responsibility: aggregate closed-trade outcomes and structured runtime events for exit-system analysis.
-
 import type { SystemEvent } from "../types/event.ts";
 import type { ClosedTradeRecord } from "../types/trade.ts";
 import type { PositionExitMechanism, PositionLifecycleEvent, PositionLifecycleState } from "../types/positionLifecycle.ts";

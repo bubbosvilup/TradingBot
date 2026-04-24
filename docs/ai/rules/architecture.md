@@ -50,6 +50,14 @@ When planning a refactor:
 - Name the destination module that should own it.
 - State what must remain stable externally: events, log fields, lifecycle semantics, thresholds, timing.
 - Prefer incremental extraction over simultaneous redesign.
+- Do not add generic file headers. Comments should explain why a boundary or invariant exists, not restate the file name.
+- Use precise verbs for functions and methods. Prefer `parse`, `coerce`, `sanitize`, `clamp`, `enforce`, `ingest`, `mark`, or `expire` over vague `normalize*`, `process*`, or broad `handle*` names when the narrower verb is true.
+- Extract magic numbers into named constants.
+- Do not create wrappers, adapters, or self-reported capability objects unless they add testable behavior or protect a real boundary.
+- Keep `get*` and `read*` methods pure reads.
+- Prefer small explicit code over broad abstractions, and do not hide legacy behavior behind cleaner-sounding names.
+- Separate real safety controls from metadata warnings.
+- Tests should prove behavior, not capability strings.
 
 If a change touches `TradingBot`:
 

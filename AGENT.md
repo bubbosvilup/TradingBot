@@ -75,6 +75,16 @@ Avoid putting these back into `TradingBot`:
 ## Safe refactor rules
 - Prefer minimal, behavior-preserving extraction
 - Do not silently change thresholds, debounce rules, lifecycle semantics, or risk behavior
+- Do not add generic file headers such as `// Module responsibility:`. File names, exports, and tests should carry that weight.
+- Write comments to explain why an invariant, boundary, or surprising choice exists. Do not comment on what the next line plainly does.
+- Avoid vague verbs such as `normalize*`, `process*`, and broad `handle*` names when a precise verb fits: `parse`, `coerce`, `sanitize`, `clamp`, `enforce`, `ingest`, `mark`, or `expire`.
+- Extract magic numbers into named constants at the smallest useful scope.
+- Do not create wrappers, adapters, or self-reporting capability objects unless they add testable behavior or protect a real boundary.
+- `get*` and `read*` methods must not mutate state.
+- Prefer small explicit code over broad abstractions.
+- Do not hide legacy behavior behind modern naming. If legacy behavior remains, name it honestly.
+- Keep real safety controls separate from metadata warnings. A warning field is not a guardrail.
+- Tests should prove behavior, not only self-reported capability strings.
 - Reuse existing store/runtime state; do not invent parallel persistence unless required
 - Keep historical preload startup-only and store-centered; do not add per-tick history fetches
 - Keep strategy economics policy explicit in strategy/economics surfaces; do not reintroduce strategy-id or symbol-name branching in shared economics code

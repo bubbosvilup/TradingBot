@@ -1,5 +1,3 @@
-// Module responsibility: resolve execution-fee settings from central environment configuration.
-
 type FeeRateSource = "FEE_BPS" | "ENTRY_FEE_BPS" | "EXIT_FEE_BPS" | "default";
 
 function parseFeeBps(value: unknown) {

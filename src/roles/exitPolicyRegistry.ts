@@ -1,5 +1,3 @@
-// Module responsibility: named exit policies and lightweight resolution helpers.
-
 import type { ExitPolicy, InvalidationMode } from "../types/exitPolicy.ts";
 
 const RSI_REVERSION_PRO: ExitPolicy = {

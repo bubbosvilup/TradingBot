@@ -9,6 +9,7 @@ Workflow:
 3. Read `docs/ai/priorities.md`.
 4. Follow `docs/ai/playbooks/audit-flow.md`.
 5. Apply the rules in `docs/ai/rules/`.
+6. Apply `AGENT.md` human-readable coding rules when recommending patches; tests must prove behavior, not self-reported capability strings.
 
 Mandatory checks:
 

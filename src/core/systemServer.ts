@@ -1,5 +1,3 @@
-// Module responsibility: lightweight HTTP layer exposing stateStore data and serving the observability UI.
-
 import type { ArchitectAssessment, ArchitectPublisherState, RecommendedFamily } from "../types/architect.ts";
 import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
 import type { ContextSnapshot } from "../types/context.ts";
@@ -368,6 +366,72 @@ class SystemServer {
       ok: true,
       pausedReason: null,
       status: "running"
+    });
+  }
+
+  hasPostLossArchitectLatchState(state: BotRuntimeState) {
+    return Boolean(state.postLossArchitectLatchActive)
+      || Number(state.postLossArchitectLatchFreshPublishCount || 0) > 0
+      || Boolean(state.postLossArchitectLatchActivatedAt)
+      || Boolean(state.postLossArchitectLatchLastCountedPublishedAt)
+      || Boolean(state.postLossArchitectLatchStartedAt)
+      || Boolean(state.postLossArchitectLatchStrategyId)
+      || Boolean(state.postLossArchitectLatchTimedOutAt)
+      || (Array.isArray(state.lastDecisionReasons)
+        && state.lastDecisionReasons.some((reason) =>
+          reason === "post_loss_architect_latch"
+          || reason === "post_loss_latch_timeout_requires_operator"
+        ));
+  }
+
+  handlePostLossLatchResetRequest(botId: string, response: any) {
+    const state = this.store.getBotState(botId);
+    if (!state) {
+      this.json(response, {
+        botId,
+        error: "bot_not_found",
+        ok: false
+      }, 404);
+      return;
+    }
+
+    if (!this.hasPostLossArchitectLatchState(state)) {
+      this.json(response, {
+        botId,
+        error: "post_loss_latch_reset_not_required",
+        ok: false,
+        postLossArchitectLatchActive: Boolean(state.postLossArchitectLatchActive),
+        postLossArchitectLatchTimedOutAt: state.postLossArchitectLatchTimedOutAt || null
+      }, 409);
+      return;
+    }
+
+    const nextDecisionReasons = (state.lastDecisionReasons || []).filter((reason) =>
+      reason !== "post_loss_architect_latch"
+      && reason !== "post_loss_latch_timeout_requires_operator"
+    );
+    this.store.updateBotState(botId, {
+      lastDecisionReasons: nextDecisionReasons,
+      postLossArchitectLatchActive: false,
+      postLossArchitectLatchActivatedAt: null,
+      postLossArchitectLatchFreshPublishCount: 0,
+      postLossArchitectLatchLastCountedPublishedAt: null,
+      postLossArchitectLatchStartedAt: null,
+      postLossArchitectLatchStrategyId: null,
+      postLossArchitectLatchTimedOutAt: null
+    });
+    this.logger.info("manual_post_loss_latch_reset", {
+      botId,
+      previousFreshPublishCount: state.postLossArchitectLatchFreshPublishCount || 0,
+      previousStrategyId: state.postLossArchitectLatchStrategyId || null,
+      previousTimedOutAt: state.postLossArchitectLatchTimedOutAt || null
+    });
+    this.json(response, {
+      action: "manual_post_loss_latch_reset",
+      botId,
+      ok: true,
+      postLossArchitectLatchActive: false,
+      postLossArchitectLatchTimedOutAt: null
     });
   }
 
@@ -1084,6 +1148,11 @@ class SystemServer {
     const resumeMatch = pathname.match(/^\/api\/bots\/([^/]+)\/resume$/);
     if (method === "POST" && resumeMatch) {
       this.handleManualResumeRequest(decodeURIComponent(resumeMatch[1]), response);
+      return;
+    }
+    const postLossLatchResetMatch = pathname.match(/^\/api\/bots\/([^/]+)\/reset-post-loss-latch$/);
+    if (method === "POST" && postLossLatchResetMatch) {
+      this.handlePostLossLatchResetRequest(decodeURIComponent(postLossLatchResetMatch[1]), response);
       return;
     }
 

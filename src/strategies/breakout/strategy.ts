@@ -1,5 +1,3 @@
-// Module responsibility: breakout strategy for expansion and momentum phases.
-
 import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
 
 function estimateExpectedGrossEdgePct(inputs: StrategyEntryEdgeInputs) {

@@ -1,5 +1,3 @@
-// Module responsibility: coordinate risk-sized open attempts and execution outcomes without owning surrounding orchestration.
-
 import type { BotRuntimeState, RiskOverrides, RiskProfile } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ExecutionEngineLike, RiskManagerLike, TradeConstraints } from "../types/runtime.ts";

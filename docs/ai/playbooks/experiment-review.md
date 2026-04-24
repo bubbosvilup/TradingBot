@@ -15,6 +15,7 @@ Checklist:
    - confirmed recovery target precedence over invalidation
    - RSI target-distance gate in `entryCoordinator`
    - MTF coherence thresholds for RSI cap widening
+7. Apply `AGENT.md` human-readable coding rules to any proposed experiment patch; do not hide legacy or quarantined behavior behind modern names.
 
 Current standing:
 

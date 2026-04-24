@@ -18,6 +18,7 @@ Checklist:
    - log/output volume growing because rolling numeric state is emitted as append-only noise
    - managed-recovery invalidation becoming easier than entry
    - entry ignoring active Architect challenger hysteresis
+   - generic file headers, vague naming, inline magic numbers, broad wrappers, or hidden state mutation in `get*` / `read*`
 6. Identify the smallest safe patch set.
 7. Name required tests before editing.
 

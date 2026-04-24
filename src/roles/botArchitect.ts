@@ -1,5 +1,3 @@
-// Module responsibility: classify prepared context into a stable strategy family recommendation.
-
 import type { ArchitectAssessment, FamilyScores, MarketRegime, RegimeScores, RecommendedFamily } from "../types/architect.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 

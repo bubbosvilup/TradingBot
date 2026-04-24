@@ -1,5 +1,3 @@
-// Module responsibility: build TradingBot diagnostics and compact-log metadata without owning emission timing.
-
 import type { ArchitectTimingMetadata, ArchitectUsabilityState } from "./architectCoordinator.ts";
 import type { BotRuntimeState, BotConfig } from "../types/bot.ts";
 import type { ContextSnapshot } from "../types/context.ts";

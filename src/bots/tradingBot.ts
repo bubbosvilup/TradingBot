@@ -1,5 +1,3 @@
-// Module responsibility: real bot implementation composed from strategy, risk, performance and execution roles.
-
 import type { BotConfig } from "../types/bot.ts";
 import type { ArchitectAssessment } from "../types/architect.ts";
 import type { MarketTick } from "../types/market.ts";
@@ -1212,15 +1210,16 @@ class TradingBot extends BaseBot {
     this.logArchitectEntryShortCircuit(snapshot.architectState);
   }
 
-  getMarketDataFreshnessState(timestamp: number): MarketDataFreshnessState {
+  getMarketDataFreshnessState(): MarketDataFreshnessState {
+    const observedAt = this.now();
     return typeof this.deps.store.getMarketDataFreshness === "function"
       ? this.deps.store.getMarketDataFreshness(this.config.symbol, {
-          now: timestamp
+          now: observedAt
         })
       : {
           reason: "market_data_freshness_unavailable",
           status: "stale",
-          updatedAt: timestamp
+          updatedAt: observedAt
         };
   }
 
@@ -1247,6 +1246,20 @@ class TradingBot extends BaseBot {
       riskReason: "market_data_not_fresh"
     });
     this.logEntryBlocked(blockedState, "market_data_not_fresh");
+  }
+
+  logDegradedDataExitWarning(freshness: MarketDataFreshnessState, tick: MarketTick) {
+    if (freshness.status === "fresh") {
+      return;
+    }
+    this.deps.logger.bot(this.config, "degraded_data_exit_warning", {
+      marketDataFreshnessReason: freshness.reason || null,
+      marketDataFreshnessReceivedAt: freshness.receivedAt || null,
+      marketDataFreshnessStatus: freshness.status,
+      marketDataFreshnessUpdatedAt: freshness.updatedAt || null,
+      signalTimestamp: tick.timestamp,
+      symbol: this.config.symbol
+    });
   }
 
   evaluateTickDecision(snapshot: TradingTickArchitectContext): TradingTickDecisionContext {
@@ -1294,10 +1307,10 @@ class TradingBot extends BaseBot {
     const portfolioKillSwitch = typeof this.deps.store.getPortfolioKillSwitchState === "function"
       ? this.deps.store.getPortfolioKillSwitchState({
           feeRate: Number(this.deps.executionEngine?.feeRate || 0),
-          now: snapshot.tick.timestamp
+          now: this.now()
         })
       : null;
-    const marketDataFreshness = this.getMarketDataFreshnessState(snapshot.tick.timestamp);
+    const marketDataFreshness = this.getMarketDataFreshnessState();
     const riskGate = this.deps.riskManager.canOpenTrade({
       now: snapshot.tick.timestamp,
       performance: snapshot.performance,
@@ -1742,7 +1755,7 @@ class TradingBot extends BaseBot {
     }
 
     if (!architectSnapshot.position) {
-      const marketDataFreshness = this.getMarketDataFreshnessState(tick.timestamp);
+      const marketDataFreshness = this.getMarketDataFreshnessState();
       if (marketDataFreshness.status !== "fresh") {
         const actionTimer = startTimer();
         this.handleMarketDataFreshnessShortCircuit(architectSnapshot, marketDataFreshness);
@@ -1757,6 +1770,8 @@ class TradingBot extends BaseBot {
         }
         return;
       }
+    } else {
+      this.logDegradedDataExitWarning(this.getMarketDataFreshnessState(), tick);
     }
 
     const decisionTimer = startTimer();

@@ -1,5 +1,3 @@
-// Module responsibility: resolve symbolic recovery target sources into concrete price levels.
-
 import type { MarketContext } from "../types/strategy.ts";
 import type { PositionRecord } from "../types/trade.ts";
 import type { ExitPolicy } from "../types/exitPolicy.ts";

@@ -1,5 +1,3 @@
-// Module responsibility: shared helpers for persisted position lifecycle and managed recovery state.
-
 import type { PositionRecord } from "../types/trade.ts";
 import type { ExitPolicy } from "../types/exitPolicy.ts";
 import type { PositionLifecycleEvent, PositionLifecycleState } from "../types/positionLifecycle.ts";

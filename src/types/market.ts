@@ -1,5 +1,3 @@
-// Module responsibility: market data contracts used across streams and state.
-
 export interface MarketTick {
   symbol: string;
   price: number;

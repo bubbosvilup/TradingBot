@@ -1,5 +1,3 @@
-// Module responsibility: minimal shared runtime dependency contracts for CommonJS-driven TS files.
-
 import type { ArchitectAssessment, ArchitectPublisherState, RecommendedFamily } from "./architect.ts";
 import type { BotConfig, BotRuntimeState, RiskOverrides, RiskProfile } from "./bot.ts";
 import type { ContextSnapshot } from "./context.ts";
@@ -65,6 +63,7 @@ export type MarketDataFreshnessStatus = "fresh" | "degraded" | "stale";
 
 export interface MarketDataFreshnessState {
   lastTickTimestamp?: number;
+  receivedAt?: number;
   reason?: string;
   status: MarketDataFreshnessStatus;
   updatedAt: number;

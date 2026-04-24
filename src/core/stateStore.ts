@@ -1,5 +1,3 @@
-// Module responsibility: central in-memory state store for prices, bots, positions, orders and performance.
-
 import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
 import type { ArchitectAssessment, ArchitectPublisherState } from "../types/architect.ts";
 import type { Clock } from "./clock.ts";
@@ -310,7 +308,7 @@ class StateStore {
     return normalized ? normalized : null;
   }
 
-  normalizeBotRuntimeState(
+  enforceBotLifecycleStateInvariants(
     current: BotRuntimeState | null | undefined,
     candidate: BotRuntimeState,
     options: { invalidPausedFallbackStatus?: BotRuntimeState["status"] } = {}
@@ -337,23 +335,20 @@ class StateStore {
     };
   }
 
-  registerBot(config: BotConfig) {
-    const existingState = this.botStates.get(config.id) || null;
-    const initialBalance = existingState?.availableBalanceUsdt ?? config.initialBalanceUsdt ?? 1000;
-    this.botConfigs.set(config.id, config);
-    const nextState = this.normalizeBotRuntimeState(existingState, {
+  createDefaultBotRuntimeState(config: BotConfig, initialBalance: number): BotRuntimeState {
+    return {
       activeStrategyId: config.strategy,
       availableBalanceUsdt: initialBalance,
+      botId: config.id,
       cooldownReason: null,
       cooldownUntil: null,
-      entrySignalStreak: 0,
-      exitSignalStreak: 0,
+      entryBlockedCount: 0,
       entryEvaluationsCount: 0,
       entryEvaluationLogsCount: 0,
-      entryBlockedCount: 0,
-      entrySkippedCount: 0,
       entryOpenedCount: 0,
-      managedRecoveryConsecutiveCount: existingState?.managedRecoveryConsecutiveCount ?? 0,
+      entrySignalStreak: 0,
+      entrySkippedCount: 0,
+      exitSignalStreak: 0,
       lastDecision: "hold",
       lastDecisionConfidence: 0,
       lastDecisionReasons: [],
@@ -364,6 +359,7 @@ class StateStore {
       lastTickAt: null,
       lastTradeAt: null,
       lossStreak: 0,
+      managedRecoveryConsecutiveCount: 0,
       pausedReason: null,
       postLossArchitectLatchActive: false,
       postLossArchitectLatchActivatedAt: null,
@@ -373,7 +369,20 @@ class StateStore {
       postLossArchitectLatchStrategyId: null,
       postLossArchitectLatchTimedOutAt: null,
       realizedPnl: 0,
-      ...(existingState || {}),
+      status: config.enabled ? "idle" : "stopped",
+      symbol: config.symbol
+    };
+  }
+
+  registerBot(config: BotConfig) {
+    const existingState = this.botStates.get(config.id) || null;
+    const initialBalance = existingState?.availableBalanceUsdt ?? config.initialBalanceUsdt ?? 1000;
+    this.botConfigs.set(config.id, config);
+    const defaultNewBotState = this.createDefaultBotRuntimeState(config, initialBalance);
+    const preservedRuntimeState = existingState ? { ...existingState } : {};
+    const configOwnedState: Partial<BotRuntimeState> = {
+      activeStrategyId: config.strategy,
+      availableBalanceUsdt: initialBalance,
       botId: config.id,
       status: !config.enabled
         ? "stopped"
@@ -381,6 +390,11 @@ class StateStore {
           ? "paused"
           : "idle",
       symbol: config.symbol
+    };
+    const nextState = this.enforceBotLifecycleStateInvariants(existingState, {
+      ...defaultNewBotState,
+      ...preservedRuntimeState,
+      ...configOwnedState
     }, {
       invalidPausedFallbackStatus: config.enabled ? "idle" : "stopped"
     });
@@ -535,11 +549,19 @@ class StateStore {
       : Number.isFinite(Number(previous?.lastTickTimestamp))
         ? Number(previous?.lastTickTimestamp)
         : undefined;
+    const receivedAt = Number.isFinite(Number(candidate?.receivedAt))
+      ? Number(candidate.receivedAt)
+      : Number.isFinite(Number(candidate?.updatedAt))
+        ? updatedAt
+        : Number.isFinite(Number(previous?.receivedAt))
+        ? Number(previous?.receivedAt)
+        : updatedAt;
     const normalizedReason = candidate?.reason === undefined
       ? (candidate.status === "fresh" ? undefined : previous?.reason)
       : String(candidate.reason || "").trim() || undefined;
     return {
       lastTickTimestamp,
+      receivedAt,
       reason: normalizedReason,
       status: candidate.status,
       updatedAt
@@ -576,8 +598,8 @@ class StateStore {
     }
     if (
       staleAfterMs !== null
-      && Number.isFinite(Number(current.lastTickTimestamp))
-      && Math.max(0, observedAt - Number(current.lastTickTimestamp)) >= staleAfterMs
+      && Number.isFinite(Number(current.receivedAt ?? current.updatedAt))
+      && Math.max(0, observedAt - Number(current.receivedAt ?? current.updatedAt)) >= staleAfterMs
     ) {
       return {
         ...current,
@@ -589,7 +611,7 @@ class StateStore {
     return current;
   }
 
-  refreshMarketDataFreshness(
+  markMarketDataStaleIfExpired(
     symbols: string[],
     options: { now?: number; staleAfterMs?: number } = {}
   ) {
@@ -602,10 +624,10 @@ class StateStore {
       .filter(Boolean);
     for (const symbol of refreshedSymbols) {
       const current = this.marketDataFreshnessBySymbol.get(symbol) || null;
-      const lastTickTimestamp = Number.isFinite(Number(current?.lastTickTimestamp))
-        ? Number(current?.lastTickTimestamp)
+      const lastObservedAt = Number.isFinite(Number(current?.receivedAt ?? current?.updatedAt))
+        ? Number(current?.receivedAt ?? current?.updatedAt)
         : null;
-      if (lastTickTimestamp === null) {
+      if (lastObservedAt === null) {
         this.setMarketDataFreshness(symbol, {
           reason: "awaiting_first_tick",
           status: "stale",
@@ -613,9 +635,8 @@ class StateStore {
         });
         continue;
       }
-      if (staleAfterMs !== null && Math.max(0, observedAt - lastTickTimestamp) >= staleAfterMs) {
+      if (staleAfterMs !== null && Math.max(0, observedAt - lastObservedAt) >= staleAfterMs) {
         this.setMarketDataFreshness(symbol, {
-          lastTickTimestamp,
           reason: "market_data_stale",
           status: "stale",
           updatedAt: observedAt
@@ -657,7 +678,7 @@ class StateStore {
   updateBotState(botId: string, patch: Partial<BotRuntimeState>) {
     const current = this.botStates.get(botId);
     if (!current) return;
-    this.botStates.set(botId, this.normalizeBotRuntimeState(current, {
+    this.botStates.set(botId, this.enforceBotLifecycleStateInvariants(current, {
       ...current,
       ...patch
     }));

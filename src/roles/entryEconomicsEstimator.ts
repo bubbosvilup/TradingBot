@@ -1,5 +1,3 @@
-// Module responsibility: strategy-aware entry economics estimation with shared cost normalization.
-
 import type { EntryEconomicsEstimate, IndicatorSnapshot, MarketContext, Strategy, StrategyEntryEdgeInputs } from "../types/strategy.ts";
 import type { MtfPublishDiagnostics } from "../types/mtf.ts";
 import type { TradeDirection } from "../types/trade.ts";

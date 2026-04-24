@@ -754,6 +754,73 @@ async function runSystemServerTests() {
     throw new Error(`manual resume API should reject bots that do not require manual resume: ${JSON.stringify(repeatResumeResponse)}`);
   }
 
+  pausedStore.updateBotState("bot_paused", {
+    cooldownReason: "loss_cooldown",
+    cooldownUntil: now + 60_000,
+    lastDecisionReasons: [
+      "post_loss_latch_timeout_requires_operator",
+      "cooldown_active"
+    ],
+    pausedReason: "max_drawdown_reached",
+    postLossArchitectLatchActive: true,
+    postLossArchitectLatchActivatedAt: now - 30_000,
+    postLossArchitectLatchFreshPublishCount: 1,
+    postLossArchitectLatchLastCountedPublishedAt: now - 10_000,
+    postLossArchitectLatchStartedAt: now - 30_000,
+    postLossArchitectLatchStrategyId: "emaCross",
+    postLossArchitectLatchTimedOutAt: now - 5_000,
+    status: "paused"
+  });
+  const latchResetResponse = createResponseRecorder();
+  resumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3107" },
+    method: "POST",
+    url: "/api/bots/bot_paused/reset-post-loss-latch"
+  }, latchResetResponse);
+  const latchResetPayload = JSON.parse(String(latchResetResponse.body || "{}"));
+  const latchResetState = pausedStore.getBotState("bot_paused");
+  if (latchResetResponse.statusCode !== 200 || latchResetPayload.ok !== true || latchResetPayload.action !== "manual_post_loss_latch_reset") {
+    throw new Error(`post-loss latch reset API should surface the explicit operator action: ${JSON.stringify({ latchResetResponse, latchResetPayload })}`);
+  }
+  if (latchResetState.postLossArchitectLatchActive !== false
+    || latchResetState.postLossArchitectLatchActivatedAt !== null
+    || latchResetState.postLossArchitectLatchFreshPublishCount !== 0
+    || latchResetState.postLossArchitectLatchLastCountedPublishedAt !== null
+    || latchResetState.postLossArchitectLatchStartedAt !== null
+    || latchResetState.postLossArchitectLatchStrategyId !== null
+    || latchResetState.postLossArchitectLatchTimedOutAt !== null) {
+    throw new Error(`post-loss latch reset API should clear only latch state: ${JSON.stringify(latchResetState)}`);
+  }
+  if (latchResetState.status !== "paused"
+    || latchResetState.pausedReason !== "max_drawdown_reached"
+    || latchResetState.cooldownReason !== "loss_cooldown"
+    || latchResetState.cooldownUntil !== now + 60_000
+    || latchResetState.lastDecisionReasons.includes("post_loss_latch_timeout_requires_operator")
+    || !latchResetState.lastDecisionReasons.includes("cooldown_active")) {
+    throw new Error(`post-loss latch reset API should preserve paused/cooldown state and remove only latch reasons: ${JSON.stringify(latchResetState)}`);
+  }
+  if (!resumeLogs.find((entry) => entry.message === "manual_post_loss_latch_reset" && entry.metadata?.botId === "bot_paused")) {
+    throw new Error(`post-loss latch reset API should log the manual reset action: ${JSON.stringify(resumeLogs)}`);
+  }
+  const repeatLatchResetResponse = createResponseRecorder();
+  resumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3107" },
+    method: "POST",
+    url: "/api/bots/bot_paused/reset-post-loss-latch"
+  }, repeatLatchResetResponse);
+  if (repeatLatchResetResponse.statusCode !== 409 || JSON.parse(String(repeatLatchResetResponse.body || "{}")).error !== "post_loss_latch_reset_not_required") {
+    throw new Error(`post-loss latch reset API should reject bots without active/timed-out latch state: ${JSON.stringify(repeatLatchResetResponse)}`);
+  }
+  const missingLatchResetResponse = createResponseRecorder();
+  resumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3107" },
+    method: "POST",
+    url: "/api/bots/missing/reset-post-loss-latch"
+  }, missingLatchResetResponse);
+  if (missingLatchResetResponse.statusCode !== 404 || JSON.parse(String(missingLatchResetResponse.body || "{}")).error !== "bot_not_found") {
+    throw new Error(`post-loss latch reset API should follow bot-not-found style: ${JSON.stringify(missingLatchResetResponse)}`);
+  }
+
   const killSwitchResumeStore = new StateStore();
   killSwitchResumeStore.registerBot({
     allowedStrategies: ["emaCross"],

@@ -21,6 +21,7 @@ Guardrails:
 - Coherent MTF RSI cap widening requires enabled MTF, sufficient ready frames, `mtfMetaRegime === "range"`, present internal dominant frame, `mtfInstability <= 0.25`, and `mtfAgreement >= 0.75`.
 - The only allowed MTF cap policy today is `short` = baseline, `medium` = `1.5x`, `long` = `2.0x`; disabled, unclear, unstable, insufficient, non-range, or missing-dominant context must remain baseline.
 - Do not hide risk changes inside UI or telemetry patches.
+- Do not use naming cleanup or wrapper extraction to hide legacy risk behavior. If behavior remains legacy, name and test it honestly.
 
 Required review questions for risk-sensitive patches:
 

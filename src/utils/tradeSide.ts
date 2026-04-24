@@ -1,5 +1,3 @@
-// Module responsibility: normalize trade side semantics and directional price math.
-
 import type { TradeDirection } from "../types/trade.ts";
 
 function normalizeTradeSide(side: unknown): TradeDirection {

@@ -1,4 +1,3 @@
-// Module responsibility: build multi-timeframe context snapshots from existing market data.
 // Strictly additive layer — no store writes, no mutation, no side effects.
 // All behavior is behind mtf.enabled === true at the call site.
 // Reuses ContextBuilder for feature extraction and BotArchitect for regime classification.

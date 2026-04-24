@@ -39,18 +39,40 @@ Work top-down unless a task explicitly says otherwise.
 - Completed: realign repo documentation with the current Pulse UI, short-side runtime support, authoritative exit capabilities, and coherent paused-state behavior.
 - Completed: close the current short-facing runtime/report audit loop with legacy replay guardrails, short-aware report matching, `ExperimentReporter` sideSummary, and `SystemServer` short-report regression coverage.
 - Completed: logging cleanup P2 across entry, Architect, and exit telemetry ownership; `trade_closed` is now the canonical detailed exit event and compact lifecycle events stay compact.
-- Next: define a launcher-ready runtime surface with explicit startup modes `Normal` and `Debug`.
-- Next: prepare a debug-run capture contract for `jsonl`, including which fields are append-only event records versus rolling numeric counters/snapshots.
+- Completed: v18 pre-closure stabilization patches:
+  - explicit post-loss latch timeout reset API
+  - wall-clock market freshness semantics
+  - wall-clock kill-switch preview timestamps in TradingBot
+  - degraded/stale exit warning telemetry
+  - readability cleanup around lifecycle invariants, freshness expiry naming, MarketStream constants, and coding-agent docs
+- Next: v18.1 post-stabilization refinements. Keep this small and targeted:
+  - TickProcessingSnapshot / hot-path history sharing only if it reduces duplicate price-history reads without broad runtime churn
+  - MTF boundary validation in `MtfContextService` only if it can reuse shared validation logic
+  - SystemServer injected-clock cleanup for deterministic payload/API tests
+  - legacy backtest smoke test with deterministic trade count / PnL expectations
+  - local MarketStream naming cleanup where safe
+  - operational runbook for post-loss latch reset, disconnected UserStream, and paper short accounting
 
 ## P3
 
-- Implement the launcher flow:
-  - first window selects startup mode
-  - `Debug` opens a second window for run-capture selection
-  - selected capture fields persist into a `jsonl`-friendly config/runtime contract
-- Continue short work only on the remaining replay/backtest parity gap and any future low-priority reporting polish.
-- Continue hot-path micro-optimizations after the latest `ContextBuilder` allocation pass.
-- Continue architectural refinements after the latest trimming patches and role extraction work land.
+- v19: build modern replay/backtest parity:
+  - serious data layer and dataset quality scanner
+  - event-driven replay through `ReplayFeed -> StateStore -> ContextService -> Architect -> TradingBot -> ExecutionEngine`
+  - deterministic replay clock, explicit warm-up, no lookahead, MTF without leakage
+  - execution realism v1: fees, slippage, spread, exchange filters, fill assumptions, base latency
+  - strategic reports focused on daily stability, drawdown, recovery, fee/slippage impact, regime/strategy/reason breakdown, managed recovery, MTF, and blocked trades
+  - anti-lookahead harness and legacy deprecation path
+- v20: paper futures isolated-margin realism:
+  - unified long/short accounting
+  - leverage, initial/maintenance/available margin, isolated margin
+  - liquidation price/event/forced close
+  - mark price, simplified funding first, portfolio exposure/leverage kill-switch compatibility
+- v21: strategy lab / optimization:
+  - walk-forward analysis
+  - parameter sweeps and robustness heatmaps
+  - out-of-sample validation
+  - Monte Carlo stress tests
+  - benchmarks and strategy comparison by stability/drawdown/tail risk/recovery, not only profit
 
 Priority notes:
 
@@ -78,3 +100,5 @@ Priority notes:
 - MTF thresholds intentionally remain split:
   - `mtf.instabilityThreshold` default `0.5` = architect usability/blocking threshold
   - `mtfParamResolver` `0.25` = stricter parameter-widening coherence threshold
+- v18.1 must stay cleanup-only. Do not start v19 replay, v20 margin realism, or v21 optimization work inside v18.1 patches.
+- Modern backtest work must not claim profitability until data quality, execution assumptions, anti-lookahead tests, and reporting are in place.

@@ -1,5 +1,3 @@
-// Module responsibility: trade, order and position models shared by execution and state.
-
 import type { PositionLifecycleEvent, PositionLifecycleState } from "./positionLifecycle.ts";
 
 export type TradeDirection = "long" | "short";

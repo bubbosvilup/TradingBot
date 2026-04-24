@@ -1,5 +1,3 @@
-// Module responsibility: pure minimum trade-constraint validation shared across entry layers.
-
 export interface TradeConstraintValidationResult {
   belowMinNotional: boolean;
   belowMinQuantity: boolean;

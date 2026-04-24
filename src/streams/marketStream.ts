@@ -1,11 +1,14 @@
-// Module responsibility: normalize market data into stateStore updates without embedding business logic.
-
 import type { MarketKline, MarketMode, MarketTick } from "../types/market.ts";
 import type { Clock } from "../core/clock.ts";
 
 const ccxt = require("ccxt");
 const { elapsedMs, startTimer } = require("../utils/timing.ts");
 const { resolveClock } = require("../core/clock.ts");
+
+const MIN_LIVE_EMIT_INTERVAL_MS = 250;
+const DEFAULT_REST_FALLBACK_INTERVAL_MS = 5_000;
+const HIGH_LATENCY_WARN_MS = 1_000;
+const LATENCY_LOG_INTERVAL_MS = 30_000;
 
 class MarketStream {
   wsManager: any;
@@ -55,7 +58,7 @@ class MarketStream {
       throw new Error(`market stream mode ${deps.mode} is not supported; active runtime market data is live-only`);
     }
     this.mode = "live";
-    this.liveEmitIntervalMs = Math.max(deps.liveEmitIntervalMs ?? 250, 250);
+    this.liveEmitIntervalMs = Math.max(deps.liveEmitIntervalMs ?? MIN_LIVE_EMIT_INTERVAL_MS, MIN_LIVE_EMIT_INTERVAL_MS);
     this.streamType = deps.streamType || "trade";
     this.wsBaseUrl = deps.wsBaseUrl || "wss://stream.binance.com:9443";
     this.klineIntervals = [...new Set(deps.klineIntervals || [])];
@@ -65,12 +68,12 @@ class MarketStream {
     this.fallbackTimer = null;
     this.fallbackExchange = null;
     this.fallbackRestUrl = deps.restExchangeId || "binance";
-    this.fallbackIntervalMs = 5_000;
+    this.fallbackIntervalMs = DEFAULT_REST_FALLBACK_INTERVAL_MS;
     this.fallbackStaleAfterMs = Math.max(this.fallbackIntervalMs, this.liveEmitIntervalMs * 4);
     this.stopping = false;
     this.restSnapshotGeneration = 0;
-    this.highLatencyWarnMs = 1000;
-    this.latencyLogIntervalMs = 30_000;
+    this.highLatencyWarnMs = HIGH_LATENCY_WARN_MS;
+    this.latencyLogIntervalMs = LATENCY_LOG_INTERVAL_MS;
     this.lastLatencyLogAtBySymbol = new Map();
   }
 
@@ -176,7 +179,7 @@ class MarketStream {
     }
 
     if (status.status === "connected") {
-      this.refreshMarketDataFreshness(observedAt);
+      this.markMarketDataStaleIfExpired(observedAt);
       this.stopRestFallback();
     } else if (status.status === "disconnected" || status.status === "reconnecting" || status.status === "error") {
       this.markSymbolsDegraded(`ws_${status.status}`, observedAt);
@@ -224,6 +227,7 @@ class MarketStream {
     const isWsTick = tick.source === "ws";
     this.store.setMarketDataFreshness(tick.symbol, {
       lastTickTimestamp: Number.isFinite(Number(tick.timestamp)) ? Number(tick.timestamp) : undefined,
+      receivedAt: Number.isFinite(Number(tick.receivedAt)) ? Number(tick.receivedAt) : this.now(),
       reason: isWsTick ? "" : "rest_fallback_active",
       status: isWsTick ? "fresh" : "degraded",
       updatedAt: Number.isFinite(Number(tick.receivedAt)) ? Number(tick.receivedAt) : this.now()
@@ -243,11 +247,11 @@ class MarketStream {
     }
   }
 
-  refreshMarketDataFreshness(observedAt: number = this.now()) {
-    if (typeof this.store.refreshMarketDataFreshness !== "function") {
+  markMarketDataStaleIfExpired(observedAt: number = this.now()) {
+    if (typeof this.store.markMarketDataStaleIfExpired !== "function") {
       return;
     }
-    this.store.refreshMarketDataFreshness(this.symbols, {
+    this.store.markMarketDataStaleIfExpired(this.symbols, {
       now: observedAt,
       staleAfterMs: this.fallbackStaleAfterMs
     });
@@ -399,7 +403,7 @@ class MarketStream {
   async fetchRestSnapshot(options: { observedAt?: number } = {}) {
     const generation = this.restSnapshotGeneration;
     const observedAt = Number.isFinite(Number(options.observedAt)) ? Number(options.observedAt) : this.now();
-    this.refreshMarketDataFreshness(observedAt);
+    this.markMarketDataStaleIfExpired(observedAt);
     const targetSymbols = this.getFallbackTargetSymbols(observedAt);
     if (targetSymbols.length <= 0) {
       return {
@@ -583,12 +587,12 @@ class MarketStream {
       fallbackActive: true
     });
     this.markSymbolsDegraded("rest_fallback_active", observedAt);
-    this.refreshMarketDataFreshness(observedAt);
+    this.markMarketDataStaleIfExpired(observedAt);
     this.fetchRestSnapshot({ observedAt });
     this.fallbackTimer = setInterval(() => {
       const tickObservedAt = this.now();
       this.markSymbolsDegraded("rest_fallback_active", tickObservedAt);
-      this.refreshMarketDataFreshness(tickObservedAt);
+      this.markMarketDataStaleIfExpired(tickObservedAt);
       this.fetchRestSnapshot({ observedAt: tickObservedAt });
     }, this.fallbackIntervalMs);
     if (typeof this.fallbackTimer.unref === "function") {
@@ -602,7 +606,7 @@ class MarketStream {
 
   stopRestFallback() {
     if (!this.fallbackTimer) {
-      this.refreshMarketDataFreshness(this.now());
+      this.markMarketDataStaleIfExpired(this.now());
       this.store.updateWsConnection("market-stream", {
         connectionId: "market-stream",
         fallbackActive: false
@@ -611,7 +615,7 @@ class MarketStream {
     }
     clearInterval(this.fallbackTimer);
     this.fallbackTimer = null;
-    this.refreshMarketDataFreshness(this.now());
+    this.markMarketDataStaleIfExpired(this.now());
     this.store.updateWsConnection("market-stream", {
       connectionId: "market-stream",
       fallbackActive: false

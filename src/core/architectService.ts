@@ -1,5 +1,3 @@
-// Module responsibility: observe rolling context continuously and publish stable architect decisions on cadence.
-
 import type { ArchitectAssessment, ArchitectPublisherState, MarketRegime, RecommendedFamily } from "../types/architect.ts";
 import type { MarketTick } from "../types/market.ts";
 import type { MtfFrameConfig, MtfPublishDiagnostics, MtfSnapshot } from "../types/mtf.ts";

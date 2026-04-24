@@ -1,5 +1,3 @@
-// Module responsibility: drawdown, cooldown, position sizing and overtrading constraints.
-
 import type { RiskOverrides, RiskProfile, BotRuntimeState } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { PortfolioKillSwitchState, RiskProfileSettings } from "../types/runtime.ts";

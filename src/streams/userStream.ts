@@ -1,5 +1,3 @@
-// Module responsibility: user/order/account event bus isolated from trading logic and prepared for live Binance updates.
-
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 import type { Clock } from "../core/clock.ts";
 

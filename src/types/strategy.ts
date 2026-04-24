@@ -1,5 +1,3 @@
-// Module responsibility: shared strategy contracts used by bots, registry and engines.
-
 import type { TradeDirection } from "./trade.ts";
 import type { MtfDecisionTrace, MtfHorizonFrameId } from "./mtf.ts";
 

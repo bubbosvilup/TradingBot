@@ -71,6 +71,39 @@ function runStateStoreTests() {
   if (normalizedClockedFreshness?.updatedAt !== 51_000) {
     throw new Error(`market freshness normalization should use injected clock fallback: ${JSON.stringify(normalizedClockedFreshness)}`);
   }
+  const oldExchangeCurrentReceiveFreshness = clockedStore.setMarketDataFreshness("CLOCK/USDT", {
+    lastTickTimestamp: 10_000,
+    receivedAt: 51_500,
+    status: "fresh",
+    updatedAt: 51_500
+  });
+  const oldExchangeStillFresh = clockedStore.getMarketDataFreshness("CLOCK/USDT", {
+    now: 52_000,
+    staleAfterMs: 2_000
+  });
+  if (oldExchangeStillFresh.status !== "fresh" || oldExchangeStillFresh.receivedAt !== oldExchangeCurrentReceiveFreshness?.receivedAt) {
+    throw new Error(`freshness expiry should use wall-clock receivedAt, not old exchange timestamp: ${JSON.stringify(oldExchangeStillFresh)}`);
+  }
+  clockedStore.setMarketDataFreshness("CLOCK/USDT", {
+    lastTickTimestamp: 999_999,
+    receivedAt: 52_000,
+    status: "fresh",
+    updatedAt: 52_000
+  });
+  const futureExchangeInitiallyFresh = clockedStore.getMarketDataFreshness("CLOCK/USDT", {
+    now: 53_000,
+    staleAfterMs: 2_000
+  });
+  if (futureExchangeInitiallyFresh.status !== "fresh") {
+    throw new Error(`future exchange timestamp should not make current received data stale early: ${JSON.stringify(futureExchangeInitiallyFresh)}`);
+  }
+  const futureExchangeExpiredByWallClock = clockedStore.getMarketDataFreshness("CLOCK/USDT", {
+    now: 54_000,
+    staleAfterMs: 2_000
+  });
+  if (futureExchangeExpiredByWallClock.status !== "stale" || futureExchangeExpiredByWallClock.updatedAt !== 54_000) {
+    throw new Error(`future exchange timestamp should not extend freshness beyond wall-clock timeout: ${JSON.stringify(futureExchangeExpiredByWallClock)}`);
+  }
   fakeNow = 52_000;
   clockedStore.setPortfolioKillSwitchConfig({
     enabled: true,
@@ -458,6 +491,15 @@ function runStateStoreTests() {
   const preservedPauseStatus = restoredStatusStore.getBotState("bot_restore");
   if (preservedPauseStatus?.status !== "paused" || preservedPauseStatus?.pausedReason !== "manual_pause") {
     throw new Error(`registerBot should preserve paused states with an existing reason across re-registration: ${JSON.stringify(preservedPauseStatus)}`);
+  }
+  restoredStatusStore.updateBotState("bot_restore", {
+    lossStreak: 3,
+    realizedPnl: -42.5
+  });
+  restoredStatusStore.registerBot(createBotConfig({ id: "bot_restore", symbol: "SOL/USDT" }));
+  const preservedPerformanceMemory = restoredStatusStore.getBotState("bot_restore");
+  if (preservedPerformanceMemory?.lossStreak !== 3 || preservedPerformanceMemory?.realizedPnl !== -42.5) {
+    throw new Error(`registerBot should preserve persisted performance memory across re-registration: ${JSON.stringify(preservedPerformanceMemory)}`);
   }
 
   restoredStatusStore.updateBotState("bot_restore", {

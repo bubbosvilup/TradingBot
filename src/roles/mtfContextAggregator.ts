@@ -1,4 +1,3 @@
-// Module responsibility: deterministic multi-timeframe context aggregation.
 // Pure computation — no store writes, no side effects.
 // Foundation layer only — not wired into live trading decisions yet.
 

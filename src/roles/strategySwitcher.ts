@@ -1,5 +1,3 @@
-// Module responsibility: resolve published architect family into an executable strategy with only light execution-side guards.
-
 import type { ArchitectAssessment, RecommendedFamily } from "../types/architect.ts";
 import type { BotRuntimeState } from "../types/bot.ts";
 

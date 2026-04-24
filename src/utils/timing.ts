@@ -1,5 +1,3 @@
-// Module responsibility: low-overhead monotonic timing helpers for observability.
-
 function startTimer() {
   return process.hrtime.bigint();
 }

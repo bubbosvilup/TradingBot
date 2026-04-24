@@ -1,5 +1,3 @@
-// Module responsibility: mean reversion strategy for range-like conditions.
-
 import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
 const { resolveExitPolicy } = require("../../roles/exitPolicyRegistry.ts");
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../../roles/recoveryTargetResolver.ts");

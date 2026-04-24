@@ -1,5 +1,3 @@
-// Module responsibility: prepared rolling market context produced before architect classification.
-
 import type { ArchitectDataMode, TrendBias, VolatilityState, StructureState, MarketRegime } from "./architect.ts";
 
 export type BreakoutDirection = "up" | "down" | "none";

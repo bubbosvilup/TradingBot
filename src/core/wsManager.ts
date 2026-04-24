@@ -1,5 +1,3 @@
-// Module responsibility: manage websocket connections, reconnects and normalized exchange events.
-
 import type { MarketKline, MarketTick } from "../types/market.ts";
 
 const { EventEmitter } = require("node:events");
@@ -87,7 +85,17 @@ class WSManager {
   }
 
   publish(channel: string, payload: unknown) {
-    this.emitter.emit(channel, payload);
+    for (const listener of this.emitter.listeners(channel)) {
+      try {
+        listener.call(this.emitter, payload);
+      } catch (error: any) {
+        this.logger.error("ws_publish_listener_failed", {
+          channel,
+          error: error?.message || String(error),
+          source: "ws_publish_listener_failed"
+        });
+      }
+    }
   }
 
   connectBinanceMarketStream(params: {

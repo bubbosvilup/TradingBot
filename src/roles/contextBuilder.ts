@@ -1,5 +1,3 @@
-// Module responsibility: prepare interpretable rolling market features for the architect layer.
-
 import type { TrendBias, VolatilityState, StructureState, ArchitectDataMode, MarketRegime } from "../types/architect.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 import type { MarketTick } from "../types/market.ts";

@@ -1,5 +1,3 @@
-// Module responsibility: create, start and manage multiple independent bot instances.
-
 import type { BotConfig } from "../types/bot.ts";
 import type { BotController, BotDeps } from "../types/runtime.ts";
 

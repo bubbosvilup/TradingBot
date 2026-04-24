@@ -1,5 +1,3 @@
-// Module responsibility: pure MTF-driven entry parameter resolution for strategy economics.
-
 import type { MtfDecisionTrace, MtfHorizonFrameId, MtfPublishDiagnostics } from "../types/mtf.ts";
 
 const RSI_MIN_EXPECTED_NET_EDGE_FLOOR = 0.0015;

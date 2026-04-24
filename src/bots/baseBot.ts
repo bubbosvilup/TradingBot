@@ -1,5 +1,3 @@
-// Module responsibility: shared bot lifecycle and dependency plumbing for independent bots.
-
 import type { BotConfig } from "../types/bot.ts";
 import type { BotDeps } from "../types/runtime.ts";
 

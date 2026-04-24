@@ -1,5 +1,3 @@
-// Module responsibility: performance aggregates used by monitoring and strategy switching.
-
 export interface PerformanceSnapshot {
   botId: string;
   pnl: number;

@@ -1,5 +1,3 @@
-// Module responsibility: simulated execution for opening and closing positions.
-
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 import type { Clock } from "../core/clock.ts";
 

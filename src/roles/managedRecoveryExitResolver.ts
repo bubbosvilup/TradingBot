@@ -1,5 +1,3 @@
-// Module responsibility: pure resolution of managed-recovery exit decisions.
-
 import type { InvalidationMode } from "../types/exitPolicy.ts";
 import type { PositionExitMechanism, PositionLifecycleEvent } from "../types/positionLifecycle.ts";
 

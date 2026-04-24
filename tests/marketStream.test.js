@@ -46,6 +46,29 @@ function runMarketStreamTests() {
   if (clockedPipeline?.tickLatency?.last.flushDelayMs !== 250 || clockedFreshness.updatedAt !== 80_000) {
     throw new Error(`market stream latency should use runtime clock while freshness keeps receivedAt: ${JSON.stringify({ clockedFreshness, clockedPipeline })}`);
   }
+  fakeNow = 81_000;
+  const oldExchangeCurrentReceiveFreshness = clockedStore.getMarketDataFreshness("CLOCK/USDT", {
+    now: 81_000,
+    staleAfterMs: 20_000
+  });
+  if (oldExchangeCurrentReceiveFreshness.status !== "fresh") {
+    throw new Error(`ws tick with old exchange timestamp but current receivedAt should remain fresh: ${JSON.stringify(oldExchangeCurrentReceiveFreshness)}`);
+  }
+  fakeNow = 82_000;
+  clockedStream.handleTick({
+    price: 10.5,
+    receivedAt: 82_000,
+    source: "ws",
+    symbol: "CLOCK/USDT",
+    timestamp: 999_999
+  });
+  const futureExchangeFreshness = clockedStore.getMarketDataFreshness("CLOCK/USDT", {
+    now: 103_000,
+    staleAfterMs: 20_000
+  });
+  if (futureExchangeFreshness.status !== "stale") {
+    throw new Error(`ws tick with future exchange timestamp should not extend freshness past wall-clock timeout: ${JSON.stringify(futureExchangeFreshness)}`);
+  }
   clockedStream.stop();
 
   const store = new StateStore();
@@ -124,7 +147,7 @@ function runMarketStreamTests() {
     throw new Error(`disconnect should mark symbol freshness as degraded: ${JSON.stringify(degradedFreshness)}`);
   }
 
-  stream.refreshMarketDataFreshness(1711960015000);
+  stream.markMarketDataStaleIfExpired(1711960015000);
   const staleFreshness = store.getMarketDataFreshness("BTC/USDT", {
     now: 1711960015000,
     staleAfterMs: stream.fallbackStaleAfterMs

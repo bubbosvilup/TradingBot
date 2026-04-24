@@ -36,6 +36,29 @@ function runWsManagerTests() {
   manager.subscribe("ws:status:test-market", (status) => {
     publishedStatuses.push(status);
   });
+  const safePublishDeliveries = [];
+  manager.subscribe("test:safe-publish", () => {
+    throw new Error("listener boom");
+  });
+  manager.subscribe("test:safe-publish", (payload) => {
+    safePublishDeliveries.push(payload);
+  });
+  let publishError = null;
+  try {
+    manager.publish("test:safe-publish", { id: "payload-1" });
+  } catch (error) {
+    publishError = error;
+  }
+  if (publishError) {
+    throw new Error(`ws publish should not throw when a listener fails: ${publishError.message || publishError}`);
+  }
+  if (safePublishDeliveries.length !== 1 || safePublishDeliveries[0].id !== "payload-1") {
+    throw new Error(`ws publish should continue delivering to later listeners after one fails: ${JSON.stringify(safePublishDeliveries)}`);
+  }
+  const listenerFailureLog = logs.find((entry) => entry.event === "ws_publish_listener_failed");
+  if (!listenerFailureLog || listenerFailureLog.metadata.channel !== "test:safe-publish" || !String(listenerFailureLog.metadata.error || "").includes("listener boom")) {
+    throw new Error(`ws publish should log listener failures with channel and error metadata: ${JSON.stringify(logs)}`);
+  }
 
   const disconnect = manager.connectBinanceMarketStream({
     connectionId: "test-market",

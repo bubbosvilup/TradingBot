@@ -1,5 +1,3 @@
-// Module responsibility: shape final entry outcomes for TradingBot without owning tick orchestration or logger emission.
-
 import type { ArchitectAssessment } from "../types/architect.ts";
 import type { BotRuntimeState } from "../types/bot.ts";
 import type { MarketTick } from "../types/market.ts";

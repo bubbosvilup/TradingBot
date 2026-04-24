@@ -1,5 +1,3 @@
-// Module responsibility: market-context labels and published architect decisions.
-
 import type { MtfPublishDiagnostics } from "./mtf.ts";
 
 export type MarketRegime = "trend" | "range" | "volatile" | "unclear";

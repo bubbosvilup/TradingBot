@@ -1,5 +1,3 @@
-// Module responsibility: lightweight runtime time helpers for orchestration and cooldowns.
-
 const { systemClock } = require("../core/clock.ts");
 
 function now(): number {

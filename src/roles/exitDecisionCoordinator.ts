@@ -1,5 +1,3 @@
-// Module responsibility: pure exit decision and exit-reason planning for TradingBot.
-
 import type { ExitPolicy, InvalidationMode, ProtectionStopMode } from "../types/exitPolicy.ts";
 import type { MarketTick } from "../types/market.ts";
 import type { PositionRecord } from "../types/trade.ts";

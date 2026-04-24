@@ -1,5 +1,3 @@
-// Module responsibility: manage the post-loss architect re-entry latch using the existing bot state store.
-
 import type { BotRuntimeState } from "../types/bot.ts";
 import type { BotStateStoreLike } from "../types/runtime.ts";
 

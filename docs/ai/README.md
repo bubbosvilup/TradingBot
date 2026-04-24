@@ -12,6 +12,8 @@ Start here:
 4. Read the relevant files under `docs/ai/rules/`.
 5. Follow the matching playbook under `docs/ai/playbooks/`.
 
+All coding agents must apply the human-readable coding rules in `AGENT.md`. Do not copy the full rule block into every local instruction file; reference `AGENT.md` unless a task needs a narrower local constraint.
+
 Default operating assumptions:
 
 - Preserve current runtime behavior unless the task explicitly requests a semantic change.
@@ -49,3 +51,8 @@ Primary use cases:
 - UI/dashboard fixes that avoid collateral damage in core trading paths
 - Pulse UI changes that preserve the existing static frontend model
 - launcher/debug-capture planning that preserves runtime safety and keeps output schemas intentional
+- roadmap planning:
+  - v18.1 stays cleanup-only after stabilization
+  - v19 owns modern replay/backtest parity
+  - v20 owns futures/margin realism
+  - v21 owns strategy lab and optimization discipline

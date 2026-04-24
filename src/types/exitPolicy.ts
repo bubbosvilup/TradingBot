@@ -1,5 +1,3 @@
-// Module responsibility: structured exit policy contracts shared across lifecycle and strategy logic.
-
 export type ExitQualificationMode =
   | "strict_net_positive"
   | "cost_buffered_positive"

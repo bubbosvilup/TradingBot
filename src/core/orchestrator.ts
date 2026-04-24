@@ -1,5 +1,3 @@
-// Module responsibility: compose the whole multi-bot system and run it as the main controller.
-
 require("dotenv").config();
 
 const { ConfigLoader } = require("./configLoader.ts");
@@ -455,8 +453,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
 
   while (!stopped) {
     const loopNow = clock.now();
-    if (typeof (store as any).refreshMarketDataFreshness === "function") {
-      (store as any).refreshMarketDataFreshness(enabledSymbols, {
+    if (typeof (store as any).markMarketDataStaleIfExpired === "function") {
+      (store as any).markMarketDataStaleIfExpired(enabledSymbols, {
         now: loopNow,
         staleAfterMs: marketStream.fallbackStaleAfterMs
       });

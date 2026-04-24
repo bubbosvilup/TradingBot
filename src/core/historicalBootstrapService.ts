@@ -1,5 +1,3 @@
-// Module responsibility: startup-only historical market data preload into the runtime StateStore.
-
 import type { HistoricalPreloadConfig, MarketKline, MarketTick } from "../types/market.ts";
 import type { MtfRuntimeConfig } from "../types/mtf.ts";
 

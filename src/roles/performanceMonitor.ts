@@ -1,5 +1,3 @@
-// Module responsibility: incremental PnL, win rate, drawdown and average trade PnL tracking per bot.
-
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ClosedTradeRecord } from "../types/trade.ts";
 

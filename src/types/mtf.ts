@@ -1,5 +1,3 @@
-// Module responsibility: typed multi-timeframe snapshot structures.
-
 import type { MarketRegime, TrendBias, VolatilityState, StructureState } from "./architect.ts";
 
 /** Canonical timeframe identifiers for MTF analysis. */

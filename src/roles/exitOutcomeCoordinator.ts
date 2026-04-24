@@ -1,5 +1,3 @@
-// Module responsibility: shape final exit/close outcomes for TradingBot without owning execution or store/log side effects.
-
 import type { BotRuntimeState, RiskOverrides, RiskProfile } from "../types/bot.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { PositionExitMechanism } from "../types/positionLifecycle.ts";

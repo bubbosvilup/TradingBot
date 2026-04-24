@@ -1,5 +1,3 @@
-// Module responsibility: lightweight event records for UI observability and history buffers.
-
 export interface SystemEvent {
   category?: string;
   id: string;

@@ -39,8 +39,17 @@ Nota importante:
   - ownership entry chiarita
   - payload Architect slim
   - `trade_closed` come evento canonico di exit
+- Stabilizzazione v18 pre-chiusura completata:
+  - recovery manuale esplicita per latch Architect post-loss in timeout tramite `POST /api/bots/:botId/reset-post-loss-latch`
+  - freshness dei dati mercato basata su tempo runtime di ricezione/aggiornamento, non sul timestamp exchange del tick
+  - preview/snapshot del portfolio kill-switch basati su clock runtime
+  - exit sotto dati degraded/stale ancora consentite, ma visibili con `degraded_data_exit_warning`
+  - costruzione stato bot in `registerBot(...)` resa esplicita e piu leggibile
+  - cleanup naming per invarianti lifecycle e scadenza freshness
+  - costanti temporali MarketStream nominate
+  - regole agent/coding allineate per evitare commenti generici, wrapper inutili e test autoreferenziali
 - Hot-path allocation issues gia verificati e bloccati da test; il codice production era gia allineato.
-- `npm test` passa sullo stato corrente.
+- v18 e ora in stato pre-closure stabilizzato. Il runtime resta paper-only, Pulse-only e difensivo; backtest moderno, margin realism e optimization lab restano lavori futuri.
 
 ## Flusso architetturale
 
@@ -379,15 +388,27 @@ Backtest / replay status
 
 ### Focus operativo successivo
 
-- Il focus immediato non e aggiungere nuova logica trading, ma ridurre i log al minimo utile.
-- Subito dopo, la repo va preparata per un launcher con due modalita di avvio:
-  - `Normal`
-  - `Debug`
-- In modalita `Debug`, una seconda finestra dovra permettere di scegliere quali parametri della run salvare in `jsonl`.
-- Prima dell'implementazione del launcher serve fissare il contratto dei dati di output:
-  - quali record sono eventi append-only
-  - quali campi sono snapshot dell'ultimo stato noto
-  - quali metriche vanno aggiornate come singolo numero o contatore aggregato invece di generare una nuova riga a ogni tick
+- Il focus immediato e v18.1: rifiniture post-stabilizzazione senza grandi redesign.
+- TickProcessingSnapshot / hot-path history sharing:
+  - ridurre letture duplicate di price history
+  - arrivare a un solo snapshot immutabile per tick solo se il cambio resta piccolo e verificabile
+  - trattare il percorso `MarketStream -> ContextService -> Architect -> TradingBot` come area sensibile
+- MTF boundary validation:
+  - `configLoader` valida gia frame duplicati e `windowMs` invalidi
+  - aggiungere una guardia anche in `MtfContextService` solo se si puo riusare logica condivisa senza duplicazione invasiva
+- SystemServer Clock:
+  - sostituire i `Date.now()` residui in payload/API con il clock iniettato
+  - obiettivo: testabilita e determinismo, non cambio trading behavior
+- Backtest legacy smoke test minimo:
+  - usare una serie deterministica
+  - verificare trade count / PnL atteso
+  - evitare test che provano solo stringhe di capability
+- MarketStream naming residuo:
+  - rinominare eventuali `handle*` locali solo se il rename e sicuro e non causa cascade
+- Docs/runbook operativo:
+  - documentare reset post-loss latch
+  - documentare cosa fare se `UserStream` resta disconnected
+  - spiegare cosa significa `paper_full_notional_simplified`
 
 ## Aggiornamenti del 2026-04-22
 
@@ -739,17 +760,41 @@ Hotspot da trattare con cautela:
 - Il codice in `legacy/` resta preservato per audit e migrazione graduale.
 - `BacktestEngine` oggi e un ponte verso il legacy, non il runtime finale di replay.
 - Il path live futuro resta nel repository ma non deve essere riattivato accidentalmente dal runtime attivo.
-- Il prossimo lavoro utile resta:
-  - launcher `Normal` / `Debug`
-  - formalizzazione minima del contratto `jsonl`
-  - backtest moderno con parity reale
-  - miglioramenti incrementali di UI, performance e architettura
+- `paper_full_notional_simplified` indica il modello paper attuale per short: contabilita full-notional semplificata, non futures margin realistico.
+- Il prossimo lavoro utile e ordinato cosi:
+  - v18.1: cleanup mirato e runbook operativo
+  - v19: backtest moderno/paritario
+  - v20: short/futures/margin realism
+  - v21: strategy lab / optimization
 
 ## Roadmap minima
 
-- v18 -> chiuso dopo documentazione finale e release-finalization
-- v19 -> launcher + UI stabilization minima
-- v20 -> backtesting moderno/parity
-- v21 -> UI/observability seria
-- v22 -> espansione strategie
-- v23+ -> refine + live testing graduale
+- v18 -> pre-closure stabilizzato dopo patch manual recovery, freshness/clock semantics, exit warning metadata, readability cleanup e docs agent/coding
+- v18.1 -> rifiniture post-stabilizzazione:
+  - TickProcessingSnapshot / hot-path history sharing
+  - MTF boundary validation se piccola e condivisa
+  - SystemServer Clock cleanup
+  - legacy backtest smoke test minimo
+  - MarketStream naming residuo
+  - runbook reset latch, UserStream disconnected, `paper_full_notional_simplified`
+- v19 -> backtest moderno/paritario:
+  - data layer serio e dataset quality scanner
+  - event-driven replay con clock deterministico e no lookahead
+  - execution realism v1
+  - report strategico serio
+  - anti-lookahead harness
+  - legacy deprecation path
+- v20 -> paper futures isolated margin v1:
+  - accounting long/short unificato
+  - leverage e margin
+  - liquidation model
+  - mark price vs last price
+  - funding semplificato prima, storico dopo se serve
+  - portfolio risk compatibile con margin
+- v21 -> strategy lab / optimization:
+  - walk-forward analysis
+  - parameter sweeps e sensitivity maps
+  - out-of-sample validation
+  - Monte Carlo stress
+  - benchmark seri
+  - confronto strategie su stabilita, drawdown, tail risk e recovery time, non solo profitto

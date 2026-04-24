@@ -1,5 +1,3 @@
-// Module responsibility: load JSON configuration files without mixing them into runtime logic.
-
 import type { BotConfig } from "../types/bot.ts";
 import type { HistoricalPreloadConfig, MarketStreamConfig, MarketMode } from "../types/market.ts";
 import type { MtfFrameConfig, MtfRuntimeConfig } from "../types/mtf.ts";

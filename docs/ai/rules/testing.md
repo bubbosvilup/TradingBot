@@ -5,6 +5,12 @@ Minimum check set for guidance-driven patches:
 - `npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false`
 - `npm test`
 
+Test quality rules:
+
+- Prove behavior through observable state, events, return values, or logs.
+- Do not treat self-reported capability strings as sufficient proof.
+- When a wrapper or adapter is necessary, test the boundary behavior it protects.
+
 Test expectations by change type:
 
 - role extraction: add or update focused tests near the extracted role

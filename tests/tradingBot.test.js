@@ -6,7 +6,9 @@ const { PerformanceMonitor } = require("../src/roles/performanceMonitor.ts");
 const { RiskManager } = require("../src/roles/riskManager.ts");
 const { StrategySwitcher } = require("../src/roles/strategySwitcher.ts");
 const { StateStore } = require("../src/core/stateStore.ts");
+const { SystemServer } = require("../src/core/systemServer.ts");
 const { UserStream } = require("../src/streams/userStream.ts");
+const { WSManager } = require("../src/core/wsManager.ts");
 const { createStrategy: createBreakoutStrategy } = require("../src/strategies/breakout/strategy.ts");
 const { createStrategy: createEmaCrossStrategy } = require("../src/strategies/emaCross/strategy.ts");
 const { createStrategy: createRsiReversionStrategy } = require("../src/strategies/rsiReversion/strategy.ts");
@@ -158,7 +160,7 @@ function createHarness(strategyEvaluate, options = {}) {
     userStream: new UserStream({
       logger: logger.child("user"),
       store,
-      wsManager: {
+      wsManager: options.userStreamWsManager || {
         publish() {},
         subscribe() {
           return () => {};
@@ -816,6 +818,52 @@ function runTradingBotTests() {
       throw new Error(`profit close should apply reentry cooldown guard only: ${JSON.stringify(profitClosedState)}`);
     }
 
+    const safePublishLogs = [];
+    const throwingUserStreamWsManager = new WSManager({
+      logger: {
+        info(event, metadata) {
+          safePublishLogs.push({ event, metadata });
+        },
+        warn(event, metadata) {
+          safePublishLogs.push({ event, metadata });
+        },
+        error(event, metadata) {
+          safePublishLogs.push({ event, metadata });
+        }
+      }
+    });
+    throwingUserStreamWsManager.subscribe("user:events", () => {
+      throw new Error("user listener exploded");
+    });
+    const safeOpenHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "hold" : "buy",
+      confidence: 0.9,
+      reason: ["entry_signal"]
+    }), {
+      strategy: "emaCross",
+      userStreamWsManager: throwingUserStreamWsManager
+    });
+    const safeOpenInitialBalance = safeOpenHarness.store.getBotState("bot_test").availableBalanceUsdt;
+    safeOpenHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    safeOpenHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const safeOpenPosition = safeOpenHarness.store.getPosition("bot_test");
+    const safeOpenState = safeOpenHarness.store.getBotState("bot_test");
+    if (!safeOpenPosition) {
+      throw new Error("throwing user-stream listener should not prevent position open from completing");
+    }
+    assertClose(
+      safeOpenState.availableBalanceUsdt,
+      safeOpenInitialBalance - (safeOpenPosition.entryPrice * safeOpenPosition.quantity),
+      "throwing user-stream listener should not prevent entry accounting from reserving balance"
+    );
+    if (safeOpenState.lastExecutionAt !== safeOpenPosition.openedAt || safeOpenState.lastTradeAt !== clock) {
+      throw new Error(`throwing user-stream listener should not prevent entry runtime state patch: ${JSON.stringify(safeOpenState)}`);
+    }
+    if (!safePublishLogs.find((entry) => entry.event === "ws_publish_listener_failed" && entry.metadata.channel === "user:events")) {
+      throw new Error(`throwing user-stream listener should be logged during open: ${JSON.stringify(safePublishLogs)}`);
+    }
+
     clock += 10_000;
     const shortAccountingHarness = createHarness((context) => ({
       action: context.hasOpenPosition ? "buy" : "sell",
@@ -951,6 +999,68 @@ function runTradingBotTests() {
     const lossPipeline = lossAccountingHarness.store.getPipelineSnapshot("BTC/USDT");
     if (!lossPipeline || lossPipeline.lastExecutionAt !== clock || lossPipeline.botToExecutionMs !== 0) {
       throw new Error(`closed trade path should preserve pipeline execution metadata: ${JSON.stringify(lossPipeline)}`);
+    }
+
+    const safeCloseLogs = [];
+    const throwingCloseUserStreamWsManager = new WSManager({
+      logger: {
+        info(event, metadata) {
+          safeCloseLogs.push({ event, metadata });
+        },
+        warn(event, metadata) {
+          safeCloseLogs.push({ event, metadata });
+        },
+        error(event, metadata) {
+          safeCloseLogs.push({ event, metadata });
+        }
+      }
+    });
+    throwingCloseUserStreamWsManager.subscribe("user:events", () => {
+      throw new Error("close listener exploded");
+    });
+    const safeCloseHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "sell" : "buy",
+      confidence: 0.9,
+      reason: [context.hasOpenPosition ? "stop_signal" : "entry_signal"]
+    }), {
+      strategy: "emaCross",
+      userStreamWsManager: throwingCloseUserStreamWsManager
+    });
+    const safeCloseInitialBalance = safeCloseHarness.store.getBotState("bot_test").availableBalanceUsdt;
+    safeCloseHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 1_000;
+    safeCloseHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const safeClosePosition = safeCloseHarness.store.getPosition("bot_test");
+    if (!safeClosePosition) {
+      throw new Error("safe close regression scenario did not open a position");
+    }
+    clock += 1_000;
+    safeCloseHarness.bot.onMarketTick({ price: 99.95, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    clock += 20_000;
+    safeCloseHarness.bot.onMarketTick({ price: 99.8, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const safeCloseTrade = safeCloseHarness.store.getClosedTrades("bot_test")[0];
+    const safeCloseState = safeCloseHarness.store.getBotState("bot_test");
+    if (safeCloseHarness.store.getPosition("bot_test")) {
+      throw new Error("throwing user-stream listener should not prevent close from clearing position");
+    }
+    if (!safeCloseTrade || !(safeCloseTrade.netPnl < 0)) {
+      throw new Error(`throwing user-stream listener close scenario should record a loss trade: ${JSON.stringify(safeCloseTrade)}`);
+    }
+    assertClose(
+      safeCloseState.realizedPnl,
+      safeCloseTrade.netPnl,
+      "throwing user-stream listener should not prevent realizedPnl update"
+    );
+    assertClose(
+      safeCloseState.availableBalanceUsdt,
+      safeCloseInitialBalance + safeCloseTrade.netPnl,
+      "throwing user-stream listener should not prevent close accounting from restoring balance"
+    );
+    if (safeCloseState.lossStreak !== 1 || safeCloseState.cooldownReason !== "loss_cooldown" || safeCloseState.postLossArchitectLatchActive !== true) {
+      throw new Error(`throwing user-stream listener should not prevent loss recovery state patch: ${JSON.stringify(safeCloseState)}`);
+    }
+    if (!safeCloseLogs.find((entry) => entry.event === "ws_publish_listener_failed" && entry.metadata.channel === "user:events")) {
+      throw new Error(`throwing user-stream listener should be logged during close: ${JSON.stringify(safeCloseLogs)}`);
     }
 
     clock += 10_000;
@@ -1822,6 +1932,66 @@ function runTradingBotTests() {
     const timeoutAfterFreshPublishState = timeoutLatchHarness.store.getBotState("bot_test");
     if (timeoutLatchHarness.store.getPosition("bot_test") || !timeoutAfterFreshPublishState.postLossArchitectLatchActive || timeoutAfterFreshPublishState.postLossArchitectLatchFreshPublishCount !== 0) {
       throw new Error(`timed-out latch should not auto-release on a later fresh architect publish: ${JSON.stringify(timeoutAfterFreshPublishState)}`);
+    }
+
+    const manualLatchResetLogs = [];
+    const manualLatchResetServer = new SystemServer({
+      executionMode: "paper",
+      feedMode: "live",
+      logger: {
+        info(message, metadata) {
+          manualLatchResetLogs.push({ message, metadata });
+        }
+      },
+      port: 3111,
+      startedAt: clock,
+      store: timeoutLatchHarness.store
+    });
+    const manualLatchResetResponse = {
+      body: null,
+      headers: null,
+      statusCode: null,
+      end(payload) {
+        this.body = payload;
+      },
+      writeHead(statusCode, headers) {
+        this.statusCode = statusCode;
+        this.headers = headers;
+      }
+    };
+    manualLatchResetServer.handleRequest({
+      headers: { host: "127.0.0.1:3111" },
+      method: "POST",
+      url: "/api/bots/bot_test/reset-post-loss-latch"
+    }, manualLatchResetResponse);
+    const manualLatchResetPayload = JSON.parse(String(manualLatchResetResponse.body || "{}"));
+    const manualLatchResetState = timeoutLatchHarness.store.getBotState("bot_test");
+    if (manualLatchResetResponse.statusCode !== 200 || manualLatchResetPayload.action !== "manual_post_loss_latch_reset") {
+      throw new Error(`manual post-loss latch reset endpoint should succeed explicitly: ${JSON.stringify({ manualLatchResetResponse, manualLatchResetPayload })}`);
+    }
+    if (manualLatchResetState.postLossArchitectLatchActive
+      || manualLatchResetState.postLossArchitectLatchStartedAt !== null
+      || manualLatchResetState.postLossArchitectLatchTimedOutAt !== null
+      || manualLatchResetState.postLossArchitectLatchFreshPublishCount !== 0
+      || manualLatchResetState.postLossArchitectLatchLastCountedPublishedAt !== null
+      || manualLatchResetState.postLossArchitectLatchStrategyId !== null
+      || manualLatchResetState.lastDecisionReasons.includes("post_loss_latch_timeout_requires_operator")) {
+      throw new Error(`manual post-loss latch reset should clear latch state and timeout reason: ${JSON.stringify(manualLatchResetState)}`);
+    }
+    if (!manualLatchResetLogs.find((entry) => entry.message === "manual_post_loss_latch_reset" && entry.metadata?.botId === "bot_test")) {
+      throw new Error(`manual post-loss latch reset should emit an operator-action log: ${JSON.stringify(manualLatchResetLogs)}`);
+    }
+    latchWallClock += 1_000;
+    clock += 1_000;
+    timeoutLatchHarness.store.updateBotState("bot_test", {
+      cooldownReason: null,
+      cooldownUntil: null,
+      entrySignalStreak: 1,
+      status: "running"
+    });
+    timeoutLatchHarness.bot.onMarketTick({ price: 100.5, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (!timeoutLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("manual post-loss latch reset should remove only the latch gate so entry can proceed when other gates are clear");
     }
 
     clock += 10_000;
@@ -3058,6 +3228,16 @@ function runTradingBotTests() {
     portfolioKillSwitchHarness.store.updateBotState("bot_test", {
       realizedPnl: -60
     });
+    const portfolioKillSwitchRuntimeNow = 88_000_000;
+    let portfolioKillSwitchPreviewNow = null;
+    const originalGetPortfolioKillSwitchState = portfolioKillSwitchHarness.store.getPortfolioKillSwitchState.bind(portfolioKillSwitchHarness.store);
+    portfolioKillSwitchHarness.store.getPortfolioKillSwitchState = (options = {}) => {
+      if (portfolioKillSwitchPreviewNow === null) {
+        portfolioKillSwitchPreviewNow = options.now;
+      }
+      return originalGetPortfolioKillSwitchState(options);
+    };
+    portfolioKillSwitchHarness.bot.clock = { now: () => portfolioKillSwitchRuntimeNow };
     portfolioKillSwitchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     if (portfolioKillSwitchHarness.store.getPosition("bot_test")) {
       throw new Error("portfolio kill switch should block new entries before an open position is created");
@@ -3068,6 +3248,9 @@ function runTradingBotTests() {
     });
     if (!portfolioKillSwitchState.triggered || !portfolioKillSwitchState.blockingEntries) {
       throw new Error(`portfolio kill switch should be latched in shared runtime state once the aggregate drawdown threshold is breached: ${JSON.stringify(portfolioKillSwitchState)}`);
+    }
+    if (portfolioKillSwitchPreviewNow !== portfolioKillSwitchRuntimeNow) {
+      throw new Error(`portfolio kill switch preview from TradingBot should use runtime wall-clock, not exchange tick timestamp: ${JSON.stringify({ portfolioKillSwitchPreviewNow, portfolioKillSwitchRuntimeNow, tickTimestamp: clock })}`);
     }
     const portfolioBlockedLog = portfolioKillSwitchHarness.botLogs.find((entry) =>
       entry.message === "entry_blocked"
@@ -3221,6 +3404,13 @@ function runTradingBotTests() {
     if (degradedExitHarness.store.getPosition("bot_test")) {
       throw new Error("degraded market data should not block protective/normal exit handling for open positions");
     }
+    if (!degradedExitHarness.botLogs.find((entry) =>
+      entry.message === "degraded_data_exit_warning"
+      && entry.metadata.marketDataFreshnessStatus === "degraded"
+      && entry.metadata.marketDataFreshnessReason === "rest_fallback_active"
+    )) {
+      throw new Error(`degraded market data exits should emit warning telemetry: ${JSON.stringify(degradedExitHarness.botLogs)}`);
+    }
 
     clock += 10_000;
     const staleExitHarness = createHarness((context) => ({
@@ -3247,6 +3437,13 @@ function runTradingBotTests() {
     staleExitHarness.bot.onMarketTick({ price: 95, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     if (staleExitHarness.store.getPosition("bot_test")) {
       throw new Error("stale market data should not block protective/normal exit handling for open positions");
+    }
+    if (!staleExitHarness.botLogs.find((entry) =>
+      entry.message === "degraded_data_exit_warning"
+      && entry.metadata.marketDataFreshnessStatus === "stale"
+      && entry.metadata.marketDataFreshnessReason === "market_data_stale"
+    )) {
+      throw new Error(`stale market data exits should emit warning telemetry: ${JSON.stringify(staleExitHarness.botLogs)}`);
     }
 
     clock += 10_000;

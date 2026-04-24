@@ -1,5 +1,3 @@
-// Module responsibility: shared indicator calculations used by all strategies.
-
 import type { IndicatorSnapshot } from "../types/strategy.ts";
 
 const { mean, stddev } = require("../utils/math.ts");

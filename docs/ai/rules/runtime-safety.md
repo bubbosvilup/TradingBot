@@ -25,6 +25,7 @@ Current runtime posture:
 Safe-change rules:
 
 - isolate runtime mode changes from strategy logic changes
+- keep real safety controls separate from metadata warnings; a telemetry field is not a guardrail
 - isolate dashboard fixes from risk and execution changes
 - keep config changes explicit; avoid hidden fallback behavior
 - keep historical preload out of `TradingBot`, downstream strategy roles, and per-tick paths

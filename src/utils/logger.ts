@@ -1,5 +1,3 @@
-// Module responsibility: scoped console logger with consistent formatting.
-
 import type { BotConfig } from "../types/bot.ts";
 
 type LogType = "verbose" | "minimal" | "only_trades" | "strategy_debug" | "silent";

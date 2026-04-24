@@ -1,5 +1,3 @@
-// Module responsibility: provide injectable runtime wall-clock access.
-
 export interface Clock {
   now(): number;
 }

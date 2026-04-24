@@ -1,5 +1,3 @@
-// Module responsibility: register and instantiate strategies without hardcoding them into bot logic.
-
 import type { RecommendedFamily } from "../types/architect.ts";
 import type { Strategy } from "../types/strategy.ts";
 

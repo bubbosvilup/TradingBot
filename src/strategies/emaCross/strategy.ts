@@ -1,5 +1,3 @@
-// Module responsibility: trend-following EMA cross strategy.
-
 import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
 
 function clamp(value: number, min: number, max: number) {

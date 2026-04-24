@@ -18,6 +18,7 @@ Checklist:
 7. If config or runtime mode is touched, state the startup and safety effect explicitly.
 8. Define the exact tests to run.
 9. If logging or debug output is touched, state which fields remain stable, which are intentionally renamed, and whether the change affects future `jsonl` capture contracts.
+10. Check the patch against `AGENT.md` human-readable coding rules: no generic file headers, precise verbs, named constants, no hidden read-method mutations, no needless wrappers, and behavior-proving tests.
 
 Patch acceptance gate:
 
@@ -31,3 +32,4 @@ Patch acceptance gate:
 - no logging patch duplicates high-cardinality state when a rolling counter/latest snapshot would preserve the same signal
 - no managed-recovery patch restores single early `family_mismatch` invalidation
 - no entry patch bypasses pending Architect challenger hysteresis
+- no patch introduces generic headers, vague names where precise verbs fit, inline magic numbers, or capability-string tests in place of behavior tests

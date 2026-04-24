@@ -1,5 +1,3 @@
-// Module responsibility: explicit runtime lifecycle states and events for open positions.
-
 export type PositionLifecycleState =
   | "ACTIVE"
   | "MANAGED_RECOVERY"

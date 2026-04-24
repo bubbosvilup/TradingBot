@@ -1,5 +1,3 @@
-// Module responsibility: centralize published Architect state interpretation and flat-state sync/apply coordination.
-
 import type { ArchitectAssessment, ArchitectPublisherState, MarketRegime, RecommendedFamily } from "../types/architect.ts";
 import type { ArchitectSyncStatus, BotConfig, BotRuntimeState } from "../types/bot.ts";
 import type { ContextSnapshot } from "../types/context.ts";

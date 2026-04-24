@@ -1,5 +1,3 @@
-// Module responsibility: maintain rolling per-symbol context snapshots on top of the raw market store.
-
 import type { ArchitectDataMode } from "../types/architect.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 import type { MarketTick } from "../types/market.ts";

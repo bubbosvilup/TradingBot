@@ -1,5 +1,3 @@
-// Module responsibility: coordinate entry-side signal progression and local gate outcomes without owning execution.
-
 import type { ArchitectAssessment } from "../types/architect.ts";
 import type { BotRuntimeState } from "../types/bot.ts";
 import type { BotStateStoreLike, TradeConstraints } from "../types/runtime.ts";

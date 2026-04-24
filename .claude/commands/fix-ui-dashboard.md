@@ -13,3 +13,4 @@ Constraints:
 - prefer changes in `public/`, `src/ui/`, and `src/core/systemServer.ts`
 - avoid modifying trading semantics while fixing the dashboard
 - preserve operator-facing payload compatibility unless the task explicitly asks for API changes
+- apply `AGENT.md` human-readable coding rules; keep UI/API patches small and behavior-proving

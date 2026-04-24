@@ -1,5 +1,3 @@
-// Module responsibility: pure math helpers shared across indicators and risk logic.
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }

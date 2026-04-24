@@ -1,5 +1,3 @@
-// Module responsibility: modern adapter boundary around the preserved legacy backtest modules.
-
 const { compareStrategyModes: legacyCompareStrategyModes } = require("../../legacy/backtest");
 const { printBacktestReport: legacyPrintBacktestReport, runBacktestJob: legacyRunBacktestJob } = require("../../legacy/backtest_runner");
 

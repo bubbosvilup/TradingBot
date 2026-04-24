@@ -1,5 +1,3 @@
-// Module responsibility: bot configuration and runtime lifecycle contracts.
-
 import type { RecommendedFamily } from "./architect.ts";
 import type { MtfRuntimeConfig } from "./mtf.ts";
 
