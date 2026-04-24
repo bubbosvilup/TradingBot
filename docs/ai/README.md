@@ -52,7 +52,9 @@ Primary use cases:
 - Pulse UI changes that preserve the existing static frontend model
 - launcher/debug-capture planning that preserves runtime safety and keeps output schemas intentional
 - roadmap planning:
-  - v18.1 stays cleanup-only after stabilization
+  - v18 is release candidate / commit safety
+  - v18.1 owns targeted technical hardening
+  - v18.2 owns human refactor and abstraction cleanup
   - v19 owns modern replay/backtest parity
   - v20 owns futures/margin realism
   - v21 owns strategy lab and optimization discipline

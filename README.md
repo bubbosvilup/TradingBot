@@ -48,8 +48,12 @@ Nota importante:
   - cleanup naming per invarianti lifecycle e scadenza freshness
   - costanti temporali MarketStream nominate
   - regole agent/coding allineate per evitare commenti generici, wrapper inutili e test autoreferenziali
+- Blocker finali v18 chiusi:
+  - latch Architect post-loss ora blocca globalmente il bot mentre e attiva; lo strategy id resta solo metadata
+  - `exitPolicy.recovery.targetOffsetPct` negativo viene rifiutato esplicitamente
+  - `WSManager` usa `globalThis.WebSocket` e fallisce con errore operativo chiaro se manca il WebSocket nativo
 - Hot-path allocation issues gia verificati e bloccati da test; il codice production era gia allineato.
-- v18 e ora in stato pre-closure stabilizzato. Il runtime resta paper-only, Pulse-only e difensivo; backtest moderno, margin realism e optimization lab restano lavori futuri.
+- v18 e ora release candidate / commit safety. Il runtime resta paper-only, Pulse-only e difensivo; backtest moderno, margin realism e optimization lab restano lavori futuri.
 
 ## Flusso architetturale
 
@@ -388,7 +392,7 @@ Backtest / replay status
 
 ### Focus operativo successivo
 
-- Il focus immediato e v18.1: rifiniture post-stabilizzazione senza grandi redesign.
+- Il focus immediato dopo v18 e v18.1: hardening tecnico mirato senza grandi redesign.
 - TickProcessingSnapshot / hot-path history sharing:
   - ridurre letture duplicate di price history
   - arrivare a un solo snapshot immutabile per tick solo se il cambio resta piccolo e verificabile
@@ -409,6 +413,12 @@ Backtest / replay status
   - documentare reset post-loss latch
   - documentare cosa fare se `UserStream` resta disconnected
   - spiegare cosa significa `paper_full_notional_simplified`
+- v18.2 resta il contenitore per refactor umano:
+  - smontare complessita inutile
+  - ridurre abstraction tax
+  - rendere `TradingBot` e roles piu leggibili
+  - eliminare wrapper/pass-through senza comportamento proprio
+  - migliorare nomi e confini senza cambiare trading behavior
 
 ## Aggiornamenti del 2026-04-22
 
@@ -762,21 +772,42 @@ Hotspot da trattare con cautela:
 - Il path live futuro resta nel repository ma non deve essere riattivato accidentalmente dal runtime attivo.
 - `paper_full_notional_simplified` indica il modello paper attuale per short: contabilita full-notional semplificata, non futures margin realistico.
 - Il prossimo lavoro utile e ordinato cosi:
-  - v18.1: cleanup mirato e runbook operativo
+  - v18: release candidate / commit safety
+  - v18.1: hardening tecnico mirato
+  - v18.2: human refactor
   - v19: backtest moderno/paritario
   - v20: short/futures/margin realism
   - v21: strategy lab / optimization
 
 ## Roadmap minima
 
-- v18 -> pre-closure stabilizzato dopo patch manual recovery, freshness/clock semantics, exit warning metadata, readability cleanup e docs agent/coding
-- v18.1 -> rifiniture post-stabilizzazione:
+- v18 -> release candidate / commit safety:
+  - manual recovery post-loss latch
+  - freshness/clock semantics
+  - degraded/stale exit warning metadata
+  - readability cleanup e docs agent/coding
+  - event publication non-throwing per proteggere open/close flows
+  - latch post-loss globale a livello bot
+  - validazione recovery `targetOffsetPct`
+  - requisito WebSocket nativo esplicito
+- v18.1 -> hardening tecnico mirato:
   - TickProcessingSnapshot / hot-path history sharing
+  - time-base cleanup
+  - strategy error boundary
+  - config validation
+  - kill-switch reset
+  - small deterministic/testability fixes
   - MTF boundary validation se piccola e condivisa
   - SystemServer Clock cleanup
   - legacy backtest smoke test minimo
   - MarketStream naming residuo
   - runbook reset latch, UserStream disconnected, `paper_full_notional_simplified`
+- v18.2 -> human refactor:
+  - smontare complessita inutile
+  - ridurre abstraction tax
+  - rendere `TradingBot` e roles piu leggibili
+  - eliminare wrapper/pass-through senza valore testabile
+  - nomi e confini piu umani
 - v19 -> backtest moderno/paritario:
   - data layer serio e dataset quality scanner
   - event-driven replay con clock deterministico e no lookahead

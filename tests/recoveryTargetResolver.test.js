@@ -1,6 +1,7 @@
 "use strict";
 
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../src/roles/recoveryTargetResolver.ts");
+const { getManagedRecoveryPolicy } = require("../src/roles/positionLifecycleManager.ts");
 
 function approxEqual(actual, expected, epsilon = 1e-9) {
   return Math.abs(Number(actual) - Number(expected)) <= epsilon;
@@ -41,6 +42,49 @@ function runRecoveryTargetResolverTests() {
   const defaultPolicy = resolveRecoveryTargetPolicy({});
   if (defaultPolicy.targetSource !== "emaSlow" || defaultPolicy.targetOffsetPct !== 0.015) {
     throw new Error(`unexpected default recovery target policy: ${JSON.stringify(defaultPolicy)}`);
+  }
+  const missingPolicy = resolveRecoveryTargetPolicy({ recovery: {} });
+  if (missingPolicy.targetOffsetPct !== 0.015) {
+    throw new Error(`missing recovery target offset should use the default: ${JSON.stringify(missingPolicy)}`);
+  }
+  const zeroPolicy = resolveRecoveryTargetPolicy({ recovery: { targetOffsetPct: 0 } });
+  if (zeroPolicy.targetOffsetPct !== 0) {
+    throw new Error(`zero recovery target offset should preserve current exact-base behavior: ${JSON.stringify(zeroPolicy)}`);
+  }
+  const positivePolicy = resolveRecoveryTargetPolicy({ recovery: { targetOffsetPct: 0.02 } });
+  if (positivePolicy.targetOffsetPct !== 0.02) {
+    throw new Error(`positive recovery target offset should be accepted: ${JSON.stringify(positivePolicy)}`);
+  }
+  let negativePolicyError = null;
+  try {
+    resolveRecoveryTargetPolicy({ recovery: { targetOffsetPct: -0.01 } });
+  } catch (error) {
+    negativePolicyError = error;
+  }
+  if (!negativePolicyError || !String(negativePolicyError.message || negativePolicyError).includes("targetOffsetPct")) {
+    throw new Error(`negative recovery target offset should be rejected clearly: ${negativePolicyError}`);
+  }
+  let negativeRuntimeError = null;
+  try {
+    resolveRecoveryTarget({
+      context: buildContext(),
+      targetOffsetPct: -0.01,
+      targetSource: "emaSlow"
+    });
+  } catch (error) {
+    negativeRuntimeError = error;
+  }
+  if (!negativeRuntimeError || !String(negativeRuntimeError.message || negativeRuntimeError).includes("targetOffsetPct")) {
+    throw new Error(`negative runtime recovery target offset should be rejected clearly: ${negativeRuntimeError}`);
+  }
+  let negativeManagedPolicyError = null;
+  try {
+    getManagedRecoveryPolicy({ recovery: { targetOffsetPct: -0.01 } });
+  } catch (error) {
+    negativeManagedPolicyError = error;
+  }
+  if (!negativeManagedPolicyError || !String(negativeManagedPolicyError.message || negativeManagedPolicyError).includes("targetOffsetPct")) {
+    throw new Error(`negative managed recovery policy target offset should be rejected clearly: ${negativeManagedPolicyError}`);
   }
 
   const emaSlowTarget = resolveRecoveryTarget({

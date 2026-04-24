@@ -5,6 +5,7 @@ import type { PositionLifecycleEvent, PositionLifecycleState } from "../types/po
 const DEFAULT_MANAGED_RECOVERY_EXIT_FLOOR_NET_PNL_USDT = 0.05;
 const DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES = 2;
 const DEFAULT_MANAGED_RECOVERY_TIMEOUT_MS = 120_000;
+const { normalizeRecoveryTargetOffsetPct } = require("./recoveryTargetResolver.ts");
 const POSITION_LIFECYCLE_STATES = {
   ACTIVE: "ACTIVE" as const,
   CLOSED: "CLOSED" as const,
@@ -153,9 +154,7 @@ function getManagedRecoveryPolicy(exitPolicy: ExitPolicy | null | undefined) {
         : DEFAULT_MANAGED_RECOVERY_TIMEOUT_MS,
       1_000
     ),
-    targetOffsetPct: Number.isFinite(Number(exitPolicy?.recovery?.targetOffsetPct))
-      ? Number(exitPolicy?.recovery?.targetOffsetPct)
-      : 0.015,
+    targetOffsetPct: normalizeRecoveryTargetOffsetPct(exitPolicy?.recovery?.targetOffsetPct),
     targetSource: String(exitPolicy?.recovery?.targetSource || "emaSlow")
   };
 }

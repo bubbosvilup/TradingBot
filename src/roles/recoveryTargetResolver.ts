@@ -9,6 +9,17 @@ const { applyDirectionalOffset, normalizeTradeSide } = require("../utils/tradeSi
 const DEFAULT_RECOVERY_TARGET_SOURCE = "emaSlow";
 const DEFAULT_RECOVERY_TARGET_OFFSET_PCT = 0.015;
 
+function normalizeRecoveryTargetOffsetPct(value: unknown, fallback = DEFAULT_RECOVERY_TARGET_OFFSET_PCT) {
+  const targetOffsetPct = Number(value);
+  if (!Number.isFinite(targetOffsetPct)) {
+    return fallback;
+  }
+  if (targetOffsetPct < 0) {
+    throw new Error("exitPolicy.recovery.targetOffsetPct must be a finite non-negative number");
+  }
+  return targetOffsetPct;
+}
+
 function normalizeRecoveryTargetSource(source: unknown) {
   const normalized = String(source || DEFAULT_RECOVERY_TARGET_SOURCE).trim();
   if (normalized === "emaSlow" || normalized === "emaBaseline" || normalized === "sma20" || normalized === "entryPrice") {
@@ -18,11 +29,8 @@ function normalizeRecoveryTargetSource(source: unknown) {
 }
 
 function resolveRecoveryTargetPolicy(exitPolicy: ExitPolicy | null | undefined) {
-  const targetOffsetPct = Number(exitPolicy?.recovery?.targetOffsetPct);
   return {
-    targetOffsetPct: Number.isFinite(targetOffsetPct)
-      ? targetOffsetPct
-      : DEFAULT_RECOVERY_TARGET_OFFSET_PCT,
+    targetOffsetPct: normalizeRecoveryTargetOffsetPct(exitPolicy?.recovery?.targetOffsetPct),
     targetSource: normalizeRecoveryTargetSource(exitPolicy?.recovery?.targetSource)
   };
 }
@@ -69,10 +77,7 @@ function resolveRecoveryTarget(params: {
   targetOffsetPct?: unknown;
   targetSource?: unknown;
 }) {
-  const targetOffsetPct = Number(params.targetOffsetPct);
-  const normalizedOffsetPct = Number.isFinite(targetOffsetPct)
-    ? targetOffsetPct
-    : DEFAULT_RECOVERY_TARGET_OFFSET_PCT;
+  const normalizedOffsetPct = normalizeRecoveryTargetOffsetPct(params.targetOffsetPct);
   const baseTarget = resolveBaseTargetPrice(params);
   const basePrice = Number(baseTarget.basePrice);
 
@@ -97,6 +102,7 @@ function resolveRecoveryTarget(params: {
 module.exports = {
   DEFAULT_RECOVERY_TARGET_OFFSET_PCT,
   DEFAULT_RECOVERY_TARGET_SOURCE,
+  normalizeRecoveryTargetOffsetPct,
   normalizeRecoveryTargetSource,
   resolveRecoveryTarget,
   resolveRecoveryTargetPolicy

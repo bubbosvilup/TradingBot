@@ -44,6 +44,23 @@ function runExitPolicyRegistryTests() {
   if (overridden.invalidation.modes.length !== 1 || overridden.invalidation.modes[0] !== "family_mismatch") {
     throw new Error(`exit policy override should replace invalidation modes cleanly: ${JSON.stringify(overridden)}`);
   }
+
+  let negativeOffsetRejected = false;
+  try {
+    resolveExitPolicy({
+      exitPolicy: {
+        recovery: {
+          targetOffsetPct: -0.01
+        }
+      },
+      exitPolicyId: "RSI_REVERSION_PRO"
+    });
+  } catch (error) {
+    negativeOffsetRejected = String(error?.message || "").includes("exitPolicy.recovery.targetOffsetPct");
+  }
+  if (!negativeOffsetRejected) {
+    throw new Error("exit policy should reject negative recovery targetOffsetPct");
+  }
 }
 
 module.exports = {

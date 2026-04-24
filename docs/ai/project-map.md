@@ -39,6 +39,7 @@ Important repo facts:
 - `src/roles/exitPolicyRegistry.ts` now carries explicit runtime exit capabilities for RSI reversion policies:
   - `qualification.rsiThresholdExit`
   - `recovery.priceTargetExit`
+- `src/roles/exitPolicyRegistry.ts` / `src/roles/recoveryTargetResolver.ts` reject negative `exitPolicy.recovery.targetOffsetPct`; zero and missing/default behavior remain intentional.
 - `src/roles/exitDecisionCoordinator.ts` is now the authoritative exit capability gate:
   - disabled RSI-threshold and price-target triggers are hard-blocked instead of falling through to generic exits
   - managed recovery price-target behavior respects `recovery.priceTargetExit`
@@ -82,7 +83,7 @@ Boundary map:
 - `entryEconomicsEstimator`: fee-aware edge estimate plus deterministic capture-gap, short-horizon target-distance diagnostics, and resolved cap computation from explicit strategy economics policy
 - `RiskManager`: drawdown gates, loss-streak policy, volatility-aware sizing penalties, and post-close cooldown timing
 - `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, `recoveryTargetResolver`: exit planning and shaping; managed-recovery invalidation grace, target-vs-invalidation precedence, capability gating, and paused-close state coherence live here
-- `postLossArchitectLatch`: post-loss re-entry defense
+- `postLossArchitectLatch`: post-loss re-entry defense. While active, it blocks entries globally at bot level; stored strategy id is metadata only.
 - `tradingBotTelemetry`: operator-facing metadata shaping, including full/Pulse-facing MTF publish and entry cap-resolution diagnostics
 - `StateStore`: single runtime state container
 - `BacktestEngine`: adapter boundary for future replay migration, not full runtime parity yet
@@ -90,7 +91,9 @@ Boundary map:
 
 Roadmap boundary:
 
-- v18.1: cleanup and runbook work only. Safe targets are TickProcessingSnapshot/hot-path history sharing, MTF boundary validation if shared cleanly, injected SystemServer clock use, legacy smoke tests, local MarketStream naming, and operator docs.
+- v18: release candidate / commit safety. Only release-critical regressions should enter before the release commit.
+- v18.1: targeted technical hardening only. Safe targets are TickProcessingSnapshot/hot-path history sharing, time-base cleanup, strategy error boundary, small config-validation gaps, explicit kill-switch reset, deterministic/testability fixes, MTF boundary validation if shared cleanly, injected SystemServer clock use, legacy smoke tests, local MarketStream naming, and operator docs.
+- v18.2: human refactor only. Reduce unnecessary complexity, abstraction tax, wrapper/pass-through layers, and unclear names/boundaries without changing runtime behavior.
 - v19: modern backtest parity. It must solve data quality, event replay, execution realism, strategic reporting, anti-lookahead, and legacy deprecation.
 - v20: paper futures isolated-margin realism for economically honest shorts.
 - v21: strategy lab and optimization focused on robustness, walk-forward validation, out-of-sample discipline, Monte Carlo stress, and fair benchmarks.

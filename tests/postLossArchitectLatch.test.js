@@ -56,6 +56,20 @@ function runPostLossArchitectLatchTests() {
   if (!activeState.postLossArchitectLatchActive || activeState.postLossArchitectLatchFreshPublishCount !== 0) {
     throw new Error(`loss close should activate latch state: ${JSON.stringify(activeState)}`);
   }
+  const switchedStrategyLatchState = latch.getState("emaCross", activeState);
+  if (!switchedStrategyLatchState.blocking || switchedStrategyLatchState.strategyId !== "rsiReversion") {
+    throw new Error(`active post-loss latch should block globally after a strategy switch while preserving strategy metadata: ${JSON.stringify(switchedStrategyLatchState)}`);
+  }
+  store.updateBotState("bot_test", {
+    postLossArchitectLatchTimedOutAt: 12_000
+  });
+  const timedOutSwitchedStrategyLatchState = latch.getState("emaCross", store.getBotState("bot_test"));
+  if (!timedOutSwitchedStrategyLatchState.blocking || timedOutSwitchedStrategyLatchState.timedOutAt !== 12_000) {
+    throw new Error(`timed-out post-loss latch should still block globally after a strategy switch: ${JSON.stringify(timedOutSwitchedStrategyLatchState)}`);
+  }
+  store.updateBotState("bot_test", {
+    postLossArchitectLatchTimedOutAt: null
+  });
 
   let refreshed = latch.refresh();
   if (refreshed.transition) {

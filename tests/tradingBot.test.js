@@ -1704,6 +1704,80 @@ function runTradingBotTests() {
       throw new Error("stale architect state should not increment the post-loss architect latch");
     }
 
+    const latchSwitchHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "sell" : "buy",
+      confidence: 0.95,
+      reason: [context.hasOpenPosition ? "stop_signal" : "post_switch_entry_signal"]
+    }), {
+      allowedStrategies: ["rsiReversion", "emaCross"],
+      postLossArchitectLatchPublishesRequired: 1,
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategySwitcher: new StrategySwitcher({
+        resolveStrategyFamily: resolveTestStrategyFamily
+      })
+    });
+    latchSwitchHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.9,
+      entryPrice: 100,
+      id: "pos-loss-latch-switch",
+      lifecycleMode: "normal",
+      managedRecoveryDeferredReason: null,
+      managedRecoveryExitFloorNetPnlUsdt: null,
+      managedRecoveryStartedAt: null,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 20_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    latchSwitchHarness.store.updateBotState("bot_test", {
+      activeStrategyId: "rsiReversion",
+      exitSignalStreak: 1
+    });
+    latchSwitchHarness.bot.onMarketTick({ price: 99, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const latchSwitchClosedTrade = latchSwitchHarness.store.getClosedTrades("bot_test")[0];
+    if (!latchSwitchClosedTrade || !(latchSwitchClosedTrade.netPnl < 0)) {
+      throw new Error("strategy-switch latch scenario should start from a real losing close");
+    }
+    latchSwitchHarness.store.setArchitectPublishedAssessment("BTC/USDT", createTrendArchitect({
+      updatedAt: clock + 1_000
+    }));
+    latchSwitchHarness.store.updateBotState("bot_test", {
+      cooldownReason: null,
+      cooldownUntil: null,
+      entrySignalStreak: 1
+    });
+    clock += 1_000;
+    latchSwitchHarness.bot.onMarketTick({ price: 100.4, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const latchSwitchBlockedState = latchSwitchHarness.store.getBotState("bot_test");
+    if (latchSwitchBlockedState.activeStrategyId !== "emaCross") {
+      throw new Error(`flat bot should still be allowed to switch strategy while post-loss latch is active: ${JSON.stringify(latchSwitchBlockedState)}`);
+    }
+    if (latchSwitchHarness.store.getPosition("bot_test")) {
+      throw new Error("post-loss latch should block entry even after switching to a different strategy");
+    }
+    if (!latchSwitchHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "post_loss_architect_latch")) {
+      throw new Error(`strategy-switched latch should still report post_loss_architect_latch block: ${JSON.stringify(latchSwitchHarness.botLogs)}`);
+    }
+    latchSwitchHarness.store.setArchitectPublisherState("BTC/USDT", {
+      ...latchSwitchHarness.store.getArchitectPublisherState("BTC/USDT"),
+      lastPublishedAt: latchSwitchClosedTrade.closedAt + 5_000,
+      ready: true
+    });
+    latchSwitchHarness.store.updateBotState("bot_test", {
+      entrySignalStreak: 1
+    });
+    clock += 1_000;
+    latchSwitchHarness.bot.onMarketTick({ price: 100.6, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const latchSwitchReleasedState = latchSwitchHarness.store.getBotState("bot_test");
+    if (latchSwitchReleasedState.postLossArchitectLatchActive || !latchSwitchHarness.store.getPosition("bot_test")) {
+      throw new Error(`fresh publication should release switched-strategy latch and allow entry when other gates are clear: ${JSON.stringify(latchSwitchReleasedState)}`);
+    }
+
     postLossLatchHarness.store.setArchitectPublishedAssessment("BTC/USDT", createPublishedArchitect({
       updatedAt: postLossClosedTrade.closedAt + 5_000
     }));

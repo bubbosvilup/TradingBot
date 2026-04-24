@@ -1,4 +1,5 @@
 import type { ExitPolicy, InvalidationMode } from "../types/exitPolicy.ts";
+const { normalizeRecoveryTargetOffsetPct } = require("./recoveryTargetResolver.ts");
 
 const RSI_REVERSION_PRO: ExitPolicy = {
   id: "RSI_REVERSION_PRO",
@@ -95,6 +96,13 @@ function resolveExitPolicy(strategyConfig: Record<string, unknown> | null | unde
     recovery: { maxConsecutiveEntries: 2, targetOffsetPct: 0, targetSource: "emaSlow" as const }
   };
 
+  const recovery = {
+    ...base.recovery,
+    ...(override?.recovery || {})
+  };
+
+  recovery.targetOffsetPct = normalizeRecoveryTargetOffsetPct(recovery.targetOffsetPct, base.recovery.targetOffsetPct);
+
   return {
     ...base,
     ...override,
@@ -110,10 +118,7 @@ function resolveExitPolicy(strategyConfig: Record<string, unknown> | null | unde
       ...base.qualification,
       ...(override?.qualification || {})
     },
-    recovery: {
-      ...base.recovery,
-      ...(override?.recovery || {})
-    }
+    recovery
   };
 }
 

@@ -46,7 +46,7 @@ class PostLossArchitectLatch {
     return {
       activatedAt: state?.postLossArchitectLatchActivatedAt || null,
       active,
-      blocking: active && Boolean(strategyId) && strategyId === activeStrategyId,
+      blocking: active,
       freshPublishCount: Number(state?.postLossArchitectLatchFreshPublishCount || 0),
       lastCountedPublishedAt: state?.postLossArchitectLatchLastCountedPublishedAt || null,
       latestPublishedAt: publisher?.lastPublishedAt || null,

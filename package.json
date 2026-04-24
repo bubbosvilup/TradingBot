@@ -10,6 +10,9 @@
     "start:orchestrator": "node --disable-warning=ExperimentalWarning --experimental-strip-types src/core/orchestrator.ts",
     "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/run-tests.js"
   },
+  "engines": {
+    "node": ">=22.4.0"
+  },
   "keywords": [
     "trading",
     "bot",

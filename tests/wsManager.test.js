@@ -9,6 +9,66 @@ function runWsManagerTests() {
   const klines = [];
   const publishedStatuses = [];
   const logs = [];
+  const originalGlobalWebSocket = globalThis.WebSocket;
+
+  class NativeLikeWebSocket extends FakeWebSocket {}
+  const nativeSockets = [];
+  globalThis.WebSocket = class extends NativeLikeWebSocket {
+    constructor(url) {
+      super(url);
+      nativeSockets.push(this);
+    }
+  };
+  const nativeFactoryManager = new WSManager({
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    maxReconnectAttempts: 0
+  });
+  const disconnectNative = nativeFactoryManager.connectBinanceMarketStream({
+    connectionId: "native-factory-test",
+    onTick() {},
+    streamType: "trade",
+    symbols: ["BTC/USDT"],
+    urlBase: "wss://example.test"
+  });
+  if (nativeSockets.length !== 1 || !nativeSockets[0].url.includes("btcusdt@trade")) {
+    throw new Error(`default ws factory should use globalThis.WebSocket: ${JSON.stringify(nativeSockets.map((socket) => socket.url))}`);
+  }
+  disconnectNative();
+  nativeFactoryManager.closeAll();
+
+  const missingWebSocketLogs = [];
+  globalThis.WebSocket = undefined;
+  const missingWebSocketManager = new WSManager({
+    logger: {
+      info(event, metadata) {
+        missingWebSocketLogs.push({ event, metadata });
+      },
+      warn(event, metadata) {
+        missingWebSocketLogs.push({ event, metadata });
+      },
+      error(event, metadata) {
+        missingWebSocketLogs.push({ event, metadata });
+      }
+    },
+    maxReconnectAttempts: 0
+  });
+  missingWebSocketManager.connectBinanceMarketStream({
+    connectionId: "missing-native-websocket",
+    onTick() {},
+    streamType: "trade",
+    symbols: ["ETH/USDT"],
+    urlBase: "wss://example.test"
+  });
+  const missingWebSocketLog = missingWebSocketLogs.find((entry) => entry.event === "ws_constructor_failed");
+  if (!missingWebSocketLog || !String(missingWebSocketLog.metadata?.error || "").includes("TradingBot requires Node.js >= 22.4.0 with native WebSocket enabled, or an injected websocketFactory.")) {
+    throw new Error(`missing native WebSocket should fail with an actionable message: ${JSON.stringify(missingWebSocketLogs)}`);
+  }
+  missingWebSocketManager.closeAll();
+  globalThis.WebSocket = originalGlobalWebSocket;
 
   const manager = new WSManager({
     logger: {

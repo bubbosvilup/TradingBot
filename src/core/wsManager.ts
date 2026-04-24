@@ -40,6 +40,13 @@ function attachSocketHandler(socket: any, eventName: string, handler: (...args: 
   socket[propertyName] = handler;
 }
 
+function createNativeWebSocket(url: string) {
+  if (typeof globalThis.WebSocket !== "function") {
+    throw new Error("TradingBot requires Node.js >= 22.4.0 with native WebSocket enabled, or an injected websocketFactory.");
+  }
+  return new globalThis.WebSocket(url);
+}
+
 class WSManager {
   emitter: typeof EventEmitter.prototype;
   logger: any;
@@ -66,7 +73,7 @@ class WSManager {
   } = {}) {
     this.emitter = new EventEmitter();
     this.logger = deps.logger || { info() {}, warn() {}, error() {} };
-    this.websocketFactory = deps.websocketFactory || ((url: string) => new WebSocket(url));
+    this.websocketFactory = deps.websocketFactory || createNativeWebSocket;
     this.connections = new Map();
     this.reconnectBaseMs = Math.max(deps.reconnectBaseMs || 1000, 250);
     this.reconnectMaxMs = Math.max(deps.reconnectMaxMs || 15_000, this.reconnectBaseMs);

@@ -45,13 +45,28 @@ Work top-down unless a task explicitly says otherwise.
   - wall-clock kill-switch preview timestamps in TradingBot
   - degraded/stale exit warning telemetry
   - readability cleanup around lifecycle invariants, freshness expiry naming, MarketStream constants, and coding-agent docs
-- Next: v18.1 post-stabilization refinements. Keep this small and targeted:
+- Completed: final v18 release-candidate blockers:
+  - post-loss Architect latch blocks globally at bot level while active; strategy id remains metadata
+  - negative `exitPolicy.recovery.targetOffsetPct` is rejected explicitly
+  - default WebSocket construction uses `globalThis.WebSocket` with a clear Node/runtime guard
+- Current: v18 release candidate / commit safety. Only release-critical regressions should enter v18.
+- Next: v18.1 targeted technical hardening. Keep this small and targeted:
   - TickProcessingSnapshot / hot-path history sharing only if it reduces duplicate price-history reads without broad runtime churn
+  - time-base cleanup where residual mixed clocks affect determinism/testability
+  - strategy error boundary if it can isolate strategy failures without changing decisions
+  - config validation gaps with small shared validators
+  - portfolio kill-switch reset only as an explicit operator action
+  - small deterministic/testability fixes
   - MTF boundary validation in `MtfContextService` only if it can reuse shared validation logic
   - SystemServer injected-clock cleanup for deterministic payload/API tests
   - legacy backtest smoke test with deterministic trade count / PnL expectations
   - local MarketStream naming cleanup where safe
   - operational runbook for post-loss latch reset, disconnected UserStream, and paper short accounting
+- v18.2: human refactor only after v18.1 hardening:
+  - remove unnecessary complexity and abstraction tax
+  - make `TradingBot` and roles easier to read
+  - remove wrapper/pass-through layers that do not protect a boundary or add testable behavior
+  - improve names and ownership boundaries without changing runtime behavior
 
 ## P3
 
@@ -100,5 +115,5 @@ Priority notes:
 - MTF thresholds intentionally remain split:
   - `mtf.instabilityThreshold` default `0.5` = architect usability/blocking threshold
   - `mtfParamResolver` `0.25` = stricter parameter-widening coherence threshold
-- v18.1 must stay cleanup-only. Do not start v19 replay, v20 margin realism, or v21 optimization work inside v18.1 patches.
+- v18.1 must stay hardening-only and v18.2 human-refactor-only. Do not start v19 replay, v20 margin realism, or v21 optimization work inside either track.
 - Modern backtest work must not claim profitability until data quality, execution assumptions, anti-lookahead tests, and reporting are in place.
