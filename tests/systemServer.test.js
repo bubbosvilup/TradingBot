@@ -244,6 +244,11 @@ async function runSystemServerTests() {
   if (system.executionMode !== "paper" || system.executionSafety !== "simulated_only") {
     throw new Error("system payload missing execution safety mode");
   }
+  if (system.accountingModel !== "paper_full_notional_simplified"
+    || !Array.isArray(system.accountingWarnings)
+    || !system.accountingWarnings[0]?.includes("simplified full-notional accounting")) {
+    throw new Error(`system payload should expose paper accounting safety metadata: ${JSON.stringify(system)}`);
+  }
   if (!system.portfolioKillSwitch || system.portfolioKillSwitch.enabled !== true || system.portfolioKillSwitch.mode !== "block_entries_only") {
     throw new Error(`system payload should expose portfolio kill switch state clearly: ${JSON.stringify(system)}`);
   }
@@ -342,6 +347,11 @@ async function runSystemServerTests() {
   if (pulse.statusBar.feedMode !== "LIVE" || pulse.statusBar.executionMode !== "PAPER" || pulse.statusBar.bots.running !== 0 || pulse.statusBar.bots.total !== 1) {
     throw new Error(`pulse status bar should normalize operator-visible runtime modes and bot counts: ${JSON.stringify(pulse.statusBar)}`);
   }
+  if (pulse.statusBar.accountingModel !== "paper_full_notional_simplified"
+    || !Array.isArray(pulse.statusBar.accountingWarnings)
+    || !pulse.statusBar.accountingWarnings[0]?.includes("does not model margin")) {
+    throw new Error(`pulse status bar should expose paper accounting safety metadata: ${JSON.stringify(pulse.statusBar)}`);
+  }
   if (pulse.statusBar.killSwitch.state !== "armed" || pulse.statusBar.killSwitch.severity !== "normal") {
     throw new Error(`pulse should normalize non-triggered kill switch state: ${JSON.stringify(pulse.statusBar.killSwitch)}`);
   }
@@ -366,6 +376,40 @@ async function runSystemServerTests() {
     || pulse.focusPanel.actions.resume.visible !== false
     || pulse.focusPanel.actions.history.enabled !== true) {
     throw new Error(`pulse focus panel should expose normalized architect summary and actions: ${JSON.stringify(pulse.focusPanel)}`);
+  }
+
+  const pureReadStore = new StateStore();
+  pureReadStore.registerBot({
+    allowedStrategies: ["emaCross"],
+    enabled: true,
+    id: "bot_pure_read",
+    riskProfile: "medium",
+    strategy: "emaCross",
+    symbol: "BTC/USDT"
+  });
+  pureReadStore.setPortfolioKillSwitchConfig({
+    enabled: true,
+    maxDrawdownPct: 5,
+    mode: "block_entries_only"
+  });
+  pureReadStore.updateBotState("bot_pure_read", {
+    realizedPnl: -60
+  });
+  const pureReadServer = new SystemServer({
+    executionMode: "paper",
+    feeRate: 0.001,
+    feedMode: "live",
+    logger: { info() {} },
+    port: 3111,
+    startedAt: now - 1000,
+    store: pureReadStore
+  });
+  const pureReadSystem = pureReadServer.buildSystemPayload();
+  if (!pureReadSystem.portfolioKillSwitch?.triggered) {
+    throw new Error(`system payload should still compute a triggered kill switch snapshot for API readers: ${JSON.stringify(pureReadSystem.portfolioKillSwitch)}`);
+  }
+  if (pureReadStore.portfolioKillSwitchState.triggered || pureReadStore.portfolioKillSwitchState.updatedAt !== null) {
+    throw new Error(`system-server read paths must not latch or mutate portfolio kill switch state: ${JSON.stringify(pureReadStore.portfolioKillSwitchState)}`);
   }
 
   const observedOnlyStore = new StateStore();
@@ -515,6 +559,11 @@ async function runSystemServerTests() {
   if (!Array.isArray(shortTrades) || shortTrades.length !== 1 || shortTrades[0].side !== "short" || shortTrades[0].exitReason[0] !== "reversion_price_target_hit") {
     throw new Error(`trades payload should surface short closed trades explicitly: ${JSON.stringify(shortTrades)}`);
   }
+  if (shortTrades[0].accountingModel !== "paper_full_notional_simplified"
+    || !Array.isArray(shortTrades[0].accountingWarnings)
+    || !shortTrades[0].accountingWarnings[0]?.includes("funding, or liquidation")) {
+    throw new Error(`short trades payload should expose paper accounting safety metadata: ${JSON.stringify(shortTrades[0])}`);
+  }
   const shortChart = shortServer.buildChartPayload("ETH/USDT");
   const shortEntryMarker = shortChart.markers.find((marker) => String(marker.text || "").startsWith("SHORT "));
   const shortExitMarker = shortChart.markers.find((marker) => String(marker.text || "").startsWith("COVER "));
@@ -528,6 +577,15 @@ async function runSystemServerTests() {
   const shortPulse = shortServer.buildPulsePayload({ botId: "bot_short" });
   if (!Array.isArray(shortPositions) || shortPositions.length !== 1 || shortPositions[0].side !== "short") {
     throw new Error(`positions payload should surface open shorts with normalized side: ${JSON.stringify(shortPositions)}`);
+  }
+  if (shortPositions[0].accountingModel !== "paper_full_notional_simplified"
+    || !Array.isArray(shortPositions[0].accountingWarnings)
+    || !shortPositions[0].accountingWarnings[0]?.includes("borrowing")) {
+    throw new Error(`short positions payload should expose paper accounting safety metadata: ${JSON.stringify(shortPositions[0])}`);
+  }
+  if (shortChart.position?.accountingModel !== "paper_full_notional_simplified"
+    || !Array.isArray(shortChart.position?.accountingWarnings)) {
+    throw new Error(`chart short position payload should expose paper accounting safety metadata: ${JSON.stringify(shortChart.position)}`);
   }
   if (shortPulse.botCards[0].position.state !== "short" || !String(shortPulse.botCards[0].position.label).startsWith("SHORT ")) {
     throw new Error(`pulse payload should render open short positions explicitly: ${JSON.stringify(shortPulse.botCards[0].position)}`);

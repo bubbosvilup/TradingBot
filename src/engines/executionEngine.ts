@@ -1,8 +1,10 @@
 // Module responsibility: simulated execution for opening and closing positions.
 
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
+import type { Clock } from "../core/clock.ts";
 
 const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
+const { resolveClock } = require("../core/clock.ts");
 const {
   calculateDirectionalGrossPnl,
   getCloseOrderSide,
@@ -18,8 +20,10 @@ class ExecutionEngine {
   executionMode: string;
   minTradeNotionalUsdt: number;
   minTradeQuantity: number;
+  clock: Clock;
 
   constructor(deps: {
+    clock?: Clock;
     store: any;
     userStream: any;
     logger: any;
@@ -28,6 +32,7 @@ class ExecutionEngine {
     minTradeNotionalUsdt?: number;
     minTradeQuantity?: number;
   }) {
+    this.clock = resolveClock(deps.clock);
     const resolvedFeeRate = Number(deps.feeRate);
     if (deps.feeRate === undefined || deps.feeRate === null || !Number.isFinite(resolvedFeeRate) || resolvedFeeRate < 0) {
       throw new Error("ExecutionEngine requires a finite non-negative feeRate dependency");
@@ -44,8 +49,12 @@ class ExecutionEngine {
     this.minTradeQuantity = Math.max(Number(deps.minTradeQuantity) || 1e-6, 0);
   }
 
+  now() {
+    return this.clock.now();
+  }
+
   buildOrderId(botId: string) {
-    return `${botId}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    return `${botId}-${this.now()}-${Math.random().toString(16).slice(2, 8)}`;
   }
 
   getTradeConstraints() {
@@ -206,7 +215,7 @@ class ExecutionEngine {
       side: getEntryOrderSide(side),
       strategyId: params.strategyId,
       symbol: params.symbol,
-      timestamp: Date.now()
+      timestamp: this.now()
     };
 
     const position: PositionRecord = {
@@ -296,7 +305,7 @@ class ExecutionEngine {
       ?? economics.exitPrice;
     const closedAt = Number.isFinite(Number(params.timestamp))
       ? Number(params.timestamp)
-      : Date.now();
+      : this.now();
     const closedTrade: ClosedTradeRecord = {
       botId: params.botId,
       closedAt,

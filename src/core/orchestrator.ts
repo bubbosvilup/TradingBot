@@ -24,8 +24,9 @@ const { BotArchitect } = require("../roles/botArchitect.ts");
 const { StateStore } = require("./stateStore.ts");
 const { createLogger } = require("../utils/logger.ts");
 const { resolveFeeRateFromEnv } = require("../utils/executionConfig.ts");
-const { formatDuration, now, sleep } = require("../utils/time.ts");
+const { formatDuration, sleep } = require("../utils/time.ts");
 const { ExperimentReporter } = require("./experimentReporter.ts");
+const { systemClock } = require("./clock.ts");
 
 function parseOptionalBooleanFlag(value: string | undefined | null, name: string) {
   if (value === undefined || value === null || String(value).trim() === "") return null;
@@ -134,13 +135,14 @@ function resolvePaperOnlyExecutionMode(cliArgs: { executionMode?: string | null 
 }
 
 async function startOrchestrator(runtimeOptions: { durationMs?: number | null; summaryEveryMs?: number | null; serverEnabled?: boolean; port?: number | null } = {}) {
-  const startedAt = now();
+  const clock = systemClock;
+  const startedAt = clock.now();
   const cliArgs = parseArgs(process.argv.slice(2));
   const cli = {
     durationMs: runtimeOptions.durationMs ?? cliArgs.durationMs,
     summaryEveryMs: runtimeOptions.summaryEveryMs ?? cliArgs.summaryEveryMs
   };
-  const store = new StateStore({ maxEvents: 300, maxPriceHistory: 600 });
+  const store = new StateStore({ clock, maxEvents: 300, maxPriceHistory: 600 });
   const logger = createLogger("orchestrator", {
     eventSink: (event: any) => store.appendEvent(event)
   });
@@ -178,8 +180,10 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
   const userStream = new UserStream({
     apiKey: process.env.BINANCE_API_KEY || null,
+    clock,
     logger: logger.child("user"),
     store,
+    userStreamRequestTimeoutMs: botConfig.userStreamRequestTimeoutMs,
     wsBaseUrl: botConfig.market?.wsBaseUrl || "wss://stream.binance.com:9443",
     wsManager
   });
@@ -194,6 +198,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const resolvedMtf = resolveMtfRuntimeConfig(botConfig);
   const mtfConfig = resolvedMtf.config;
   const executionEngine = new ExecutionEngine({
+    clock,
     executionMode,
     feeRate: executionFee.feeRate,
     logger: logger.child("execution"),
@@ -214,9 +219,15 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       mtf: bot.mtf || mtfConfig,
       postLossArchitectLatchPublishesRequired: Number.isFinite(Number(bot.postLossArchitectLatchPublishesRequired))
         ? Math.max(Number(bot.postLossArchitectLatchPublishesRequired), 1)
-        : postLossLatchMinFreshPublications
+        : postLossLatchMinFreshPublications,
+      postLossLatchMaxMs: Number.isFinite(Number(bot.postLossLatchMaxMs))
+        ? Math.max(Number(bot.postLossLatchMaxMs), 1)
+        : Number.isFinite(Number(botConfig.postLossLatchMaxMs))
+          ? Math.max(Number(botConfig.postLossLatchMaxMs), 1)
+          : undefined
     }));
   const marketStream = new MarketStream({
+    clock,
     klineIntervals: botConfig.market?.klineIntervals || [],
     liveEmitIntervalMs: botConfig.market?.liveEmitIntervalMs,
     logger: logger.child("market"),
@@ -290,6 +301,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     riskManager,
     stateStore: store,
     store,
+    clock,
     strategyRegistry,
     strategySwitcher
   });
@@ -317,7 +329,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   if (!isSilent) {
-    const portfolioKillSwitch = store.getPortfolioKillSwitchState({ feeRate: executionFee.feeRate, now: startedAt });
+    const portfolioKillSwitch = store.commitPortfolioKillSwitchState({ feeRate: executionFee.feeRate, now: startedAt });
     logger.info("system_ready", {
       bots: enabledBots.length,
       executionMode,
@@ -442,7 +454,13 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   });
 
   while (!stopped) {
-    const loopNow = now();
+    const loopNow = clock.now();
+    if (typeof (store as any).refreshMarketDataFreshness === "function") {
+      (store as any).refreshMarketDataFreshness(enabledSymbols, {
+        now: loopNow,
+        staleAfterMs: marketStream.fallbackStaleAfterMs
+      });
+    }
     const symbolState = store.evictStaleSymbolState({ now: loopNow });
     if (symbolState.evictedSymbols.length > 0) {
       contextService.pruneSymbols(symbolState.evictedSymbols);
@@ -455,7 +473,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
       }
     }
     const snapshot = store.getSystemSnapshot();
-    const portfolioKillSwitch = store.getPortfolioKillSwitchState({ feeRate: executionFee.feeRate });
+    const portfolioKillSwitch = store.commitPortfolioKillSwitchState({ feeRate: executionFee.feeRate, now: loopNow });
     const runningBots = snapshot.botStates.filter((bot: any) => bot.status === "running");
     const latestPricesSummary = snapshot.latestPrices
       .map((entry: any) => `${entry.symbol}:${entry.price.toFixed(2)}`)

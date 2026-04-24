@@ -56,6 +56,32 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
 }
 
 function runStateStoreTests() {
+  let fakeNow = 50_000;
+  const fakeClock = { now: () => fakeNow };
+  const clockedStore = new StateStore({ clock: fakeClock });
+  clockedStore.registerBot(createBotConfig({ id: "bot_clocked", symbol: "CLOCK/USDT" }));
+  const clockedInitialFreshness = clockedStore.getMarketDataFreshness("CLOCK/USDT");
+  if (clockedInitialFreshness.updatedAt !== 50_000) {
+    throw new Error(`market freshness initialization should use injected clock: ${JSON.stringify(clockedInitialFreshness)}`);
+  }
+  fakeNow = 51_000;
+  const normalizedClockedFreshness = clockedStore.setMarketDataFreshness("CLOCK/USDT", {
+    status: "degraded"
+  });
+  if (normalizedClockedFreshness?.updatedAt !== 51_000) {
+    throw new Error(`market freshness normalization should use injected clock fallback: ${JSON.stringify(normalizedClockedFreshness)}`);
+  }
+  fakeNow = 52_000;
+  clockedStore.setPortfolioKillSwitchConfig({
+    enabled: true,
+    maxDrawdownPct: 1,
+    mode: "block_entries_only"
+  });
+  const clockedPortfolioState = clockedStore.commitPortfolioKillSwitchState({ feeRate: 0 });
+  if (clockedPortfolioState.updatedAt !== 52_000) {
+    throw new Error(`portfolio kill switch timing should use injected clock: ${JSON.stringify(clockedPortfolioState)}`);
+  }
+
   const store = new StateStore({
     maxClosedTradesHistory: 50,
     maxOrdersHistory: 50
@@ -348,6 +374,9 @@ function runStateStoreTests() {
   if (!initialPortfolioState.enabled || initialPortfolioState.currentEquityUsdt !== 1000 || initialPortfolioState.triggered) {
     throw new Error(`portfolio kill switch should initialize from registered capital without triggering: ${JSON.stringify(initialPortfolioState)}`);
   }
+  if (portfolioStore.portfolioKillSwitchState.triggered || portfolioStore.portfolioKillSwitchState.updatedAt !== null) {
+    throw new Error(`getPortfolioKillSwitchState should not mutate the stored portfolio kill switch state: ${JSON.stringify(portfolioStore.portfolioKillSwitchState)}`);
+  }
 
   portfolioStore.updateBotState("bot_portfolio", {
     availableBalanceUsdt: 0
@@ -370,7 +399,14 @@ function runStateStoreTests() {
     symbol: "BTC/USDT",
     timestamp: 12_000
   });
-  const triggeredPortfolioState = portfolioStore.getPortfolioKillSwitchState({ feeRate: 0.001, now: 12_000 });
+  const computedTriggeredPortfolioState = portfolioStore.getPortfolioKillSwitchState({ feeRate: 0.001, now: 12_000 });
+  if (!computedTriggeredPortfolioState.triggered || portfolioStore.portfolioKillSwitchState.triggered) {
+    throw new Error(`read-only portfolio kill switch state should compute a breach without latching it: ${JSON.stringify({
+      computed: computedTriggeredPortfolioState,
+      stored: portfolioStore.portfolioKillSwitchState
+    })}`);
+  }
+  const triggeredPortfolioState = portfolioStore.commitPortfolioKillSwitchState({ feeRate: 0.001, now: 12_000 });
   if (!triggeredPortfolioState.triggered || !triggeredPortfolioState.blockingEntries || triggeredPortfolioState.reason !== "portfolio_max_drawdown_reached") {
     throw new Error(`portfolio kill switch should trigger and block entries after aggregate drawdown breaches the threshold: ${JSON.stringify(triggeredPortfolioState)}`);
   }
@@ -384,7 +420,7 @@ function runStateStoreTests() {
     symbol: "BTC/USDT",
     timestamp: 13_000
   });
-  const latchedPortfolioState = portfolioStore.getPortfolioKillSwitchState({ feeRate: 0.001, now: 13_000 });
+  const latchedPortfolioState = portfolioStore.commitPortfolioKillSwitchState({ feeRate: 0.001, now: 13_000 });
   if (!latchedPortfolioState.triggered || latchedPortfolioState.triggeredAt !== 12_000) {
     throw new Error(`portfolio kill switch should stay latched after it has triggered once: ${JSON.stringify(latchedPortfolioState)}`);
   }
@@ -422,6 +458,33 @@ function runStateStoreTests() {
   const preservedPauseStatus = restoredStatusStore.getBotState("bot_restore");
   if (preservedPauseStatus?.status !== "paused" || preservedPauseStatus?.pausedReason !== "manual_pause") {
     throw new Error(`registerBot should preserve paused states with an existing reason across re-registration: ${JSON.stringify(preservedPauseStatus)}`);
+  }
+
+  restoredStatusStore.updateBotState("bot_restore", {
+    pausedReason: null,
+    status: "paused"
+  });
+  const sanitizedImpossiblePauseState = restoredStatusStore.getBotState("bot_restore");
+  if (sanitizedImpossiblePauseState?.status === "paused" || sanitizedImpossiblePauseState?.pausedReason !== null) {
+    throw new Error(`updateBotState should never persist paused state without a pausedReason: ${JSON.stringify(sanitizedImpossiblePauseState)}`);
+  }
+
+  restoredStatusStore.updateBotState("bot_restore", {
+    pausedReason: "manual_pause",
+    status: "idle"
+  });
+  const idleStateWithClearedPauseReason = restoredStatusStore.getBotState("bot_restore");
+  if (idleStateWithClearedPauseReason?.status !== "idle" || idleStateWithClearedPauseReason?.pausedReason !== null) {
+    throw new Error(`updateBotState should clear pausedReason whenever status is not paused: ${JSON.stringify(idleStateWithClearedPauseReason)}`);
+  }
+
+  restoredStatusStore.updateBotState("bot_restore", {
+    pausedReason: "manual_pause",
+    status: "paused"
+  });
+  const validManualPauseState = restoredStatusStore.getBotState("bot_restore");
+  if (validManualPauseState?.status !== "paused" || validManualPauseState?.pausedReason !== "manual_pause") {
+    throw new Error(`updateBotState should preserve valid paused states with an explicit reason: ${JSON.stringify(validManualPauseState)}`);
   }
 
   const originalDateNow = Date.now;

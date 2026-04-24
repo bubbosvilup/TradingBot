@@ -7,7 +7,8 @@ import type { EntryEconomicsEstimate, MarketContext, Strategy } from "../types/s
 import type { PositionRecord } from "../types/trade.ts";
 import type { ExitPolicy, InvalidationMode } from "../types/exitPolicy.ts";
 import type { PositionExitMechanism } from "../types/positionLifecycle.ts";
-import type { BotDeps } from "../types/runtime.ts";
+import type { BotDeps, MarketDataFreshnessState } from "../types/runtime.ts";
+import type { Clock } from "../core/clock.ts";
 import type { BaseBotClass } from "./baseBot.ts";
 import type {
   ArchitectCoordinatorInstance,
@@ -91,12 +92,12 @@ const { PostLossArchitectLatch } = require("../roles/postLossArchitectLatch.ts")
     store: BotDeps["store"];
     symbol: string;
   }) => {
-    activateOnLoss(params: { closedAt: number; netPnl: number; strategyId: string }): { state: any; transition?: PostLossArchitectLatchTransition };
+    activateOnLoss(params: { closedAt: number; netPnl: number; startedAt?: number | null; strategyId: string }): { state: any; transition?: PostLossArchitectLatchTransition };
     getState(activeStrategyId: string, runtimeState?: any): any;
     refresh(): { state: any; transition?: PostLossArchitectLatchTransition };
   };
 };
-const { now } = require("../utils/time.ts");
+const { resolveClock } = require("../core/clock.ts");
 
 type TradingTickSnapshot = Readonly<{
   tick: MarketTick;
@@ -138,6 +139,7 @@ class TradingBot extends BaseBot {
   entrySlippageBufferPct: number;
   entryProfitSafetyBufferPct: number;
   minExpectedNetEdgePct: number;
+  postLossLatchMaxMs: number | null;
   compactLogSignatures: Record<string, string | null>;
   architectCoordinator: ArchitectCoordinatorInstance;
   entryCoordinator: EntryCoordinatorInstance;
@@ -147,9 +149,11 @@ class TradingBot extends BaseBot {
   openAttemptCoordinator: OpenAttemptCoordinatorInstance;
   telemetry: TradingBotTelemetryInstance;
   postLossArchitectLatch: InstanceType<typeof PostLossArchitectLatch>;
+  clock: Clock;
 
   constructor(config: BotConfig, deps: BotDeps) {
     super(config, deps);
+    this.clock = resolveClock(deps.clock);
     this.strategy = deps.strategyRegistry.createStrategy(config.strategy);
     this.allowedStrategies = Array.isArray(config.allowedStrategies) && config.allowedStrategies.length > 0
       ? [...config.allowedStrategies]
@@ -169,6 +173,9 @@ class TradingBot extends BaseBot {
     this.entrySlippageBufferPct = 0.0005;
     this.entryProfitSafetyBufferPct = 0.0005;
     this.minExpectedNetEdgePct = 0.0005;
+    this.postLossLatchMaxMs = Number.isFinite(Number(config.postLossLatchMaxMs)) && Number(config.postLossLatchMaxMs) > 0
+      ? Math.floor(Number(config.postLossLatchMaxMs))
+      : null;
     this.compactLogSignatures = {};
     this.architectCoordinator = new ArchitectCoordinator({
       allowedStrategies: this.allowedStrategies,
@@ -211,6 +218,10 @@ class TradingBot extends BaseBot {
       store: this.deps.store,
       symbol: this.config.symbol
     });
+  }
+
+  now() {
+    return this.clock.now();
   }
 
   start() {
@@ -479,7 +490,10 @@ class TradingBot extends BaseBot {
 
   applyClosedTradeOutcome(outcome: ReturnType<ExitOutcomeCoordinatorInstance["buildClosedTradeOutcome"]>) {
     this.deps.store.updateBotState(this.config.id, outcome.statePatch);
-    const latchActivation = this.postLossArchitectLatch.activateOnLoss(outcome.latchActivation);
+    const latchActivation = this.postLossArchitectLatch.activateOnLoss({
+      ...outcome.latchActivation,
+      startedAt: this.now()
+    });
     this.emitPostLossArchitectLatchTransition(latchActivation.transition);
     this.deps.logger.bot(this.config, "trade_closed", outcome.detailedExitLogMetadata);
     this.logCompactRiskChange(outcome.compactRiskMetadata);
@@ -1001,6 +1015,37 @@ class TradingBot extends BaseBot {
     });
   }
 
+  resolvePostLossArchitectLatchBlockReason(state?: any) {
+    const latchState = this.postLossArchitectLatch.getState(this.strategy.id, state);
+    if (!latchState.blocking) {
+      return null;
+    }
+    if (Number.isFinite(Number(latchState.timedOutAt)) && Number(latchState.timedOutAt) > 0) {
+      return "post_loss_latch_timeout_requires_operator";
+    }
+    if (this.postLossLatchMaxMs === null) {
+      return "post_loss_architect_latch";
+    }
+
+    const startedAt = Number(latchState.startedAt || latchState.activatedAt || 0);
+    if (!Number.isFinite(startedAt) || startedAt <= 0) {
+      return "post_loss_architect_latch";
+    }
+
+    const observedAt = this.now();
+    if (Math.max(0, observedAt - startedAt) < this.postLossLatchMaxMs) {
+      return "post_loss_architect_latch";
+    }
+
+    this.deps.store.updateBotState(this.config.id, {
+      lastDecision: "hold",
+      lastDecisionConfidence: 0,
+      lastDecisionReasons: ["post_loss_latch_timeout_requires_operator"],
+      postLossArchitectLatchTimedOutAt: observedAt
+    } as any);
+    return "post_loss_latch_timeout_requires_operator";
+  }
+
   evaluateFinalEntryGate(params: {
     architectState?: ArchitectUsabilityState | null;
     context: any;
@@ -1055,11 +1100,16 @@ class TradingBot extends BaseBot {
     if (tradeConstraintValidation.belowMinQuantity) {
       return { allowed: false, diagnostics: { ...diagnostics, blockReason: "quantity_below_minimum" }, economics };
     }
+    const latchBlockReason = this.resolvePostLossArchitectLatchBlockReason(params.state || this.deps.store.getBotState(this.config.id));
+    if (latchBlockReason) {
+      return { allowed: false, diagnostics: { ...diagnostics, blockReason: latchBlockReason }, economics };
+    }
+
     const gateResult = this.entryCoordinator.evaluateFinalGate({
       architectState,
       diagnostics,
       economics,
-      postLossArchitectLatchBlocking: this.postLossArchitectLatch.getState(this.strategy.id, params.state).blocking,
+      postLossArchitectLatchBlocking: false,
       quantity: params.quantity,
       tradeConstraints: {
         minNotionalUsdt: 0,
@@ -1153,7 +1203,7 @@ class TradingBot extends BaseBot {
   }
 
   handleArchitectEntryShortCircuit(snapshot: TradingTickArchitectContext) {
-    this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, now());
+    this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, this.now());
     this.deps.store.updateBotState(
       this.config.id,
       this.entryCoordinator.buildArchitectEntryShortCircuitStatePatch(snapshot.architectState?.blockReason)
@@ -1162,13 +1212,50 @@ class TradingBot extends BaseBot {
     this.logArchitectEntryShortCircuit(snapshot.architectState);
   }
 
+  getMarketDataFreshnessState(timestamp: number): MarketDataFreshnessState {
+    return typeof this.deps.store.getMarketDataFreshness === "function"
+      ? this.deps.store.getMarketDataFreshness(this.config.symbol, {
+          now: timestamp
+        })
+      : {
+          reason: "market_data_freshness_unavailable",
+          status: "stale",
+          updatedAt: timestamp
+        };
+  }
+
+  handleMarketDataFreshnessShortCircuit(snapshot: TradingTickArchitectContext, freshness: MarketDataFreshnessState) {
+    this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, this.now());
+    this.deps.store.updateBotState(this.config.id, {
+      entrySignalStreak: 0,
+      exitSignalStreak: 0,
+      lastDecision: "hold",
+      lastDecisionConfidence: 0,
+      lastDecisionReasons: [
+        "market_data_not_fresh",
+        freshness.status,
+        freshness.reason || null
+      ].filter(Boolean)
+    });
+    const blockedState = this.deps.store.getBotState(this.config.id) || snapshot.state;
+    this.recordEntryEvaluationCounters("blocked", false);
+    this.deps.logger.bot(this.config, "entry_gate_blocked", {
+      blockReason: "market_data_not_fresh",
+      marketDataFreshnessReason: freshness.reason || null,
+      marketDataFreshnessStatus: freshness.status,
+      riskAllowed: false,
+      riskReason: "market_data_not_fresh"
+    });
+    this.logEntryBlocked(blockedState, "market_data_not_fresh");
+  }
+
   evaluateTickDecision(snapshot: TradingTickArchitectContext): TradingTickDecisionContext {
     const context = this.buildContext(snapshot.tick, {
       performance: snapshot.performance,
       position: snapshot.position
     });
     const decision = this.strategy.evaluate(context);
-    this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, now());
+    this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, this.now());
     this.deps.store.updateBotState(this.config.id, {
       lastDecision: decision.action,
       lastDecisionConfidence: decision.confidence,
@@ -1210,6 +1297,7 @@ class TradingBot extends BaseBot {
           now: snapshot.tick.timestamp
         })
       : null;
+    const marketDataFreshness = this.getMarketDataFreshnessState(snapshot.tick.timestamp);
     const riskGate = this.deps.riskManager.canOpenTrade({
       now: snapshot.tick.timestamp,
       performance: snapshot.performance,
@@ -1219,6 +1307,12 @@ class TradingBot extends BaseBot {
       riskOverrides: this.config.riskOverrides || null,
       state: snapshot.signalState
     });
+    const entryRiskGate = marketDataFreshness.status === "fresh" || !riskGate.allowed
+      ? riskGate
+      : {
+          allowed: false,
+          reason: "market_data_not_fresh"
+        };
     const baseEconomics = this.estimateEntryEconomics({
       context: snapshot.context,
       price: snapshot.tick.price,
@@ -1231,8 +1325,8 @@ class TradingBot extends BaseBot {
       decisionAction: snapshot.decision.action,
       entryDebounceTicks: snapshot.profile.entryDebounceTicks,
       entrySignalStreak: snapshot.signalState.entrySignalStreak,
-      riskAllowed: riskGate.allowed,
-      riskReason: riskGate.reason
+      riskAllowed: entryRiskGate.allowed,
+      riskReason: entryRiskGate.reason
     });
 
     if (entryAttempt.kind === "eligible") {
@@ -1262,7 +1356,7 @@ class TradingBot extends BaseBot {
           economics: sizingEconomics,
           profile: snapshot.profile,
           quantity: preparedOpenAttempt.quantity,
-          riskGate,
+          riskGate: entryRiskGate,
           signalState: snapshot.signalState,
           skipReason: preparedOpenAttempt.skipReason,
           state: evaluationState,
@@ -1295,7 +1389,7 @@ class TradingBot extends BaseBot {
           economics: finalEntryGate.economics,
           profile: snapshot.profile,
           quantity: sizing.quantity,
-          riskGate,
+          riskGate: entryRiskGate,
           signalState: snapshot.signalState,
           state: evaluationState,
           strategyId: this.strategy.id,
@@ -1318,7 +1412,7 @@ class TradingBot extends BaseBot {
         price: snapshot.tick.price,
         quantity: sizing.quantity,
         reason: snapshot.decision.reason,
-        recordedAt: now(),
+        recordedAt: this.now(),
         side: normalizeEntrySide(snapshot.decision?.side, snapshot.decision?.action),
         strategyId: this.strategy.id,
         symbol: this.config.symbol
@@ -1338,7 +1432,7 @@ class TradingBot extends BaseBot {
           economics: finalEntryGate.economics,
           profile: snapshot.profile,
           quantity: sizing.quantity,
-          riskGate,
+          riskGate: entryRiskGate,
           signalState: snapshot.signalState,
           state: evaluationState,
           strategyId: this.strategy.id,
@@ -1359,7 +1453,7 @@ class TradingBot extends BaseBot {
         openedQuantity: opened.quantity,
         profile: snapshot.profile,
         publishedArchitect,
-        riskGate,
+        riskGate: entryRiskGate,
         signalState: snapshot.signalState,
         state: evaluationState,
         statePatch: executionResult.statePatch,
@@ -1379,7 +1473,7 @@ class TradingBot extends BaseBot {
           economics: baseEconomics,
           profile: snapshot.profile,
           quantity: null,
-          riskGate,
+          riskGate: entryRiskGate,
           signalEvaluated: true,
           signalState: snapshot.signalState,
           state: evaluationState,
@@ -1397,7 +1491,7 @@ class TradingBot extends BaseBot {
         diagnostics: blockedDiagnostics,
         economics: baseEconomics,
         profile: snapshot.profile,
-        riskGate,
+        riskGate: entryRiskGate,
         signalState: snapshot.signalState,
         state: evaluationState,
         strategyId: this.strategy.id,
@@ -1412,7 +1506,7 @@ class TradingBot extends BaseBot {
         economics: baseEconomics,
         profile: snapshot.profile,
         quantity: null,
-        riskGate,
+        riskGate: entryRiskGate,
         signalState: snapshot.signalState,
         skipReason: entryAttempt.skipReason,
         state: evaluationState,
@@ -1428,7 +1522,7 @@ class TradingBot extends BaseBot {
         economics: baseEconomics,
         profile: snapshot.profile,
         quantity: null,
-        riskGate,
+        riskGate: entryRiskGate,
         signalState: snapshot.signalState,
         skipReason: entryAttempt.skipReason,
         state: evaluationState,
@@ -1596,7 +1690,7 @@ class TradingBot extends BaseBot {
 
   onMarketTick(tick: MarketTick) {
     const tickTimer = startTimer();
-    const botTickStartedAt = now();
+    const botTickStartedAt = this.now();
     if (typeof this.deps.store.recordBotTickStart === "function") {
       this.deps.store.recordBotTickStart(this.config.id, this.config.symbol, botTickStartedAt);
     }
@@ -1645,6 +1739,24 @@ class TradingBot extends BaseBot {
         }, tick.timestamp);
       }
       return;
+    }
+
+    if (!architectSnapshot.position) {
+      const marketDataFreshness = this.getMarketDataFreshnessState(tick.timestamp);
+      if (marketDataFreshness.status !== "fresh") {
+        const actionTimer = startTimer();
+        this.handleMarketDataFreshnessShortCircuit(architectSnapshot, marketDataFreshness);
+        if (typeof this.deps.store.recordTickLatencySample === "function") {
+          this.deps.store.recordTickLatencySample(this.config.symbol, {
+            botActionMs: elapsedMs(actionTimer),
+            botArchitectPhaseMs,
+            botDecisionMs: 0,
+            botPrepareMs,
+            botTickMs: elapsedMs(tickTimer)
+          }, tick.timestamp);
+        }
+        return;
+      }
     }
 
     const decisionTimer = startTimer();

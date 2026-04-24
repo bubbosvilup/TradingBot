@@ -1,7 +1,9 @@
 // Module responsibility: lightweight runtime time helpers for orchestration and cooldowns.
 
+const { systemClock } = require("../core/clock.ts");
+
 function now(): number {
-  return Date.now();
+  return systemClock.now();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -20,4 +22,3 @@ module.exports = {
   now,
   sleep
 };
-

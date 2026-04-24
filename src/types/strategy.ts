@@ -1,7 +1,7 @@
 // Module responsibility: shared strategy contracts used by bots, registry and engines.
 
 import type { TradeDirection } from "./trade.ts";
-import type { MtfHorizonFrameId } from "./mtf.ts";
+import type { MtfDecisionTrace, MtfHorizonFrameId } from "./mtf.ts";
 
 export interface StrategyDecision {
   action: "buy" | "sell" | "hold";
@@ -76,6 +76,7 @@ export interface EntryEconomicsEstimate {
     coherenceReason: string;
     dominantTimeframe: MtfHorizonFrameId | null;
     fallbackReason: string | null;
+    mtfDecisionTrace: MtfDecisionTrace;
     mtfAdjustmentApplied: boolean;
     resolvedBuyRsi: number;
     resolvedMinExpectedNetEdgePct: number;

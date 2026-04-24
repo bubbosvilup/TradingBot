@@ -2,12 +2,14 @@
 
 import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
 import type { ArchitectAssessment, ArchitectPublisherState } from "../types/architect.ts";
+import type { Clock } from "./clock.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 import type { SystemEvent } from "../types/event.ts";
 import type { MarketKline, MarketTick, PriceSnapshot } from "../types/market.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 import type {
+  MarketDataFreshnessState,
   PortfolioKillSwitchMode,
   PortfolioKillSwitchConfig,
   PortfolioKillSwitchState,
@@ -16,6 +18,7 @@ import type {
 
 const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
 const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("./configLoader.ts");
+const { resolveClock } = require("./clock.ts");
 
 interface PerformanceHistoryPoint {
   time: number;
@@ -195,6 +198,7 @@ class StateStore {
   wsConnections: Map<string, WsConnectionSnapshot>;
   pipelineBySymbol: Map<string, PipelineSnapshot>;
   tickLatencyBySymbol: Map<string, TickLatencyAccumulator>;
+  marketDataFreshnessBySymbol: Map<string, MarketDataFreshnessState>;
   edgeDiagnostics: {
     overall: EdgeDiagnosticsAggregate;
     byStrategy: Map<string, EdgeDiagnosticsAggregate>;
@@ -218,8 +222,10 @@ class StateStore {
   maxOrdersHistory: number;
   maxClosedTradesHistory: number;
   maxBlockedEdgeOpportunities: number;
+  clock: Clock;
 
   constructor(options: {
+    clock?: Clock;
     maxEvents?: number;
     maxPriceHistory?: number;
     maxKlineHistory?: number;
@@ -228,6 +234,7 @@ class StateStore {
     maxClosedTradesHistory?: number;
     symbolStateRetentionMs?: number;
   } = {}) {
+    this.clock = resolveClock(options.clock);
     this.botConfigs = new Map();
     this.botStates = new Map();
     this.prices = new Map();
@@ -241,6 +248,7 @@ class StateStore {
     this.wsConnections = new Map();
     this.pipelineBySymbol = new Map();
     this.tickLatencyBySymbol = new Map();
+    this.marketDataFreshnessBySymbol = new Map();
     this.edgeDiagnostics = {
       overall: this.createEdgeDiagnosticsAggregate(),
       byStrategy: new Map(),
@@ -293,11 +301,47 @@ class StateStore {
     this.maxBlockedEdgeOpportunities = this.maxClosedTradesHistory;
   }
 
+  now() {
+    return this.clock.now();
+  }
+
+  normalizePausedReason(value: unknown) {
+    const normalized = String(value ?? "").trim();
+    return normalized ? normalized : null;
+  }
+
+  normalizeBotRuntimeState(
+    current: BotRuntimeState | null | undefined,
+    candidate: BotRuntimeState,
+    options: { invalidPausedFallbackStatus?: BotRuntimeState["status"] } = {}
+  ): BotRuntimeState {
+    const normalizedPausedReason = this.normalizePausedReason(candidate?.pausedReason);
+    if (candidate.status === "paused") {
+      if (normalizedPausedReason) {
+        return {
+          ...candidate,
+          pausedReason: normalizedPausedReason
+        };
+      }
+      const fallbackStatus = options.invalidPausedFallbackStatus
+        || (current?.status && current.status !== "paused" ? current.status : "idle");
+      return {
+        ...candidate,
+        pausedReason: null,
+        status: fallbackStatus
+      };
+    }
+    return {
+      ...candidate,
+      pausedReason: null
+    };
+  }
+
   registerBot(config: BotConfig) {
     const existingState = this.botStates.get(config.id) || null;
     const initialBalance = existingState?.availableBalanceUsdt ?? config.initialBalanceUsdt ?? 1000;
     this.botConfigs.set(config.id, config);
-    this.botStates.set(config.id, {
+    const nextState = this.normalizeBotRuntimeState(existingState, {
       activeStrategyId: config.strategy,
       availableBalanceUsdt: initialBalance,
       cooldownReason: null,
@@ -325,9 +369,10 @@ class StateStore {
       postLossArchitectLatchActivatedAt: null,
       postLossArchitectLatchFreshPublishCount: 0,
       postLossArchitectLatchLastCountedPublishedAt: null,
+      postLossArchitectLatchStartedAt: null,
       postLossArchitectLatchStrategyId: null,
+      postLossArchitectLatchTimedOutAt: null,
       realizedPnl: 0,
-      status: config.enabled ? "idle" : "stopped",
       ...(existingState || {}),
       botId: config.id,
       status: !config.enabled
@@ -336,7 +381,10 @@ class StateStore {
           ? "paused"
           : "idle",
       symbol: config.symbol
+    }, {
+      invalidPausedFallbackStatus: config.enabled ? "idle" : "stopped"
     });
+    this.botStates.set(config.id, nextState);
     if (!this.orders.has(config.id)) {
       this.orders.set(config.id, []);
     }
@@ -369,7 +417,7 @@ class StateStore {
         drawdown: 0,
         pnl: 0,
         profitFactor: 0,
-        time: Date.now(),
+        time: this.now(),
         tradesCount: 0,
         winRate: 0
       }]);
@@ -393,6 +441,13 @@ class StateStore {
         symbol: config.symbol,
         tickLatency: null,
         totalPipelineMs: null
+      });
+    }
+    if (!this.marketDataFreshnessBySymbol.has(config.symbol)) {
+      this.marketDataFreshnessBySymbol.set(config.symbol, {
+        reason: "awaiting_first_tick",
+        status: "stale",
+        updatedAt: this.now()
       });
     }
     this.touchSymbol(config.symbol);
@@ -421,7 +476,7 @@ class StateStore {
   }
 
   updatePrice(tick: MarketTick) {
-    const stateUpdatedAt = Date.now();
+    const stateUpdatedAt = this.now();
     const normalizedTick: MarketTick = {
       ...tick,
       receivedAt: tick.receivedAt || stateUpdatedAt,
@@ -449,12 +504,12 @@ class StateStore {
     const existing = symbolMap.get(kline.interval) || [];
     const normalizedKline = {
       ...kline,
-      receivedAt: kline.receivedAt || Date.now()
+      receivedAt: kline.receivedAt || this.now()
     };
     const nextHistory = [...existing, normalizedKline];
     symbolMap.set(kline.interval, nextHistory.slice(-this.maxKlineHistory));
     this.klines.set(kline.symbol, symbolMap);
-    this.touchSymbol(kline.symbol, normalizedKline.receivedAt || Date.now());
+    this.touchSymbol(kline.symbol, normalizedKline.receivedAt || this.now());
   }
 
   getLatestPrice(symbol: string): number | null {
@@ -463,6 +518,110 @@ class StateStore {
 
   getPriceSnapshot(symbol: string): PriceSnapshot | null {
     return this.prices.get(symbol) || null;
+  }
+
+  normalizeMarketDataFreshnessState(
+    symbol: string,
+    candidate: Partial<MarketDataFreshnessState> & Pick<MarketDataFreshnessState, "status">,
+    current?: MarketDataFreshnessState | null
+  ): MarketDataFreshnessState {
+    const normalizedSymbol = String(symbol || "").trim();
+    const previous = current || this.marketDataFreshnessBySymbol.get(normalizedSymbol) || null;
+    const updatedAt = Number.isFinite(Number(candidate?.updatedAt))
+      ? Number(candidate.updatedAt)
+      : this.now();
+    const lastTickTimestamp = Number.isFinite(Number(candidate?.lastTickTimestamp))
+      ? Number(candidate.lastTickTimestamp)
+      : Number.isFinite(Number(previous?.lastTickTimestamp))
+        ? Number(previous?.lastTickTimestamp)
+        : undefined;
+    const normalizedReason = candidate?.reason === undefined
+      ? (candidate.status === "fresh" ? undefined : previous?.reason)
+      : String(candidate.reason || "").trim() || undefined;
+    return {
+      lastTickTimestamp,
+      reason: normalizedReason,
+      status: candidate.status,
+      updatedAt
+    };
+  }
+
+  setMarketDataFreshness(
+    symbol: string,
+    candidate: Partial<MarketDataFreshnessState> & Pick<MarketDataFreshnessState, "status">
+  ) {
+    const normalizedSymbol = String(symbol || "").trim();
+    if (!normalizedSymbol) {
+      return null;
+    }
+    const nextState = this.normalizeMarketDataFreshnessState(normalizedSymbol, candidate);
+    this.marketDataFreshnessBySymbol.set(normalizedSymbol, nextState);
+    this.touchSymbol(normalizedSymbol, nextState.updatedAt);
+    return nextState;
+  }
+
+  getMarketDataFreshness(symbol: string, options: { now?: number; staleAfterMs?: number } = {}) {
+    const normalizedSymbol = String(symbol || "").trim();
+    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : this.now();
+    const current = this.marketDataFreshnessBySymbol.get(normalizedSymbol) || null;
+    const staleAfterMs = Number.isFinite(Number(options.staleAfterMs)) && Number(options.staleAfterMs) > 0
+      ? Number(options.staleAfterMs)
+      : null;
+    if (!current) {
+      return {
+        reason: "awaiting_first_tick",
+        status: "stale" as const,
+        updatedAt: observedAt
+      };
+    }
+    if (
+      staleAfterMs !== null
+      && Number.isFinite(Number(current.lastTickTimestamp))
+      && Math.max(0, observedAt - Number(current.lastTickTimestamp)) >= staleAfterMs
+    ) {
+      return {
+        ...current,
+        reason: "market_data_stale",
+        status: "stale",
+        updatedAt: observedAt
+      };
+    }
+    return current;
+  }
+
+  refreshMarketDataFreshness(
+    symbols: string[],
+    options: { now?: number; staleAfterMs?: number } = {}
+  ) {
+    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : this.now();
+    const staleAfterMs = Number.isFinite(Number(options.staleAfterMs)) && Number(options.staleAfterMs) > 0
+      ? Number(options.staleAfterMs)
+      : null;
+    const refreshedSymbols = [...new Set(symbols || [])]
+      .map((symbol) => String(symbol || "").trim())
+      .filter(Boolean);
+    for (const symbol of refreshedSymbols) {
+      const current = this.marketDataFreshnessBySymbol.get(symbol) || null;
+      const lastTickTimestamp = Number.isFinite(Number(current?.lastTickTimestamp))
+        ? Number(current?.lastTickTimestamp)
+        : null;
+      if (lastTickTimestamp === null) {
+        this.setMarketDataFreshness(symbol, {
+          reason: "awaiting_first_tick",
+          status: "stale",
+          updatedAt: observedAt
+        });
+        continue;
+      }
+      if (staleAfterMs !== null && Math.max(0, observedAt - lastTickTimestamp) >= staleAfterMs) {
+        this.setMarketDataFreshness(symbol, {
+          lastTickTimestamp,
+          reason: "market_data_stale",
+          status: "stale",
+          updatedAt: observedAt
+        });
+      }
+    }
   }
 
   getKlines(symbol: string, interval: string, limit: number = 120): MarketKline[] {
@@ -498,7 +657,10 @@ class StateStore {
   updateBotState(botId: string, patch: Partial<BotRuntimeState>) {
     const current = this.botStates.get(botId);
     if (!current) return;
-    this.botStates.set(botId, { ...current, ...patch });
+    this.botStates.set(botId, this.normalizeBotRuntimeState(current, {
+      ...current,
+      ...patch
+    }));
   }
 
   getPosition(botId: string): PositionRecord | null {
@@ -508,7 +670,7 @@ class StateStore {
   setPosition(botId: string, position: PositionRecord | null) {
     this.positions.set(botId, position);
     if (position?.symbol) {
-      this.touchSymbol(position.symbol, position.openedAt || Date.now());
+      this.touchSymbol(position.symbol, position.openedAt || this.now());
     }
   }
 
@@ -613,7 +775,7 @@ class StateStore {
       requiredEdgePct: this.normalizeEdgeDiagnosticsNumber(params.requiredEdgePct),
       strategyId: params.strategyId || "unknown",
       symbol: params.symbol,
-      timestamp: Number.isFinite(Number(params.timestamp)) ? Number(params.timestamp) : Date.now()
+      timestamp: Number.isFinite(Number(params.timestamp)) ? Number(params.timestamp) : this.now()
     };
 
     this.blockedEdgeOpportunities = [...this.blockedEdgeOpportunities, opportunity].slice(-this.maxBlockedEdgeOpportunities);
@@ -682,7 +844,7 @@ class StateStore {
         drawdown: performance.drawdown,
         pnl: performance.pnl,
         profitFactor: performance.profitFactor,
-        time: Date.now(),
+        time: this.now(),
         tradesCount: performance.tradesCount,
         winRate: performance.winRate
       }
@@ -787,7 +949,7 @@ class StateStore {
   recordTickLatencySample(
     symbol: string,
     sample: Partial<Record<TickLatencyStageKey, number | null | undefined>>,
-    recordedAt: number = Date.now()
+    recordedAt: number = this.now()
   ) {
     const accumulator = this.tickLatencyBySymbol.get(symbol) || this.createTickLatencyAccumulator();
     let updated = false;
@@ -834,7 +996,7 @@ class StateStore {
 
   setContextSnapshot(symbol: string, snapshot: ContextSnapshot) {
     this.contextBySymbol.set(symbol, snapshot);
-    this.touchSymbol(symbol, snapshot?.observedAt || Date.now());
+    this.touchSymbol(symbol, snapshot?.observedAt || this.now());
   }
 
   getContextSnapshot(symbol: string): ContextSnapshot | null {
@@ -843,7 +1005,7 @@ class StateStore {
 
   setArchitectObservedAssessment(symbol: string, assessment: ArchitectAssessment) {
     this.architectObservedBySymbol.set(symbol, assessment);
-    this.touchSymbol(symbol, assessment?.updatedAt || Date.now());
+    this.touchSymbol(symbol, assessment?.updatedAt || this.now());
   }
 
   getArchitectObservedAssessment(symbol: string): ArchitectAssessment | null {
@@ -852,7 +1014,7 @@ class StateStore {
 
   setArchitectPublishedAssessment(symbol: string, assessment: ArchitectAssessment) {
     this.architectPublishedBySymbol.set(symbol, assessment);
-    this.touchSymbol(symbol, assessment?.updatedAt || Date.now());
+    this.touchSymbol(symbol, assessment?.updatedAt || this.now());
   }
 
   getArchitectPublishedAssessment(symbol: string): ArchitectAssessment | null {
@@ -861,7 +1023,7 @@ class StateStore {
 
   setArchitectPublisherState(symbol: string, state: ArchitectPublisherState) {
     this.architectPublisherBySymbol.set(symbol, state);
-    this.touchSymbol(symbol, this.resolvePublisherTouchedAt(state) || Date.now());
+    this.touchSymbol(symbol, this.resolvePublisherTouchedAt(state) || this.now());
   }
 
   getArchitectPublisherState(symbol: string): ArchitectPublisherState | null {
@@ -908,7 +1070,7 @@ class StateStore {
   }
 
   getSymbolStateSnapshot(options: { now?: number } = {}): SymbolStateRetentionSnapshot {
-    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : this.now();
     const trackedSymbols = Array.from(this.collectTrackedSymbols()).sort();
     const protectedSymbols = Array.from(this.getProtectedSymbols()).sort();
     const protectedSet = new Set(protectedSymbols);
@@ -936,7 +1098,7 @@ class StateStore {
   }
 
   evictStaleSymbolState(options: { now?: number } = {}) {
-    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+    const observedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : this.now();
     const snapshot = this.getSymbolStateSnapshot({ now: observedAt });
     const evictedSymbols: string[] = [];
 
@@ -983,9 +1145,9 @@ class StateStore {
     };
   }
 
-  getPortfolioKillSwitchState(options: { feeRate?: number; now?: number } = {}) {
+  computePortfolioKillSwitchState(options: { feeRate?: number; now?: number } = {}) {
     const feeRate = Math.max(Number(options.feeRate) || 0, 0);
-    const updatedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+    const updatedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : this.now();
     const initialEquityUsdt = this.getPortfolioInitialEquityUsdt();
     let availableBalanceUsdt = 0;
     let openPositionCount = 0;
@@ -1070,8 +1232,17 @@ class StateStore {
       unrealizedPnl: Number(unrealizedPnl.toFixed(4)),
       updatedAt
     };
+    return nextState;
+  }
+
+  commitPortfolioKillSwitchState(options: { feeRate?: number; now?: number } = {}) {
+    const nextState = this.computePortfolioKillSwitchState(options);
     this.portfolioKillSwitchState = nextState;
     return nextState;
+  }
+
+  getPortfolioKillSwitchState(options: { feeRate?: number; now?: number } = {}) {
+    return this.computePortfolioKillSwitchState(options);
   }
 
   createPipelineSnapshot(symbol: string): PipelineSnapshot {
@@ -1166,7 +1337,7 @@ class StateStore {
       lastBotStartedAt: null,
       lastBotEvaluatedAt: null,
       lastExecutionAt: null,
-      lastStateUpdatedAt: tick.stateUpdatedAt || Date.now(),
+      lastStateUpdatedAt: tick.stateUpdatedAt || this.now(),
       lastWsReceivedAt: tick.receivedAt || null,
       receiveToStateMs: tick.receivedAt && tick.stateUpdatedAt ? Math.max(0, tick.stateUpdatedAt - tick.receivedAt) : null,
       restRoundtripMs: Number.isFinite(Number(tick.restRoundtripMs)) && Number(tick.restRoundtripMs) >= 0
@@ -1209,14 +1380,14 @@ class StateStore {
     return Math.floor(normalized);
   }
 
-  touchSymbol(symbol: string, touchedAt: number = Date.now()) {
+  touchSymbol(symbol: string, touchedAt: number = this.now()) {
     const normalizedSymbol = String(symbol || "").trim();
     if (!normalizedSymbol) {
       return;
     }
     const normalizedTouchedAt = Number.isFinite(Number(touchedAt))
       ? Number(touchedAt)
-      : Date.now();
+      : this.now();
     const previousTouchedAt = this.symbolLastTouchedAtBySymbol.get(normalizedSymbol) || 0;
     this.symbolLastTouchedAtBySymbol.set(
       normalizedSymbol,
@@ -1243,6 +1414,7 @@ class StateStore {
       this.klines,
       this.pipelineBySymbol,
       this.tickLatencyBySymbol,
+      this.marketDataFreshnessBySymbol,
       this.contextBySymbol,
       this.architectObservedBySymbol,
       this.architectPublishedBySymbol,
@@ -1313,6 +1485,7 @@ class StateStore {
     this.klines.delete(symbol);
     this.pipelineBySymbol.delete(symbol);
     this.tickLatencyBySymbol.delete(symbol);
+    this.marketDataFreshnessBySymbol.delete(symbol);
     this.contextBySymbol.delete(symbol);
     this.architectObservedBySymbol.delete(symbol);
     this.architectPublishedBySymbol.delete(symbol);

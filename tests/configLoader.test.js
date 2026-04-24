@@ -27,6 +27,9 @@ function expectConfigError(config, expectedMessagePart) {
     new ConfigLoader(rootDir).loadBotsConfig();
     throw new Error(`expected config load to fail with ${expectedMessagePart}`);
   } catch (error) {
+    if (String(error && error.message).startsWith("expected config load to fail with ")) {
+      throw error;
+    }
     if (!String(error && error.message).includes(expectedMessagePart)) {
       throw new Error(`unexpected config validation error: ${error && error.stack ? error.stack : error}`);
     }
@@ -227,6 +230,45 @@ function runConfigLoaderTests() {
       }
     ]
   }, "invalid horizonFrame");
+
+  expectConfigError({
+    mtf: {
+      enabled: true,
+      frames: [
+        { id: "1m", horizonFrame: "short", windowMs: 60_000 },
+        { id: "1m", horizonFrame: "medium", windowMs: 900_000 }
+      ]
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_duplicate_mtf_frame",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "duplicate mtf.frames id");
+
+  expectConfigError({
+    mtf: {
+      enabled: true,
+      frames: [
+        { id: "1m", horizonFrame: "short", windowMs: 0 }
+      ]
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_mtf_window",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid windowMs");
 
   expectConfigError({
     bots: [

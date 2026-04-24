@@ -1,6 +1,11 @@
 // Module responsibility: user/order/account event bus isolated from trading logic and prepared for live Binance updates.
 
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
+import type { Clock } from "../core/clock.ts";
+
+const { resolveClock } = require("../core/clock.ts");
+
+const DEFAULT_USER_STREAM_REQUEST_TIMEOUT_MS = 10_000;
 
 interface OrderUpdatePayload {
   order?: OrderRecord | null;
@@ -21,8 +26,19 @@ interface NormalizedUserEvent {
   type: string;
 }
 
-function normalizePositionLifecycle(payload: OrderUpdatePayload): NormalizedUserEvent | null {
-  const timestamp = payload.order?.timestamp || payload.trade?.closedAt || Date.now();
+function normalizeRequestTimeoutMs(value: unknown) {
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized > 0
+    ? Math.floor(normalized)
+    : DEFAULT_USER_STREAM_REQUEST_TIMEOUT_MS;
+}
+
+function isTimeoutError(error: any) {
+  return error?.name === "TimeoutError";
+}
+
+function normalizePositionLifecycle(payload: OrderUpdatePayload, fallbackTimestamp: number): NormalizedUserEvent | null {
+  const timestamp = payload.order?.timestamp || payload.trade?.closedAt || fallbackTimestamp;
   if (payload.type === "opened" && payload.position) {
     return {
       data: {
@@ -62,18 +78,36 @@ class UserStream {
   disconnectRemote: (() => void) | null;
   unsubscribeWsStatus: (() => void) | null;
   listenKey: string | null;
+  requestTimeoutMs: number;
+  clock: Clock;
 
-  constructor(deps: { wsManager: any; store: any; logger?: any; apiKey?: string | null; restBaseUrl?: string; wsBaseUrl?: string }) {
+  constructor(deps: {
+    apiKey?: string | null;
+    clock?: Clock;
+    logger?: any;
+    requestTimeoutMs?: number;
+    store: any;
+    userStreamRequestTimeoutMs?: number;
+    restBaseUrl?: string;
+    wsBaseUrl?: string;
+    wsManager: any;
+  }) {
+    this.clock = resolveClock(deps.clock);
     this.wsManager = deps.wsManager;
     this.store = deps.store;
     this.logger = deps.logger || { info() {}, warn() {}, error() {} };
     this.apiKey = deps.apiKey || null;
+    this.requestTimeoutMs = normalizeRequestTimeoutMs(deps.requestTimeoutMs ?? deps.userStreamRequestTimeoutMs);
     this.restBaseUrl = deps.restBaseUrl || "https://api.binance.com";
     this.wsBaseUrl = deps.wsBaseUrl || "wss://stream.binance.com:9443";
     this.keepAliveTimer = null;
     this.disconnectRemote = null;
     this.unsubscribeWsStatus = null;
     this.listenKey = null;
+  }
+
+  now() {
+    return this.clock.now();
   }
 
   async start(options: { enabled?: boolean; mode?: "live"; reason?: string } = {}) {
@@ -112,8 +146,8 @@ class UserStream {
       this.store.updateWsConnection("user-stream", {
         connectionId: "user-stream",
         fallbackActive: false,
-        lastConnectedAt: status.status === "connected" ? status.timestamp : undefined,
-        lastDisconnectedAt: status.status === "disconnected" ? status.timestamp : undefined,
+        lastConnectedAt: status.status === "connected" ? (status.timestamp || this.now()) : undefined,
+        lastDisconnectedAt: status.status === "disconnected" ? (status.timestamp || this.now()) : undefined,
         lastMessageAt: status.lastMessageAt || undefined,
         lastReason: status.reason || null,
         mode: "live",
@@ -154,7 +188,7 @@ class UserStream {
 
   publishOrderUpdate(payload: OrderUpdatePayload) {
     const order = payload?.order || null;
-    const timestamp = order?.timestamp || Date.now();
+    const timestamp = order?.timestamp || this.now();
 
     if (order) {
       this.store.appendOrder(order.botId, order);
@@ -173,7 +207,7 @@ class UserStream {
       type: "order_update"
     });
 
-    const positionEvent = normalizePositionLifecycle(payload);
+    const positionEvent = normalizePositionLifecycle(payload, timestamp);
     if (positionEvent) {
       this.emitNormalized(positionEvent);
     }
@@ -184,7 +218,7 @@ class UserStream {
     this.emitNormalized({
       data: payload,
       symbol: data?.symbol || null,
-      timestamp: data?.timestamp || Date.now(),
+      timestamp: data?.timestamp || this.now(),
       type: "fill_update"
     });
   }
@@ -194,7 +228,7 @@ class UserStream {
     this.emitNormalized({
       data: payload,
       symbol: null,
-      timestamp: data?.timestamp || Date.now(),
+      timestamp: data?.timestamp || this.now(),
       type: "balance_update"
     });
   }
@@ -230,7 +264,7 @@ class UserStream {
 
   async createListenKey() {
     try {
-      const response = await fetch(`${this.restBaseUrl}/api/v3/userDataStream`, {
+      const response = await this.fetchWithTimeout("create_listen_key", `${this.restBaseUrl}/api/v3/userDataStream`, {
         headers: {
           "X-MBX-APIKEY": this.apiKey
         },
@@ -257,13 +291,17 @@ class UserStream {
       });
       return listenKey;
     } catch (error: any) {
+      const timedOut = isTimeoutError(error);
       this.store.updateWsConnection("user-stream", {
-        lastReason: error?.message || "listen_key_error",
+        lastReason: timedOut ? "listen_key_timeout" : (error?.message || "listen_key_error"),
         mode: "live",
-        status: "error"
+        status: "disconnected"
       });
       this.logger.warn("user_stream_listen_key_failed", {
-        error: error?.message || String(error)
+        error: timedOut ? undefined : (error?.message || String(error)),
+        operation: "create_listen_key",
+        reason: timedOut ? "timeout" : "fetch_error",
+        timeoutMs: timedOut ? this.requestTimeoutMs : undefined
       });
       return null;
     }
@@ -275,7 +313,14 @@ class UserStream {
       clearInterval(this.keepAliveTimer);
     }
     this.keepAliveTimer = setInterval(() => {
-      this.keepAliveListenKey(this.listenKey);
+      this.keepAliveListenKey(this.listenKey).catch((error: any) => {
+        this.logger.warn("user_stream_keepalive_failed", {
+          action: "manual_attention_needed",
+          error: error?.message || String(error),
+          operation: "keepalive_listen_key",
+          reason: "unexpected_error"
+        });
+      });
     }, 25 * 60 * 1000);
     if (typeof this.keepAliveTimer.unref === "function") {
       this.keepAliveTimer.unref();
@@ -284,7 +329,7 @@ class UserStream {
 
   async keepAliveListenKey(listenKey: string) {
     try {
-      const response = await fetch(`${this.restBaseUrl}/api/v3/userDataStream?listenKey=${encodeURIComponent(listenKey)}`, {
+      const response = await this.fetchWithTimeout("keepalive_listen_key", `${this.restBaseUrl}/api/v3/userDataStream?listenKey=${encodeURIComponent(listenKey)}`, {
         headers: {
           "X-MBX-APIKEY": this.apiKey
         },
@@ -298,10 +343,14 @@ class UserStream {
         });
       }
     } catch (error: any) {
-      this.handleKeepAliveFailure(error?.message || "keepalive_error");
+      const timedOut = isTimeoutError(error);
+      this.handleKeepAliveFailure(timedOut ? "keepalive_timeout" : (error?.message || "keepalive_error"));
       this.logger.warn("user_stream_keepalive_failed", {
         action: "manual_attention_needed",
-        error: error?.message || String(error)
+        error: timedOut ? undefined : (error?.message || String(error)),
+        operation: "keepalive_listen_key",
+        reason: timedOut ? "timeout" : "fetch_error",
+        timeoutMs: timedOut ? this.requestTimeoutMs : undefined
       });
     }
   }
@@ -309,14 +358,48 @@ class UserStream {
   async deleteListenKey(listenKey: string) {
     if (!this.apiKey) return;
     try {
-      await fetch(`${this.restBaseUrl}/api/v3/userDataStream?listenKey=${encodeURIComponent(listenKey)}`, {
+      await this.fetchWithTimeout("delete_listen_key", `${this.restBaseUrl}/api/v3/userDataStream?listenKey=${encodeURIComponent(listenKey)}`, {
         headers: {
           "X-MBX-APIKEY": this.apiKey
         },
         method: "DELETE"
       });
-    } catch {
+    } catch (error: any) {
+      this.logger.warn("user_stream_delete_listen_key_failed", {
+        error: isTimeoutError(error) ? undefined : (error?.message || String(error)),
+        operation: "delete_listen_key",
+        reason: isTimeoutError(error) ? "timeout" : "fetch_error",
+        timeoutMs: isTimeoutError(error) ? this.requestTimeoutMs : undefined
+      });
       // best effort cleanup
+    }
+  }
+
+  async fetchWithTimeout(operation: string, url: string, init: RequestInit) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.requestTimeoutMs);
+    if (typeof timer.unref === "function") {
+      timer.unref();
+    }
+
+    try {
+      return await fetch(url, {
+        ...init,
+        signal: controller.signal
+      });
+    } catch (error: any) {
+      if (timedOut || error?.name === "AbortError") {
+        const timeoutError = new Error(`${operation}_timeout`);
+        timeoutError.name = "TimeoutError";
+        throw timeoutError;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

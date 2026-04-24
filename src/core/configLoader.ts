@@ -108,8 +108,10 @@ class ConfigLoader {
     historicalPreload?: HistoricalPreloadConfig;
     mtf?: MtfRuntimeConfig;
     portfolioKillSwitch?: PortfolioKillSwitchConfig;
+    postLossLatchMaxMs?: number;
     postLossLatchMinFreshPublications?: number;
     symbolStateRetentionMs?: number;
+    userStreamRequestTimeoutMs?: number;
   } {
     const config = this.loadJson("./data/bots.config.json");
     this.validateRuntimeConfig(config);
@@ -179,6 +181,10 @@ class ConfigLoader {
             throw new Error(`${label} has invalid allowedStrategies entry "${String(allowedStrategy || "")}"`);
           }
         }
+      }
+
+      if (bot.postLossLatchMaxMs !== undefined) {
+        assertNumberValue(bot.postLossLatchMaxMs, `${label} has invalid postLossLatchMaxMs`, { min: 1 });
       }
 
       if (bot.enabled) {
@@ -298,6 +304,7 @@ class ConfigLoader {
         throw new Error("bots.config.json has invalid mtf.frames; expected a non-empty array");
       }
 
+      const frameIds = new Set<string>();
       for (let index = 0; index < mtf.frames.length; index += 1) {
         const frame = mtf.frames[index] as MtfFrameConfig;
         const label = `bots.config.json mtf.frames[${index}]`;
@@ -305,6 +312,11 @@ class ConfigLoader {
           throw new Error(`${label} is invalid; expected an object`);
         }
         assertAllowedString(frame.id, VALID_MTF_TIMEFRAMES, `${label} has invalid id "${String(frame.id || "")}"`);
+        const frameId = normalizeConfigString(frame.id);
+        if (frameIds.has(frameId)) {
+          throw new Error(`bots.config.json has duplicate mtf.frames id "${frameId}"`);
+        }
+        frameIds.add(frameId);
         assertAllowedString(frame.horizonFrame, VALID_MTF_HORIZON_FRAMES, `${label} has invalid horizonFrame "${String(frame.horizonFrame || "")}"`);
         assertNumberValue(frame.windowMs, `${label} has invalid windowMs`, { min: 5_000 });
       }
@@ -315,8 +327,10 @@ class ConfigLoader {
     const runtimeConfig = config as Record<string, unknown>;
     assertOptionalNumberField(runtimeConfig, "architectWarmupMs", "bots.config.json has invalid architectWarmupMs", { min: 5_000 });
     assertOptionalNumberField(runtimeConfig, "architectPublishIntervalMs", "bots.config.json has invalid architectPublishIntervalMs", { min: 5_000 });
+    assertOptionalNumberField(runtimeConfig, "postLossLatchMaxMs", "bots.config.json has invalid postLossLatchMaxMs", { min: 1 });
     assertOptionalNumberField(runtimeConfig, "postLossLatchMinFreshPublications", "bots.config.json has invalid postLossLatchMinFreshPublications", { min: 1 });
     assertOptionalNumberField(runtimeConfig, "symbolStateRetentionMs", "bots.config.json has invalid symbolStateRetentionMs", { min: 60_000 });
+    assertOptionalNumberField(runtimeConfig, "userStreamRequestTimeoutMs", "bots.config.json has invalid userStreamRequestTimeoutMs", { min: 1 });
   }
 }
 

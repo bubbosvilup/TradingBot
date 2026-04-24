@@ -11,7 +11,9 @@ export interface PostLossArchitectLatchState {
   lastCountedPublishedAt: number | null;
   latestPublishedAt: number | null;
   requiredPublishes: number;
+  startedAt: number | null;
   strategyId: string | null;
+  timedOutAt: number | null;
 }
 
 export interface PostLossArchitectLatchTransition {
@@ -51,13 +53,16 @@ class PostLossArchitectLatch {
       lastCountedPublishedAt: state?.postLossArchitectLatchLastCountedPublishedAt || null,
       latestPublishedAt: publisher?.lastPublishedAt || null,
       requiredPublishes: this.requiredPublishes,
-      strategyId
+      startedAt: state?.postLossArchitectLatchStartedAt || null,
+      strategyId,
+      timedOutAt: state?.postLossArchitectLatchTimedOutAt || null
     };
   }
 
   activateOnLoss(params: {
     closedAt: number;
     netPnl: number;
+    startedAt?: number | null;
     strategyId: string;
   }): {
     state: BotRuntimeState | null;
@@ -74,7 +79,9 @@ class PostLossArchitectLatch {
       postLossArchitectLatchActivatedAt: params.closedAt,
       postLossArchitectLatchFreshPublishCount: 0,
       postLossArchitectLatchLastCountedPublishedAt: null,
-      postLossArchitectLatchStrategyId: params.strategyId
+      postLossArchitectLatchStartedAt: Number.isFinite(Number(params.startedAt)) ? Number(params.startedAt) : params.closedAt,
+      postLossArchitectLatchStrategyId: params.strategyId,
+      postLossArchitectLatchTimedOutAt: null
     });
 
     return {
@@ -103,6 +110,9 @@ class PostLossArchitectLatch {
   } {
     const state = this.store.getBotState(this.botId);
     if (!state?.postLossArchitectLatchActive) {
+      return { state };
+    }
+    if (Number.isFinite(Number(state.postLossArchitectLatchTimedOutAt)) && Number(state.postLossArchitectLatchTimedOutAt) > 0) {
       return { state };
     }
 
@@ -148,7 +158,9 @@ class PostLossArchitectLatch {
       postLossArchitectLatchActivatedAt: null,
       postLossArchitectLatchFreshPublishCount: freshPublishCount,
       postLossArchitectLatchLastCountedPublishedAt: latestPublishedAt,
-      postLossArchitectLatchStrategyId: null
+      postLossArchitectLatchStartedAt: null,
+      postLossArchitectLatchStrategyId: null,
+      postLossArchitectLatchTimedOutAt: null
     });
 
     return {

@@ -35,6 +35,15 @@ function runMtfParamResolverTests() {
     if (result.resolvedBuyRsi !== 33 || result.resolvedSellRsi !== 58 || result.resolvedMinExpectedNetEdgePct !== 0.0015) {
       throw new Error(`disabled MTF should preserve RSI thresholds and edge floor: ${JSON.stringify(result)}`);
     }
+    if (!result.mtfDecisionTrace
+      || result.mtfDecisionTrace.enabled !== false
+      || result.mtfDecisionTrace.adjusted !== false
+      || result.mtfDecisionTrace.baselineParamsUsed !== true
+      || result.mtfDecisionTrace.instabilityThreshold !== 0.25
+      || result.mtfDecisionTrace.capMultiplier !== 1
+      || result.mtfDecisionTrace.reason !== "mtf_disabled") {
+      throw new Error(`disabled MTF should expose baseline decision trace: ${JSON.stringify(result)}`);
+    }
   }
 
   {
@@ -63,6 +72,16 @@ function runMtfParamResolverTests() {
     if (unstable.resolvedTargetDistanceCapPct !== 0.01 || unstable.fallbackReason !== "mtf_instability_above_threshold") {
       throw new Error(`above-threshold instability should fall back: ${JSON.stringify(unstable)}`);
     }
+    if (!unstable.mtfDecisionTrace
+      || unstable.mtfDecisionTrace.enabled !== true
+      || unstable.mtfDecisionTrace.dominantFrame !== "medium"
+      || unstable.mtfDecisionTrace.instability !== 0.26
+      || unstable.mtfDecisionTrace.instabilityThreshold !== 0.25
+      || unstable.mtfDecisionTrace.adjusted !== false
+      || unstable.mtfDecisionTrace.baselineParamsUsed !== true
+      || unstable.mtfDecisionTrace.reason !== "mtf_instability_above_threshold") {
+      throw new Error(`instability fallback should expose fallback decision trace: ${JSON.stringify(unstable)}`);
+    }
     const lowAgreement = resolve({ mtfDiagnostics: buildMtf({ mtfInstability: 0.1, mtfAgreement: 0.74 }) });
     if (lowAgreement.resolvedTargetDistanceCapPct !== 0.01 || lowAgreement.fallbackReason !== "mtf_agreement_below_threshold") {
       throw new Error(`below-threshold agreement should fall back: ${JSON.stringify(lowAgreement)}`);
@@ -80,6 +99,17 @@ function runMtfParamResolverTests() {
     const result = resolve({ mtfDiagnostics: buildMtf({ mtfDominantFrame: "medium", mtfDominantTimeframe: "15m" }) });
     if (result.resolvedTargetDistanceCapPct !== 0.015 || !result.mtfAdjustmentApplied || result.targetDistanceProfile !== "medium") {
       throw new Error(`medium MTF should widen to 1.5x: ${JSON.stringify(result)}`);
+    }
+    if (!result.mtfDecisionTrace
+      || result.mtfDecisionTrace.enabled !== true
+      || result.mtfDecisionTrace.dominantFrame !== "medium"
+      || result.mtfDecisionTrace.instability !== 0.2
+      || result.mtfDecisionTrace.instabilityThreshold !== 0.25
+      || result.mtfDecisionTrace.adjusted !== true
+      || result.mtfDecisionTrace.capMultiplier !== 1.5
+      || result.mtfDecisionTrace.baselineParamsUsed !== false
+      || result.mtfDecisionTrace.reason !== "mtf_coherent_medium") {
+      throw new Error(`medium MTF should expose widening decision trace: ${JSON.stringify(result)}`);
     }
   }
 

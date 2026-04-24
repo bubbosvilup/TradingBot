@@ -15,6 +15,11 @@ const http = require("node:http");
 const path = require("node:path");
 const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
 
+const PAPER_ACCOUNTING_MODEL = "paper_full_notional_simplified";
+const PAPER_ACCOUNTING_WARNINGS = [
+  "Paper short PnL uses simplified full-notional accounting and does not model margin, borrowing, funding, or liquidation."
+];
+
 interface PipelineSnapshotLike {
   symbol: string;
   lastStateUpdatedAt: number | null;
@@ -64,6 +69,10 @@ interface SystemServerStore {
     feeRate?: number;
     now?: number;
   }): PortfolioKillSwitchState;
+  commitPortfolioKillSwitchState?(options?: {
+    feeRate?: number;
+    now?: number;
+  }): PortfolioKillSwitchState;
   getSymbolStateSnapshot(options?: {
     now?: number;
   }): SymbolStateRetentionSnapshot;
@@ -95,6 +104,13 @@ function openUrlWithDefaultBrowser(url: string) {
   });
   child.on("error", () => {});
   child.unref();
+}
+
+function readPortfolioKillSwitchState(
+  store: SystemServerStore,
+  options?: { feeRate?: number; now?: number }
+) {
+  return store.getPortfolioKillSwitchState.call(store, options);
 }
 
 function normalizeCompactUiRoute(route?: string | null) {
@@ -287,6 +303,25 @@ class SystemServer {
     return state?.status === "paused" && state?.pausedReason === "max_drawdown_reached";
   }
 
+  getPaperAccountingMetadata() {
+    return {
+      accountingModel: PAPER_ACCOUNTING_MODEL,
+      accountingWarnings: [...PAPER_ACCOUNTING_WARNINGS]
+    };
+  }
+
+  getExecutionAccountingMetadata() {
+    return this.executionMode === "paper"
+      ? this.getPaperAccountingMetadata()
+      : {};
+  }
+
+  getShortAccountingMetadata(side: unknown) {
+    return this.executionMode === "paper" && normalizeTradeSide(side) === "short"
+      ? this.getPaperAccountingMetadata()
+      : {};
+  }
+
   handleManualResumeRequest(botId: string, response: any) {
     const state = this.store.getBotState(botId);
     if (!state) {
@@ -309,7 +344,7 @@ class SystemServer {
       return;
     }
 
-    const portfolioKillSwitch = this.store.getPortfolioKillSwitchState({ feeRate: this.feeRate });
+    const portfolioKillSwitch = readPortfolioKillSwitchState(this.store, { feeRate: this.feeRate });
     if (portfolioKillSwitch.blockingEntries || portfolioKillSwitch.triggered) {
       this.json(response, {
         botId,
@@ -416,7 +451,7 @@ class SystemServer {
 
   buildSystemPayload() {
     const snapshot = this.store.getSystemSnapshot();
-    const portfolioKillSwitch = this.store.getPortfolioKillSwitchState({ feeRate: this.feeRate });
+    const portfolioKillSwitch = readPortfolioKillSwitchState(this.store, { feeRate: this.feeRate });
     const symbolState = this.store.getSymbolStateSnapshot({ now: Date.now() });
     const running = snapshot.botStates.filter((bot: any) => bot.status === "running").length;
     const paused = snapshot.botStates.filter((bot: any) => bot.status === "paused");
@@ -432,6 +467,7 @@ class SystemServer {
       botsTotal: snapshot.botStates.length,
       executionMode: this.executionMode,
       executionSafety: this.executionMode === "paper" ? "simulated_only" : "exchange_execution_enabled",
+      ...this.getExecutionAccountingMetadata(),
       eventCount: this.store.getRecentEvents(500).length,
       feedMode: this.feedMode,
       latency: latestLatency,
@@ -447,7 +483,7 @@ class SystemServer {
 
   buildBotsPayload() {
     const now = Date.now();
-    const portfolioKillSwitch = this.store.getPortfolioKillSwitchState({ feeRate: this.feeRate, now });
+    const portfolioKillSwitch = readPortfolioKillSwitchState(this.store, { feeRate: this.feeRate, now });
     return Array.from(this.store.botConfigs.values()).map((config: any) => {
       const state = this.store.getBotState(config.id);
       const performance = this.store.getPerformance(config.id);
@@ -504,6 +540,7 @@ class SystemServer {
         manualResumeRequired,
         managedRecoveryConsecutiveCount: state?.managedRecoveryConsecutiveCount || 0,
         openPosition: position ? {
+          ...this.getShortAccountingMetadata(position.side),
           entryPrice: position.entryPrice,
           lifecycleMode: position.lifecycleMode || "normal",
           lifecycleState: position.lifecycleState || null,
@@ -743,7 +780,7 @@ class SystemServer {
 
   buildPulsePayload(options: { botId?: string | null } = {}) {
     const now = Date.now();
-    const system = this.buildSystemPayload();
+    const system: any = this.buildSystemPayload();
     const bots = this.buildBotsPayload();
     const portfolio = system.portfolioKillSwitch || {};
     const focusBot = this.selectPulseFocusBot(bots, options.botId || null);
@@ -771,6 +808,12 @@ class SystemServer {
         },
         executionMode: String(system.executionMode || "paper").toUpperCase(),
         feedMode: String(system.feedMode || "n/a").toUpperCase(),
+        ...(system.accountingModel
+          ? {
+              accountingModel: system.accountingModel,
+              accountingWarnings: Array.isArray(system.accountingWarnings) ? [...system.accountingWarnings] : []
+            }
+          : {}),
         killSwitch: this.buildPulseKillSwitch(portfolio),
         lastTickAgeMs: this.getPulseLastTickAgeMs(system, bots, now),
         marketStream: {
@@ -795,6 +838,7 @@ class SystemServer {
         if (!position) return null;
         const latestPrice = this.store.getLatestPrice(position.symbol) || position.entryPrice;
         return {
+          ...this.getShortAccountingMetadata(position.side),
           botId: config.id,
           currentPrice: latestPrice,
           entryPrice: position.entryPrice,
@@ -840,6 +884,7 @@ class SystemServer {
       .map((trade: any) => {
         const config = this.store.botConfigs.get(trade.botId);
         return {
+          ...this.getShortAccountingMetadata(trade.side),
           botId: trade.botId,
           botName: config?.id || trade.botId,
           entryPrice: trade.entryPrice,
@@ -948,6 +993,7 @@ class SystemServer {
       lastPrice: latestPrice,
       markers,
       position: openPosition ? {
+        ...this.getShortAccountingMetadata(openPosition.side),
         botId: openPosition.botId,
         currentPrice: latestPrice,
         entryPrice: openPosition.entryPrice,

@@ -339,6 +339,11 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
       symbol: this.symbol,
       targetFamily: params.architectState.actionableFamily || null,
       tickTimestamp: params.tick?.timestamp || null,
+      ...(mtfParamResolution?.mtfDecisionTrace
+        ? {
+            mtfDecisionTrace: mtfParamResolution.mtfDecisionTrace
+          }
+        : {}),
       ...(mtfEnabled
         ? {
             resolvedMtfAdjustmentApplied: Boolean(mtfParamResolution?.mtfAdjustmentApplied),

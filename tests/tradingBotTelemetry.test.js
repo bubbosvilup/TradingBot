@@ -53,6 +53,16 @@ function runTradingBotTelemetryTests() {
     coherenceReason: "mtf_coherent_medium",
     dominantTimeframe: "medium",
     fallbackReason: null,
+    mtfDecisionTrace: {
+      adjusted: true,
+      baselineParamsUsed: false,
+      capMultiplier: 1.5,
+      dominantFrame: "medium",
+      enabled: true,
+      instability: 0.2,
+      instabilityThreshold: 0.25,
+      reason: "mtf_coherent_medium"
+    },
     mtfAdjustmentApplied: true,
     resolvedBuyRsi: 33,
     resolvedMinExpectedNetEdgePct: 0.0015,
@@ -167,7 +177,11 @@ function runTradingBotTelemetryTests() {
     || fullEntryDiagnostics.publishedMtfDominantFrame !== "medium"
     || fullEntryDiagnostics.publishedMtfDominantTimeframe !== "15m"
     || fullEntryDiagnostics.publishedMtfSufficientFrames !== true
-    || fullEntryDiagnostics.publishedMtfMetaRegime !== "range") {
+    || fullEntryDiagnostics.publishedMtfMetaRegime !== "range"
+    || fullEntryDiagnostics.mtfDecisionTrace?.enabled !== true
+    || fullEntryDiagnostics.mtfDecisionTrace?.adjusted !== true
+    || fullEntryDiagnostics.mtfDecisionTrace?.capMultiplier !== 1.5
+    || fullEntryDiagnostics.mtfDecisionTrace?.reason !== "mtf_coherent_medium") {
     throw new Error(`full entry diagnostics should expose canonical and published MTF fields: ${JSON.stringify(fullEntryDiagnostics)}`);
   }
   const omittedRollingStateKeys = [
@@ -244,6 +258,16 @@ function runTradingBotTelemetryTests() {
       ...mtfEconomics,
       mtfParamResolution: {
         ...mtfParamResolution,
+        mtfDecisionTrace: {
+          adjusted: false,
+          baselineParamsUsed: true,
+          capMultiplier: 1,
+          dominantFrame: null,
+          enabled: false,
+          instability: null,
+          instabilityThreshold: 0.25,
+          reason: "mtf_disabled"
+        },
         fallbackReason: "mtf_disabled",
         mtfAdjustmentApplied: false
       }
@@ -300,6 +324,11 @@ function runTradingBotTelemetryTests() {
     if (Object.prototype.hasOwnProperty.call(mtfDisabledDiagnostics, key)) {
       throw new Error(`mtf-disabled entry diagnostics should omit ${key}: ${JSON.stringify(mtfDisabledDiagnostics)}`);
     }
+  }
+  if (mtfDisabledDiagnostics.mtfDecisionTrace?.enabled !== false
+    || mtfDisabledDiagnostics.mtfDecisionTrace?.baselineParamsUsed !== true
+    || mtfDisabledDiagnostics.mtfDecisionTrace?.reason !== "mtf_disabled") {
+    throw new Error(`mtf-disabled entry diagnostics should still expose compact trace metadata: ${JSON.stringify(mtfDisabledDiagnostics)}`);
   }
 }
 

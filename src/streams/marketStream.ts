@@ -1,10 +1,11 @@
 // Module responsibility: normalize market data into stateStore updates without embedding business logic.
 
 import type { MarketKline, MarketMode, MarketTick } from "../types/market.ts";
+import type { Clock } from "../core/clock.ts";
 
 const ccxt = require("ccxt");
 const { elapsedMs, startTimer } = require("../utils/timing.ts");
-const { now } = require("../utils/time.ts");
+const { resolveClock } = require("../core/clock.ts");
 
 class MarketStream {
   wsManager: any;
@@ -30,8 +31,10 @@ class MarketStream {
   highLatencyWarnMs: number;
   latencyLogIntervalMs: number;
   lastLatencyLogAtBySymbol: Map<string, number>;
+  clock: Clock;
 
   constructor(deps: {
+    clock?: Clock;
     wsManager: any;
     store: any;
     logger: any;
@@ -42,6 +45,7 @@ class MarketStream {
     klineIntervals?: string[];
     restExchangeId?: string;
   }) {
+    this.clock = resolveClock(deps.clock);
     this.wsManager = deps.wsManager;
     this.store = deps.store;
     this.logger = deps.logger;
@@ -68,6 +72,10 @@ class MarketStream {
     this.highLatencyWarnMs = 1000;
     this.latencyLogIntervalMs = 30_000;
     this.lastLatencyLogAtBySymbol = new Map();
+  }
+
+  now() {
+    return this.clock.now();
   }
 
   start(symbols: string[]) {
@@ -149,11 +157,12 @@ class MarketStream {
   }
 
   handleWsStatus(status: any) {
+    const observedAt = Number.isFinite(Number(status?.timestamp)) ? Number(status.timestamp) : this.now();
     this.store.updateWsConnection("market-stream", {
       connectionId: "market-stream",
       fallbackActive: Boolean(this.fallbackTimer),
-      lastConnectedAt: status.status === "connected" ? status.timestamp : undefined,
-      lastDisconnectedAt: status.status === "disconnected" ? status.timestamp : undefined,
+      lastConnectedAt: status.status === "connected" ? observedAt : undefined,
+      lastDisconnectedAt: status.status === "disconnected" ? observedAt : undefined,
       lastMessageAt: status.lastMessageAt || undefined,
       lastReason: status.reason || null,
       mode: this.mode,
@@ -167,9 +176,11 @@ class MarketStream {
     }
 
     if (status.status === "connected") {
+      this.refreshMarketDataFreshness(observedAt);
       this.stopRestFallback();
     } else if (status.status === "disconnected" || status.status === "reconnecting" || status.status === "error") {
-      this.startRestFallback();
+      this.markSymbolsDegraded(`ws_${status.status}`, observedAt);
+      this.startRestFallback(observedAt);
     }
   }
 
@@ -185,10 +196,11 @@ class MarketStream {
   handleTick(tick: MarketTick) {
     const tickTimer = startTimer();
     const flushDelayMs = tick.receivedAt !== undefined
-      ? Math.max(0, Date.now() - tick.receivedAt)
+      ? Math.max(0, this.now() - tick.receivedAt)
       : 0;
     const stateTimer = startTimer();
     this.store.updatePrice(tick);
+    this.updateFreshnessFromTick(tick);
     const stateUpdateMs = elapsedMs(stateTimer);
     const publishTimer = startTimer();
     this.wsManager.publish(`market:${tick.symbol}`, tick);
@@ -200,9 +212,45 @@ class MarketStream {
         publishFanoutMs,
         stateUpdateMs,
         totalTickPipelineMs
-      }, tick.receivedAt || Date.now());
+      }, tick.receivedAt || this.now());
     }
     this.maybeLogTickLatency(tick, totalTickPipelineMs);
+  }
+
+  updateFreshnessFromTick(tick: MarketTick) {
+    if (typeof this.store.setMarketDataFreshness !== "function") {
+      return;
+    }
+    const isWsTick = tick.source === "ws";
+    this.store.setMarketDataFreshness(tick.symbol, {
+      lastTickTimestamp: Number.isFinite(Number(tick.timestamp)) ? Number(tick.timestamp) : undefined,
+      reason: isWsTick ? "" : "rest_fallback_active",
+      status: isWsTick ? "fresh" : "degraded",
+      updatedAt: Number.isFinite(Number(tick.receivedAt)) ? Number(tick.receivedAt) : this.now()
+    });
+  }
+
+  markSymbolsDegraded(reason: string, observedAt: number = this.now()) {
+    if (typeof this.store.setMarketDataFreshness !== "function") {
+      return;
+    }
+    for (const symbol of this.symbols) {
+      this.store.setMarketDataFreshness(symbol, {
+        reason,
+        status: "degraded",
+        updatedAt: observedAt
+      });
+    }
+  }
+
+  refreshMarketDataFreshness(observedAt: number = this.now()) {
+    if (typeof this.store.refreshMarketDataFreshness !== "function") {
+      return;
+    }
+    this.store.refreshMarketDataFreshness(this.symbols, {
+      now: observedAt,
+      staleAfterMs: this.fallbackStaleAfterMs
+    });
   }
 
   maybeLogTickLatency(tick: MarketTick, totalTickPipelineMs: number) {
@@ -214,7 +262,7 @@ class MarketStream {
       return;
     }
 
-    const loggedAt = Date.now();
+    const loggedAt = this.now();
     const lastLoggedAt = this.lastLatencyLogAtBySymbol.get(tick.symbol) || 0;
     const latency = {
       botDecisionMs: pipeline?.botDecisionMs ?? null,
@@ -317,7 +365,7 @@ class MarketStream {
   async fetchFallbackTicks(exchange: any, targetSymbols: string[], observedAt: number) {
     if (targetSymbols.length > 1 && typeof exchange.fetchTickers === "function") {
       const batchTickers = await exchange.fetchTickers(targetSymbols);
-      const receivedAt = now();
+      const receivedAt = this.now();
       const restRoundtripMs = Math.max(0, receivedAt - observedAt);
       return {
         method: "fetchTickers",
@@ -331,9 +379,9 @@ class MarketStream {
     const ticks = [];
     let maxRestRoundtripMs = 0;
     for (const symbol of targetSymbols) {
-      const requestStartedAt = now();
+      const requestStartedAt = this.now();
       const ticker = await exchange.fetchTicker(symbol);
-      const receivedAt = now();
+      const receivedAt = this.now();
       const restRoundtripMs = Math.max(0, receivedAt - requestStartedAt);
       maxRestRoundtripMs = Math.max(maxRestRoundtripMs, restRoundtripMs);
       const tick = this.normalizeFallbackTick(symbol, ticker, receivedAt, restRoundtripMs);
@@ -350,7 +398,8 @@ class MarketStream {
 
   async fetchRestSnapshot(options: { observedAt?: number } = {}) {
     const generation = this.restSnapshotGeneration;
-    const observedAt = Number.isFinite(Number(options.observedAt)) ? Number(options.observedAt) : now();
+    const observedAt = Number.isFinite(Number(options.observedAt)) ? Number(options.observedAt) : this.now();
+    this.refreshMarketDataFreshness(observedAt);
     const targetSymbols = this.getFallbackTargetSymbols(observedAt);
     if (targetSymbols.length <= 0) {
       return {
@@ -481,7 +530,7 @@ class MarketStream {
     limit: number;
     observedAt?: number;
   }) {
-    const observedAt = Number.isFinite(Number(params.observedAt)) ? Number(params.observedAt) : now();
+    const observedAt = Number.isFinite(Number(params.observedAt)) ? Number(params.observedAt) : this.now();
     const interval = String(params.interval || "").trim();
     const symbols = [...new Set(params.symbols || [])].map((symbol) => String(symbol || "").trim()).filter(Boolean);
     const since = Math.max(0, Number(params.since) || 0);
@@ -527,15 +576,20 @@ class MarketStream {
     };
   }
 
-  startRestFallback() {
+  startRestFallback(observedAt: number = this.now()) {
     if (this.stopping || this.fallbackTimer || this.mode !== "live") return;
     this.store.updateWsConnection("market-stream", {
       connectionId: "market-stream",
       fallbackActive: true
     });
-    this.fetchRestSnapshot();
+    this.markSymbolsDegraded("rest_fallback_active", observedAt);
+    this.refreshMarketDataFreshness(observedAt);
+    this.fetchRestSnapshot({ observedAt });
     this.fallbackTimer = setInterval(() => {
-      this.fetchRestSnapshot();
+      const tickObservedAt = this.now();
+      this.markSymbolsDegraded("rest_fallback_active", tickObservedAt);
+      this.refreshMarketDataFreshness(tickObservedAt);
+      this.fetchRestSnapshot({ observedAt: tickObservedAt });
     }, this.fallbackIntervalMs);
     if (typeof this.fallbackTimer.unref === "function") {
       this.fallbackTimer.unref();
@@ -548,6 +602,7 @@ class MarketStream {
 
   stopRestFallback() {
     if (!this.fallbackTimer) {
+      this.refreshMarketDataFreshness(this.now());
       this.store.updateWsConnection("market-stream", {
         connectionId: "market-stream",
         fallbackActive: false
@@ -556,6 +611,7 @@ class MarketStream {
     }
     clearInterval(this.fallbackTimer);
     this.fallbackTimer = null;
+    this.refreshMarketDataFreshness(this.now());
     this.store.updateWsConnection("market-stream", {
       connectionId: "market-stream",
       fallbackActive: false

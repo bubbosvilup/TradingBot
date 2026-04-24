@@ -101,7 +101,8 @@ function createStrategyWithEconomics(strategyId, strategyEvaluate, options = {})
 }
 
 function createHarness(strategyEvaluate, options = {}) {
-  const store = options.store || new StateStore();
+  const clock = options.clock || { now: () => Date.now() };
+  const store = options.store || new StateStore({ clock });
   const config = {
     allowedStrategies: options.allowedStrategies || ["testStrategy"],
     enabled: true,
@@ -110,6 +111,7 @@ function createHarness(strategyEvaluate, options = {}) {
     maxArchitectStateAgeMs: options.maxArchitectStateAgeMs,
     mtf: options.mtfConfig,
     postLossArchitectLatchPublishesRequired: options.postLossArchitectLatchPublishesRequired,
+    postLossLatchMaxMs: options.postLossLatchMaxMs,
     riskProfile: options.riskProfile || "medium",
     strategy: options.strategy || "testStrategy",
     symbol: options.symbol || "BTC/USDT"
@@ -125,6 +127,11 @@ function createHarness(strategyEvaluate, options = {}) {
   };
 
   store.registerBot(config);
+  store.setMarketDataFreshness(config.symbol, {
+    lastTickTimestamp: Date.now(),
+    status: "fresh",
+    updatedAt: Date.now()
+  });
 
   const logger = {
     bot(botConfig, message, metadata) {
@@ -144,6 +151,7 @@ function createHarness(strategyEvaluate, options = {}) {
   };
 
   const executionEngine = new ExecutionEngine({
+    clock,
     feeRate: 0.001,
     logger: logger.child("execution"),
     store,
@@ -160,6 +168,7 @@ function createHarness(strategyEvaluate, options = {}) {
   });
 
   const bot = new TradingBot(config, {
+    clock,
     executionEngine,
     indicatorEngine: {
       createSnapshot() {
@@ -307,6 +316,28 @@ function runTradingBotTests() {
   Date.now = () => clock;
 
   try {
+    let fakeNow = 2_000_000;
+    const fakeClock = { now: () => fakeNow };
+    const clockedHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.5,
+      reason: ["neutral_signal"]
+    }), {
+      clock: fakeClock,
+      strategy: "emaCross"
+    });
+    clockedHarness.bot.onMarketTick({
+      price: 100,
+      source: "mock",
+      symbol: "BTC/USDT",
+      timestamp: 1_000_000
+    });
+    const clockedPipeline = clockedHarness.store.getPipelineSnapshot("BTC/USDT");
+    const clockedState = clockedHarness.store.getBotState("bot_test");
+    if (clockedPipeline?.lastBotStartedAt !== 2_000_000 || clockedState?.lastEvaluationAt !== 2_000_000) {
+      throw new Error(`bot runtime lifecycle timestamps should use injected clock, not tick timestamp: ${JSON.stringify({ clockedPipeline, clockedState })}`);
+    }
+
     const normalExitHarness = createHarness(() => ({
       action: "hold",
       confidence: 0.5,
@@ -1718,6 +1749,82 @@ function runTradingBotTests() {
     }
 
     clock += 10_000;
+    let latchWallClock = 9_000_000;
+    const latchFakeClock = { now: () => latchWallClock };
+    const timeoutLatchHarness = createHarness(postLossStrategyEvaluate, {
+      allowedStrategies: ["rsiReversion"],
+      clock: latchFakeClock,
+      postLossArchitectLatchPublishesRequired: 2,
+      postLossLatchMaxMs: 5_000,
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion"
+    });
+    timeoutLatchHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.9,
+      entryPrice: 100,
+      id: "pos-loss-latch-timeout",
+      lifecycleMode: "normal",
+      managedRecoveryDeferredReason: null,
+      managedRecoveryExitFloorNetPnlUsdt: null,
+      managedRecoveryStartedAt: null,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 20_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    timeoutLatchHarness.store.updateBotState("bot_test", {
+      activeStrategyId: "rsiReversion",
+      exitSignalStreak: 1
+    });
+    timeoutLatchHarness.bot.onMarketTick({ price: 99, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const timeoutActivatedState = timeoutLatchHarness.store.getBotState("bot_test");
+    if (timeoutActivatedState.postLossArchitectLatchStartedAt !== 9_000_000) {
+      throw new Error(`post-loss latch start time should use injected runtime clock: ${JSON.stringify(timeoutActivatedState)}`);
+    }
+    latchWallClock += 5_000;
+    clock += 80_000;
+    timeoutLatchHarness.store.updateBotState("bot_test", {
+      cooldownReason: null,
+      cooldownUntil: null,
+      entrySignalStreak: 1
+    });
+    timeoutLatchHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const timeoutBlockedState = timeoutLatchHarness.store.getBotState("bot_test");
+    if (timeoutLatchHarness.store.getPosition("bot_test")) {
+      throw new Error("post-loss latch timeout should not allow automatic re-entry");
+    }
+    if (timeoutBlockedState.postLossArchitectLatchTimedOutAt !== 9_005_000
+      || !timeoutBlockedState.postLossArchitectLatchActive
+      || !timeoutBlockedState.lastDecisionReasons.includes("post_loss_latch_timeout_requires_operator")) {
+      throw new Error(`timed-out latch should enter an operator-required terminal block state: ${JSON.stringify(timeoutBlockedState)}`);
+    }
+    if (!timeoutLatchHarness.botLogs.find((entry) =>
+      entry.message === "entry_gate_blocked"
+      && entry.metadata.blockReason === "post_loss_latch_timeout_requires_operator"
+    )) {
+      throw new Error(`timed-out latch should report the operator-required block reason in gate telemetry: ${JSON.stringify(timeoutLatchHarness.botLogs)}`);
+    }
+    timeoutLatchHarness.store.setArchitectPublisherState("BTC/USDT", {
+      ...timeoutLatchHarness.store.getArchitectPublisherState("BTC/USDT"),
+      lastPublishedAt: clock + 10_000,
+      ready: true
+    });
+    latchWallClock += 1_000;
+    clock += 1_000;
+    timeoutLatchHarness.store.updateBotState("bot_test", {
+      entrySignalStreak: 1
+    });
+    timeoutLatchHarness.bot.onMarketTick({ price: 101, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const timeoutAfterFreshPublishState = timeoutLatchHarness.store.getBotState("bot_test");
+    if (timeoutLatchHarness.store.getPosition("bot_test") || !timeoutAfterFreshPublishState.postLossArchitectLatchActive || timeoutAfterFreshPublishState.postLossArchitectLatchFreshPublishCount !== 0) {
+      throw new Error(`timed-out latch should not auto-release on a later fresh architect publish: ${JSON.stringify(timeoutAfterFreshPublishState)}`);
+    }
+
+    clock += 10_000;
     const frozenCooldownHarness = createHarness(() => ({
       action: "buy",
       confidence: 0.95,
@@ -2975,6 +3082,171 @@ function runTradingBotTests() {
     );
     if (!portfolioGateLog) {
       throw new Error("portfolio kill switch should flow through entry diagnostics as the blocking risk reason");
+    }
+
+    clock += 10_000;
+    const degradedFreshnessHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    degradedFreshnessHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock - 1_000,
+      reason: "rest_fallback_active",
+      status: "degraded",
+      updatedAt: clock
+    });
+    degradedFreshnessHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (degradedFreshnessHarness.store.getPosition("bot_test")) {
+      throw new Error("degraded market data should block new entries while flat");
+    }
+    if (!degradedFreshnessHarness.botLogs.find((entry) =>
+      entry.message === "entry_blocked" && entry.metadata.reason === "market_data_not_fresh"
+    )) {
+      throw new Error("degraded market data should emit an explicit entry_blocked reason");
+    }
+    if (!degradedFreshnessHarness.botLogs.find((entry) =>
+      entry.message === "entry_gate_blocked" && entry.metadata.riskReason === "market_data_not_fresh"
+    )) {
+      throw new Error("degraded market data should flow through entry diagnostics as the blocking risk reason");
+    }
+
+    clock += 10_000;
+    let degradedStrategyEvaluations = 0;
+    const degradedNoEvalHarness = createHarness(() => {
+      degradedStrategyEvaluations += 1;
+      return {
+        action: "buy",
+        confidence: 0.93,
+        reason: ["buy_signal"]
+      };
+    }, {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    degradedNoEvalHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock - 1_000,
+      reason: "rest_fallback_active",
+      status: "degraded",
+      updatedAt: clock
+    });
+    degradedNoEvalHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (degradedStrategyEvaluations !== 0) {
+      throw new Error(`flat bot should skip strategy.evaluate() entirely when market data is degraded: ${degradedStrategyEvaluations}`);
+    }
+
+    clock += 10_000;
+    const staleFreshnessHarness = createHarness(() => ({
+      action: "buy",
+      confidence: 0.93,
+      reason: ["buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    staleFreshnessHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock - 10_000,
+      reason: "market_data_stale",
+      status: "stale",
+      updatedAt: clock
+    });
+    staleFreshnessHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (staleFreshnessHarness.store.getPosition("bot_test")) {
+      throw new Error("stale market data should block new entries while flat");
+    }
+    if (!staleFreshnessHarness.botLogs.find((entry) =>
+      entry.message === "entry_blocked" && entry.metadata.reason === "market_data_not_fresh"
+    )) {
+      throw new Error("stale market data should emit an explicit entry_blocked reason");
+    }
+
+    clock += 10_000;
+    let staleStrategyEvaluations = 0;
+    const staleNoEvalHarness = createHarness(() => {
+      staleStrategyEvaluations += 1;
+      return {
+        action: "buy",
+        confidence: 0.93,
+        reason: ["buy_signal"]
+      };
+    }, {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    staleNoEvalHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock - 10_000,
+      reason: "market_data_stale",
+      status: "stale",
+      updatedAt: clock
+    });
+    staleNoEvalHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (staleStrategyEvaluations !== 0) {
+      throw new Error(`flat bot should skip strategy.evaluate() entirely when market data is stale: ${staleStrategyEvaluations}`);
+    }
+
+    clock += 10_000;
+    const degradedExitHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "sell" : "buy",
+      confidence: 0.93,
+      reason: [context.hasOpenPosition ? "exit_signal" : "buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    degradedExitHarness.store.setPosition("bot_test", createPosition({
+      openedAt: clock - 2_000,
+      quantity: 1,
+      strategyId: "emaCross"
+    }));
+    degradedExitHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock - 1_000,
+      reason: "rest_fallback_active",
+      status: "degraded",
+      updatedAt: clock
+    });
+    degradedExitHarness.bot.onMarketTick({ price: 95, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (degradedExitHarness.store.getPosition("bot_test")) {
+      throw new Error("degraded market data should not block protective/normal exit handling for open positions");
+    }
+
+    clock += 10_000;
+    const staleExitHarness = createHarness((context) => ({
+      action: context.hasOpenPosition ? "sell" : "buy",
+      confidence: 0.93,
+      reason: [context.hasOpenPosition ? "exit_signal" : "buy_signal"]
+    }), {
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "emaCross"
+    });
+    staleExitHarness.store.setPosition("bot_test", createPosition({
+      openedAt: clock - 2_000,
+      quantity: 1,
+      strategyId: "emaCross"
+    }));
+    staleExitHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock - 10_000,
+      reason: "market_data_stale",
+      status: "stale",
+      updatedAt: clock
+    });
+    staleExitHarness.bot.onMarketTick({ price: 95, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (staleExitHarness.store.getPosition("bot_test")) {
+      throw new Error("stale market data should not block protective/normal exit handling for open positions");
     }
 
     clock += 10_000;

@@ -6,6 +6,48 @@ const { MarketStream } = require("../src/streams/marketStream.ts");
 const { FakeWebSocket } = require("./fakeWebSocket");
 
 function runMarketStreamTests() {
+  let fakeNow = 80_000;
+  const fakeClock = { now: () => fakeNow };
+  const clockedStore = new StateStore({ clock: fakeClock });
+  const clockedStream = new MarketStream({
+    clock: fakeClock,
+    logger: { info() {}, warn() {}, error() {} },
+    mode: "live",
+    store: clockedStore,
+    wsManager: {
+      connectBinanceMarketStream() {
+        return () => {};
+      },
+      publish() {},
+      subscribe() {
+        return () => {};
+      }
+    }
+  });
+  clockedStream.symbols = ["CLOCK/USDT"];
+  clockedStream.startRestFallback = (observedAt) => {
+    clockedStream.markSymbolsDegraded("rest_fallback_active", observedAt);
+  };
+  clockedStream.handleWsStatus({ status: "disconnected" });
+  const disconnectedFreshness = clockedStore.getMarketDataFreshness("CLOCK/USDT");
+  if (disconnectedFreshness.updatedAt !== 80_000) {
+    throw new Error(`ws status fallback timing should use injected clock: ${JSON.stringify(disconnectedFreshness)}`);
+  }
+  fakeNow = 80_250;
+  clockedStream.handleTick({
+    price: 10,
+    receivedAt: 80_000,
+    source: "ws",
+    symbol: "CLOCK/USDT",
+    timestamp: 70_000
+  });
+  const clockedPipeline = clockedStore.getPipelineSnapshot("CLOCK/USDT");
+  const clockedFreshness = clockedStore.getMarketDataFreshness("CLOCK/USDT");
+  if (clockedPipeline?.tickLatency?.last.flushDelayMs !== 250 || clockedFreshness.updatedAt !== 80_000) {
+    throw new Error(`market stream latency should use runtime clock while freshness keeps receivedAt: ${JSON.stringify({ clockedFreshness, clockedPipeline })}`);
+  }
+  clockedStream.stop();
+
   const store = new StateStore();
   const sockets = [];
   const received = [];
@@ -60,6 +102,35 @@ function runMarketStreamTests() {
   }
   if (store.getLatestPrice("BTC/USDT") !== 68123.45) {
     throw new Error(`state store did not receive live price: ${store.getLatestPrice("BTC/USDT")}`);
+  }
+  const liveFreshness = store.getMarketDataFreshness("BTC/USDT", {
+    now: 1711960000001,
+    staleAfterMs: stream.fallbackStaleAfterMs
+  });
+  if (liveFreshness.status !== "fresh" || liveFreshness.lastTickTimestamp !== 1711960000001) {
+    throw new Error(`live websocket tick should mark symbol freshness as fresh: ${JSON.stringify(liveFreshness)}`);
+  }
+
+  stream.handleWsStatus({
+    reason: "socket_closed",
+    status: "disconnected",
+    timestamp: 1711960005000
+  });
+  const degradedFreshness = store.getMarketDataFreshness("BTC/USDT", {
+    now: 1711960005000,
+    staleAfterMs: stream.fallbackStaleAfterMs
+  });
+  if (degradedFreshness.status !== "degraded") {
+    throw new Error(`disconnect should mark symbol freshness as degraded: ${JSON.stringify(degradedFreshness)}`);
+  }
+
+  stream.refreshMarketDataFreshness(1711960015000);
+  const staleFreshness = store.getMarketDataFreshness("BTC/USDT", {
+    now: 1711960015000,
+    staleAfterMs: stream.fallbackStaleAfterMs
+  });
+  if (staleFreshness.status !== "stale") {
+    throw new Error(`freshness timeout should mark symbol stale when no recent tick exists: ${JSON.stringify(staleFreshness)}`);
   }
 
   stream.stop();
@@ -391,6 +462,13 @@ async function runMarketStreamRestFallbackTests() {
     const restPipeline = store.getPipelineSnapshot("BTC/USDT");
     if (restPipeline?.source !== "rest" || restPipeline.restRoundtripMs !== 0 || restPipeline.exchangeToReceiveMs !== 0) {
       throw new Error(`rest fallback should mark latency source and roundtrip explicitly: ${JSON.stringify(restPipeline)}`);
+    }
+    const degradedFreshness = store.getMarketDataFreshness("BTC/USDT", {
+      now: 7_000,
+      staleAfterMs: stream.fallbackStaleAfterMs
+    });
+    if (degradedFreshness.status !== "degraded") {
+      throw new Error(`rest fallback should keep market data freshness degraded: ${JSON.stringify(degradedFreshness)}`);
     }
 
     Date.now = () => 9_000;

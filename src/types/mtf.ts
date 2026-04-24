@@ -75,3 +75,15 @@ export interface MtfPublishDiagnostics {
   mtfReadyFrameCount: number;
   mtfSufficientFrames: boolean;
 }
+
+/** Compact audit trail for MTF parameter decisions. */
+export interface MtfDecisionTrace {
+  adjusted: boolean;
+  baselineParamsUsed: boolean;
+  capMultiplier: number | null;
+  dominantFrame: MtfHorizonFrameId | null;
+  enabled: boolean;
+  instability: number | null;
+  instabilityThreshold: number;
+  reason: string | null;
+}

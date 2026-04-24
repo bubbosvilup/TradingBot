@@ -33,6 +33,7 @@ export interface BotConfig {
   maxArchitectStateAgeMs?: number;
   mtf?: MtfRuntimeConfig;
   postLossArchitectLatchPublishesRequired?: number;
+  postLossLatchMaxMs?: number;
 }
 
 export interface BotRuntimeState {
@@ -66,7 +67,9 @@ export interface BotRuntimeState {
   postLossArchitectLatchActivatedAt: number | null;
   postLossArchitectLatchFreshPublishCount: number;
   postLossArchitectLatchLastCountedPublishedAt: number | null;
+  postLossArchitectLatchStartedAt: number | null;
   postLossArchitectLatchStrategyId: string | null;
+  postLossArchitectLatchTimedOutAt: number | null;
   realizedPnl: number;
   availableBalanceUsdt: number;
 }

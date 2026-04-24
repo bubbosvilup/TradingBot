@@ -7,6 +7,7 @@ import type { MarketTick } from "./market.ts";
 import type { PerformanceSnapshot } from "./performance.ts";
 import type { IndicatorSnapshot, Strategy, StrategyDecision } from "./strategy.ts";
 import type { ClosedTradeRecord, PositionRecord, TradeDirection } from "./trade.ts";
+import type { Clock } from "../core/clock.ts";
 
 export interface LoggerLike {
   info(message: string, metadata?: Record<string, unknown>): void;
@@ -60,6 +61,15 @@ export interface PortfolioKillSwitchState extends PortfolioKillSwitchConfig {
   updatedAt: number | null;
 }
 
+export type MarketDataFreshnessStatus = "fresh" | "degraded" | "stale";
+
+export interface MarketDataFreshnessState {
+  lastTickTimestamp?: number;
+  reason?: string;
+  status: MarketDataFreshnessStatus;
+  updatedAt: number;
+}
+
 export interface SymbolStateRetentionSnapshot {
   lastCleanupAt: number | null;
   lastEvictedAt: number | null;
@@ -74,6 +84,7 @@ export interface SymbolStateRetentionSnapshot {
 export interface RuntimeTuningConfig {
   architectPublishIntervalMs?: number;
   architectWarmupMs?: number;
+  postLossLatchMaxMs?: number;
   postLossLatchMinFreshPublications?: number;
   symbolStateRetentionMs?: number;
 }
@@ -137,6 +148,14 @@ export interface BotStateStoreLike {
     feeRate?: number;
     now?: number;
   }): PortfolioKillSwitchState;
+  commitPortfolioKillSwitchState?(options?: {
+    feeRate?: number;
+    now?: number;
+  }): PortfolioKillSwitchState;
+  getMarketDataFreshness?(symbol: string, options?: {
+    now?: number;
+    staleAfterMs?: number;
+  }): MarketDataFreshnessState;
   recordBotEvaluation(botId: string, symbol: string, evaluatedAt: number): void;
   recordBotTickStart?(botId: string, symbol: string, startedAt: number): void;
   recordExecution(
@@ -254,6 +273,7 @@ export interface StrategySwitcherLike {
 }
 
 export interface BotDeps {
+  clock?: Clock;
   executionEngine: ExecutionEngineLike;
   indicatorEngine: IndicatorEngineLike;
   logger: LoggerLike;

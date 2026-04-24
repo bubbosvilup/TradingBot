@@ -1,6 +1,6 @@
 // Module responsibility: pure MTF-driven entry parameter resolution for strategy economics.
 
-import type { MtfHorizonFrameId, MtfPublishDiagnostics } from "../types/mtf.ts";
+import type { MtfDecisionTrace, MtfHorizonFrameId, MtfPublishDiagnostics } from "../types/mtf.ts";
 
 const RSI_MIN_EXPECTED_NET_EDGE_FLOOR = 0.0015;
 const DEFAULT_BUY_RSI = 33;
@@ -22,6 +22,7 @@ export interface RsiReversionMtfResolvedParams {
   mtfAdjustmentApplied: boolean;
   fallbackReason: string | null;
   coherenceReason: string;
+  mtfDecisionTrace: MtfDecisionTrace;
 }
 
 export interface ResolveRsiReversionMtfParamsInput {
@@ -51,10 +52,13 @@ function buildBaseline(params: {
   baseMinExpectedNetEdgePct: number;
   baseTargetDistanceCapPct: number | null;
   fallbackReason: string | null;
+  instabilityThreshold: number;
   coherenceReason?: string;
   dominantTimeframe?: MtfHorizonFrameId | null;
+  mtfDiagnostics?: MtfPublishDiagnostics | null;
   targetDistanceProfile?: RsiReversionTargetDistanceProfile;
 }): RsiReversionMtfResolvedParams {
+  const reason = params.coherenceReason || params.fallbackReason || "baseline";
   return {
     resolvedBuyRsi: params.baseBuyRsi,
     resolvedSellRsi: params.baseSellRsi,
@@ -64,7 +68,39 @@ function buildBaseline(params: {
     targetDistanceProfile: params.targetDistanceProfile || "baseline",
     mtfAdjustmentApplied: false,
     fallbackReason: params.fallbackReason,
-    coherenceReason: params.coherenceReason || params.fallbackReason || "baseline"
+    coherenceReason: reason,
+    mtfDecisionTrace: buildMtfDecisionTrace({
+      adjusted: false,
+      baselineParamsUsed: true,
+      capMultiplier: 1,
+      fallbackReason: params.fallbackReason,
+      instabilityThreshold: params.instabilityThreshold,
+      mtfDiagnostics: params.mtfDiagnostics || null,
+      reason
+    })
+  };
+}
+
+function buildMtfDecisionTrace(params: {
+  adjusted: boolean;
+  baselineParamsUsed: boolean;
+  capMultiplier: number | null;
+  fallbackReason?: string | null;
+  instabilityThreshold: number;
+  mtfDiagnostics?: MtfPublishDiagnostics | null;
+  reason: string | null;
+}): MtfDecisionTrace {
+  const mtf = params.mtfDiagnostics || null;
+  const instability = Number(mtf?.mtfInstability);
+  return {
+    adjusted: params.adjusted,
+    baselineParamsUsed: params.baselineParamsUsed,
+    capMultiplier: params.capMultiplier,
+    dominantFrame: mtf?.mtfDominantFrame ?? null,
+    enabled: Boolean(mtf?.mtfEnabled),
+    instability: Number.isFinite(instability) ? instability : null,
+    instabilityThreshold: params.instabilityThreshold,
+    reason: params.fallbackReason || params.reason
   };
 }
 
@@ -90,6 +126,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseSellRsi,
       baseMinExpectedNetEdgePct,
       baseTargetDistanceCapPct,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: "mtf_disabled"
     });
   }
@@ -99,6 +137,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseSellRsi,
       baseMinExpectedNetEdgePct,
       baseTargetDistanceCapPct,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: "mtf_insufficient_frames"
     });
   }
@@ -108,6 +148,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseSellRsi,
       baseMinExpectedNetEdgePct,
       baseTargetDistanceCapPct,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: "mtf_non_range"
     });
   }
@@ -117,6 +159,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseSellRsi,
       baseMinExpectedNetEdgePct,
       baseTargetDistanceCapPct,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: "mtf_missing_dominant_frame"
     });
   }
@@ -129,6 +173,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseMinExpectedNetEdgePct,
       baseTargetDistanceCapPct,
       dominantTimeframe: mtf.mtfDominantFrame,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: "mtf_instability_above_threshold"
     });
   }
@@ -141,6 +187,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseMinExpectedNetEdgePct,
       baseTargetDistanceCapPct,
       dominantTimeframe: mtf.mtfDominantFrame,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: "mtf_agreement_below_threshold"
     });
   }
@@ -152,6 +200,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseMinExpectedNetEdgePct,
       baseTargetDistanceCapPct,
       dominantTimeframe: mtf.mtfDominantFrame,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: "missing_baseline_target_distance_cap"
     });
   }
@@ -164,6 +214,8 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
       baseTargetDistanceCapPct,
       coherenceReason: "mtf_coherent_short_baseline",
       dominantTimeframe: "short",
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
       fallbackReason: null,
       targetDistanceProfile: "short"
     });
@@ -179,7 +231,16 @@ function resolveRsiReversionMtfParams(params: ResolveRsiReversionMtfParamsInput)
     targetDistanceProfile: mtf.mtfDominantFrame,
     mtfAdjustmentApplied: true,
     fallbackReason: null,
-    coherenceReason: `mtf_coherent_${mtf.mtfDominantFrame}`
+    coherenceReason: `mtf_coherent_${mtf.mtfDominantFrame}`,
+    mtfDecisionTrace: buildMtfDecisionTrace({
+      adjusted: true,
+      baselineParamsUsed: false,
+      capMultiplier,
+      fallbackReason: null,
+      instabilityThreshold: maxInstability,
+      mtfDiagnostics: mtf,
+      reason: `mtf_coherent_${mtf.mtfDominantFrame}`
+    })
   };
 }
 
