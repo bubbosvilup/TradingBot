@@ -392,28 +392,16 @@ Backtest / replay status
 
 ### Focus operativo successivo
 
-- Il focus immediato dopo v18 e v18.1: microfix tecnici senza grandi redesign.
+- v18.1 e chiusa: i microfix tecnici previsti sono stati completati senza redesign.
 - TickProcessingSnapshot / hot-path history sharing:
-  - ridurre letture duplicate di price history
-  - arrivare a un solo snapshot immutabile per tick solo se il cambio resta piccolo e verificabile
-  - trattare il percorso `MarketStream -> ContextService -> Architect -> TradingBot` come area sensibile
+  - resta follow-up v18.2/v19 se serve ridurre letture duplicate di price history
+  - trattare sempre il percorso `MarketStream -> ContextService -> Architect -> TradingBot` come area sensibile
 - MTF boundary validation:
   - `configLoader` valida gia frame duplicati e `windowMs` invalidi
-  - aggiungere una guardia anche in `MtfContextService` solo se si puo riusare logica condivisa senza duplicazione invasiva
+  - guardia in `MtfContextService` rinviata a v18.2 per helper/schema condiviso
 - SystemServer Clock:
-  - sostituire i `Date.now()` residui in payload/API con il clock iniettato
-  - obiettivo: testabilita e determinismo, non cambio trading behavior
-- Backtest legacy smoke test minimo:
-  - usare una serie deterministica
-  - verificare trade count / PnL atteso
-  - evitare test che provano solo stringhe di capability
-- MarketStream naming residuo:
-  - rinominare eventuali `handle*` locali solo se il rename e sicuro e non causa cascade
-- Docs/runbook operativo:
-  - documentare reset post-loss latch
-  - documentare cosa fare se `UserStream` resta disconnected
-  - spiegare cosa significa `paper_full_notional_simplified`
-- v18.2 resta il contenitore per repo humanization, boundaries, contracts e types.
+  - residui payload/API non critici restano in backlog di testabilita, non trading behavior
+- v18.2 diventa il prossimo focus: repo humanization, boundaries, contracts e types.
 
 ## Aggiornamenti del 2026-04-22
 
@@ -767,10 +755,10 @@ Hotspot da trattare con cautela:
 - Il path live futuro resta nel repository ma non deve essere riattivato accidentalmente dal runtime attivo.
 - `paper_full_notional_simplified` indica il modello paper attuale per short: contabilita full-notional semplificata, non futures margin realistico.
 - Runbook operativo: [docs/operations.md](docs/operations.md)
-- Il prossimo lavoro utile e ordinato cosi:
+- Stato roadmap:
   - v18: release candidate / commit safety
-  - v18.1: microfix tecnici
-  - v18.2: repo humanization + boundaries + contracts + types
+  - v18.1: chiusa, microfix tecnici completati
+  - v18.2: prossimo focus, repo humanization + boundaries + contracts + types
   - v19: backtest moderno/paritario
   - v20: short/futures/margin realism
   - v21: strategy lab / optimization
@@ -786,66 +774,70 @@ Hotspot da trattare con cautela:
   - latch post-loss globale a livello bot
   - validazione recovery `targetOffsetPct`
   - requisito WebSocket nativo esplicito
-- v18.1 -> microfix tecnici:
-  - TickProcessingSnapshot / hot-path history sharing
-  - time-base cleanup
-  - strategy error boundary
-  - config validation
-  - kill-switch reset
-  - small deterministic/testability fixes
-  - MTF boundary validation se piccola e condivisa
-  - SystemServer Clock cleanup
-  - legacy backtest smoke test minimo
-  - MarketStream naming residuo
-  - runbook reset latch, UserStream disconnected, `paper_full_notional_simplified`
+- v18.1 -> chiusa, microfix tecnici completati:
+  - `allowedStrategies` valida che la base strategy sia inclusa quando la lista e configurata
+  - boundary sicuro intorno a `strategy.evaluate(...)` con `strategy_error`
+  - reset manuale portfolio kill-switch tramite `POST /api/kill-switch/reset`
+  - cleanup timebase per hold/recovery timeout, `ContextBuilder` e `WSManager`
+  - legacy backtest smoke test deterministico su trade count/PnL
+  - runbook operativo per reset latch, reset kill-switch, UserStream, accounting paper e WebSocket nativo
+  - MTF boundary validation rinviata a v18.2 per helper/schema condiviso
 - v18.2 -> repo humanization + boundaries + contracts + types:
-  - v18.2-A dependency map + rules:
-    - generare grafo import
-    - identificare cicli
-    - definire layer
-    - aggiungere dependency-cruiser
-    - aggiungere script CI/test
-  - v18.2-B error taxonomy:
-    - definire errori discriminanti
-    - convertire path config, risk, execution e invariant
-    - evitare string matching downstream
-  - v18.2-C state machines:
-    - posizioni
-    - ordini
-    - transition guards
-    - contract tests
-  - v18.2-D Zod config validation:
-    - config schema
+  - regola chiave: non segmentare `TradingBot` prima di avere contract tests e boundary chiari
+  - v18.2-A baseline:
+    - `any` count
+    - circular imports
+    - dependency graph
+    - boundary violations
+  - v18.2-B boundaries warning mode:
+    - dependency-cruiser
+    - madge
+    - eccezioni temporanee dichiarate
+    - fix ciclo types architect/mtf
+    - spostare `Clock` fuori da `core`
+  - v18.2-C execution ownership:
+    - chiarire chi muta position/trade
+    - ridurre doppia ownership `ExecutionEngine`/`UserStream`
+    - contract tests open/close
+  - v18.2-D error taxonomy v1:
+    - `ConfigError`
+    - `InvariantError`
+    - `ExecutionError`
+    - `StrategyError`
+    - `MarketDataError`
+    - open/close result discriminati
+  - v18.2-E config schema v1:
+    - Zod su bots/runtime/MTF/recovery
     - defaults espliciti
-    - errori leggibili
-    - rimuovere parse manuale fragile dove possibile
-  - v18.2-E contract tests:
-    - Strategy
-    - Execution
-    - StateStore
-    - MarketStream
-    - Bot
-    - Architect
-  - v18.2-F reduce `any`:
-    - audit count iniziale
+    - errori con path
+  - v18.2-F state machine selectors:
+    - `PositionState`
+    - `EntryGuardState`
+    - `OrderState` minimo
+    - transition/invariant tests
+  - v18.2-G contract test suite:
+    - boundary contracts principali
+    - sostituire test troppo fragili dove utile
+  - v18.2-H TradingBot segmentation:
+    - solo dopo i contratti
+    - `onMarketTick` resta mappa leggibile
+    - entry/exit/architect/tick-prep separati con criterio
+  - v18.2-I any reduction:
     - target riduzione almeno 70%
-    - sostituzione progressiva con tipi veri o `unknown`
-  - v18.2-G human flow docs:
-    - entry flow
-    - exit flow
-    - recovery flow
-    - architect switch flow
-    - file map meno generica e piu orientata a "dove guardare per capire X"
+    - prima tick-path e boundary events
+    - lasciare legacy/payload raw come `unknown` + narrowing
   - criteri di uscita:
-    - dependency-cruiser passa
-    - zero circular imports tra layer principali
+    - baseline misurata e salvata
+    - dependency-cruiser/madge in warning mode con eccezioni dichiarate
+    - zero circular imports tra layer principali, salvo eccezioni temporanee motivate
     - contract tests verdi
-    - state machines esplicite per position/order
-    - config validata con schema
-    - errori discriminanti nei path principali
+    - ownership open/close chiarita
+    - state machine selectors espliciti per position/entry guard/order
+    - config bots/runtime/MTF/recovery validata con schema
+    - error taxonomy v1 usata nei path principali
     - `any` ridotti almeno del 70%
-    - entry/exit flow documentato chiaramente
-    - `TradingBot.ts` piu leggibile o almeno segmentato con confini chiari
+    - entry/exit/recovery/architect flow documentati chiaramente
+    - `TradingBot.ts` segmentato solo dopo contract tests e boundary chiari
 - v19 -> backtest moderno/paritario:
   - data layer serio e dataset quality scanner
   - event-driven replay con clock deterministico e no lookahead

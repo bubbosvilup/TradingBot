@@ -22,7 +22,7 @@ Important repo facts:
 - `src/core/historicalBootstrapService.ts` owns startup-only historical preload. It uses the same `MarketStream`/ccxt Binance REST source, seeds `StateStore` through existing price/kline update paths, and runs before market stream/context/Architect/bots start.
 - `src/streams/marketStream.ts` guards shutdown so WS close during teardown cannot start REST fallback, and in-flight fallback snapshots are invalidated after stop; this keeps test teardown clean without muting production logs.
 - `src/engines/backtestEngine.ts` is now a modern adapter over legacy backtest modules, not a full replay runtime.
-- Legacy backtest adapter coverage is not replay parity. v18.1 should add only a small deterministic legacy smoke test; v19 owns modern event-driven replay.
+- Legacy backtest adapter coverage is not replay parity. v18.1 added a small deterministic legacy smoke test; v19 owns modern event-driven replay.
 - `src/core/systemServer.ts` now derives architect warmup diagnostics from the configured runtime warmup, exposes bot-level drawdown-pause/manual-resume state separately from the shared portfolio kill switch, provides explicit `POST /api/bots/:botId/resume` for `max_drawdown_reached` bot pauses, and projects Pulse-focused operator payloads.
 - `src/core/systemServer.ts` also provides explicit `POST /api/bots/:botId/reset-post-loss-latch` for operator recovery from `post_loss_latch_timeout_requires_operator`. It clears only post-loss latch state and does not unpause the bot or bypass cooldown, kill-switch, market freshness, or risk gates.
 - `src/core/systemServer.ts` serves the single Pulse dashboard entry point at `/` and static UI assets. `/compact` now normalizes to `/`; the dashboard remains UI/API-facing only and must not become a control plane.
@@ -92,8 +92,8 @@ Boundary map:
 Roadmap boundary:
 
 - v18: release candidate / commit safety. Only release-critical regressions should enter before the release commit.
-- v18.1: technical microfixes only. Safe targets are TickProcessingSnapshot/hot-path history sharing, time-base cleanup, strategy error boundary, small config-validation gaps, explicit kill-switch reset, deterministic/testability fixes, MTF boundary validation if shared cleanly, injected SystemServer clock use, legacy smoke tests, local MarketStream naming, and operator docs.
-- v18.2: repo humanization + boundaries + contracts + types. It owns dependency-cruiser/layer rules, discriminated error taxonomy, explicit position/order state machines, Zod config validation, contract tests for main boundaries, at least 70% `any` reduction, and human flow docs for entry/exit/recovery/architect switch.
+- v18.1: closed. It completed small config validation, strategy error boundary, explicit kill-switch reset, timebase cleanup, legacy smoke coverage, and operator docs.
+- v18.2: next focus. Repo humanization + boundaries + contracts + types starts with baseline counts for `any`, circular imports, dependency graph, and boundary violations; then adds dependency-cruiser/madge warning mode with declared exceptions, fixes the architect/MTF types cycle, moves `Clock` out of `core`, clarifies execution ownership, adds error taxonomy v1, introduces Zod config schema v1, adds position/entry/order state selectors, builds the contract test suite, and only then segments `TradingBot`. Key rule: do not segment `TradingBot` before contract tests and clear boundaries exist.
 - v19: modern backtest parity. It must solve data quality, event replay, execution realism, strategic reporting, anti-lookahead, and legacy deprecation.
 - v20: paper futures isolated-margin realism for economically honest shorts.
 - v21: strategy lab and optimization focused on robustness, walk-forward validation, out-of-sample discipline, Monte Carlo stress, and fair benchmarks.

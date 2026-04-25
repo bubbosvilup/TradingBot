@@ -20,6 +20,7 @@ Default operating assumptions:
 - Treat `src/core/stateStore.ts` as the in-memory source of truth.
 - Treat startup historical preload as bootstrap/store/history plumbing only: it seeds `StateStore` before observation, uses the same market source as `MarketStream`, and must not enter the hot tick path.
 - Keep `TradingBot` as orchestrator, not a dumping ground for extracted logic.
+- For v18.2, do not segment `TradingBot` before contract tests and clear boundaries exist.
 - Do not reintroduce strategy-name branching into `src/bots/tradingBot.ts`.
 - Keep exit semantics policy-driven:
   - use exit-policy capabilities instead of strategy-id coupling
@@ -53,8 +54,8 @@ Primary use cases:
 - launcher/debug-capture planning that preserves runtime safety and keeps output schemas intentional
 - roadmap planning:
   - v18 is release candidate / commit safety
-  - v18.1 owns technical microfixes
-  - v18.2 owns repo humanization, boundaries, contracts, and types
+  - v18.1 is closed after technical microfixes
+  - v18.2 is the next focus for repo humanization, boundaries, contracts, and types
   - v19 owns modern replay/backtest parity
   - v20 owns futures/margin realism
   - v21 owns strategy lab and optimization discipline

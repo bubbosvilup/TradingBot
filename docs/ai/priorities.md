@@ -49,28 +49,27 @@ Work top-down unless a task explicitly says otherwise.
   - post-loss Architect latch blocks globally at bot level while active; strategy id remains metadata
   - negative `exitPolicy.recovery.targetOffsetPct` is rejected explicitly
   - default WebSocket construction uses `globalThis.WebSocket` with a clear Node/runtime guard
-- Current: v18 release candidate / commit safety. Only release-critical regressions should enter v18.
-- Next: v18.1 technical microfixes. Keep this small and targeted:
-  - TickProcessingSnapshot / hot-path history sharing only if it reduces duplicate price-history reads without broad runtime churn
-  - time-base cleanup where residual mixed clocks affect determinism/testability
-  - strategy error boundary if it can isolate strategy failures without changing decisions
-  - config validation gaps with small shared validators
-  - portfolio kill-switch reset only as an explicit operator action
-  - small deterministic/testability fixes
-  - MTF boundary validation in `MtfContextService` only if it can reuse shared validation logic
-  - SystemServer injected-clock cleanup for deterministic payload/API tests
-  - legacy backtest smoke test with deterministic trade count / PnL expectations
-  - local MarketStream naming cleanup where safe
-  - operational runbook for post-loss latch reset, disconnected UserStream, and paper short accounting
-- v18.2: repo humanization + boundaries + contracts + types:
-  - A: dependency map + rules: import graph, circular import audit, layer rules, dependency-cruiser, CI/test script
-  - B: error taxonomy: discriminated errors for config/risk/execution/invariants, no downstream string matching
-  - C: state machines: position/order transitions, guards, contract tests
-  - D: Zod config validation: schema, explicit defaults, readable errors, less fragile manual parsing
-  - E: contract tests: Strategy, Execution, StateStore, MarketStream, Bot, Architect
-  - F: reduce `any`: initial audit count, target at least 70% reduction, replace with real types or `unknown`
-  - G: human flow docs: entry, exit, recovery, architect switch, and "where to look to understand X" file map
-  - exit criteria: dependency-cruiser passes, no circular imports between main layers, contract tests green, explicit position/order state machines, schema-validated config, discriminated errors in main paths, `any` reduced by at least 70%, clear entry/exit docs, and `TradingBot.ts` more readable or clearly segmented
+- Completed: v18.1 technical microfixes:
+  - `allowedStrategies` must include the configured base strategy when present
+  - `strategy.evaluate(...)` failures are contained as `strategy_error`
+  - portfolio kill-switch has explicit operator reset
+  - hold/recovery timebase uses runtime wall-clock; `tick.timestamp` remains exchange/event metadata
+  - `ContextBuilder` requires finite `observedAt`
+  - `WSManager` uses injected clock for infrastructure timestamps
+  - legacy backtest smoke test asserts deterministic trade/PnL behavior
+  - operational runbook documents latch reset, kill-switch reset, UserStream degraded/disconnected, paper accounting warning, and native WebSocket requirement
+- Current: v18.2 repo humanization + boundaries + contracts + types:
+  - key rule: do not segment `TradingBot` before contract tests and clear boundaries exist
+  - A: baseline: `any` count, circular imports, dependency graph, boundary violations
+  - B: boundaries warning mode: dependency-cruiser, madge, declared temporary exceptions, architect/MTF types-cycle fix, move `Clock` out of `core`
+  - C: execution ownership: clarify who mutates position/trade state, reduce `ExecutionEngine`/`UserStream` double ownership, open/close contract tests
+  - D: error taxonomy v1: `ConfigError`, `InvariantError`, `ExecutionError`, `StrategyError`, `MarketDataError`, discriminated open/close results
+  - E: config schema v1: Zod for bots/runtime/MTF/recovery, explicit defaults, errors with paths
+  - F: state machine selectors: `PositionState`, `EntryGuardState`, minimal `OrderState`, transition/invariant tests
+  - G: contract test suite: main boundary contracts, replace overly fragile tests where useful
+  - H: TradingBot segmentation: only after contracts; keep `onMarketTick` as a readable map; split entry/exit/architect/tick-prep by clear criteria
+  - I: any reduction: target at least 70%; start with tick-path and boundary events; leave legacy/raw payload surfaces as `unknown` plus narrowing
+  - exit criteria: baseline measured, dependency-cruiser/madge warning mode with declared exceptions, no circular imports between main layers except justified temporary exceptions, contract tests green, open/close ownership clear, state machine selectors tested, config schema for bots/runtime/MTF/recovery, error taxonomy v1 in main paths, `any` reduced by at least 70%, flows documented, and `TradingBot.ts` segmented only after contracts/boundaries are clear
 
 ## P3
 
