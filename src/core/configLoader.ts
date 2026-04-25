@@ -5,14 +5,13 @@ import type { PortfolioKillSwitchConfig, RuntimeTuningConfig } from "../types/ru
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("../types/portfolioKillSwitch.ts");
 
 const VALID_RISK_PROFILES = new Set(["low", "medium", "high"]);
 const VALID_MARKET_PROVIDERS = new Set(["binance"]);
 const VALID_MARKET_STREAM_TYPES = new Set(["trade", "aggTrade"]);
 const VALID_MTF_HORIZON_FRAMES = new Set(["short", "medium", "long"]);
 const VALID_MTF_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
-const VALID_PORTFOLIO_KILL_SWITCH_MODES = new Set(["block_entries_only"]);
-
 type NumericValidationRule = {
   max?: number;
   min?: number;

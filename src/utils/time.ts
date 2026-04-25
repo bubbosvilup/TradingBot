@@ -1,4 +1,4 @@
-const { systemClock } = require("../core/clock.ts");
+const { systemClock } = require("../types/clock.ts");
 
 function now(): number {
   return systemClock.now();

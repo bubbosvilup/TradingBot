@@ -1,16 +1,20 @@
 import type { BotConfig } from "../types/bot.ts";
 import type { BotController, BotDeps } from "../types/runtime.ts";
+import type { BotFactory } from "../types/botFactory.ts";
 
-const { TradingBot } = require("../bots/tradingBot.ts") as {
-  TradingBot: new (config: BotConfig, deps: BotDeps) => BotController;
-};
+interface BotManagerOptions {
+  botFactory: BotFactory;
+  deps: BotDeps;
+}
 
 class BotManager {
+  botFactory: BotFactory;
   deps: BotDeps;
   bots: Map<string, BotController>;
 
-  constructor(deps: BotDeps) {
-    this.deps = deps;
+  constructor(options: BotManagerOptions) {
+    this.botFactory = options.botFactory;
+    this.deps = options.deps;
     this.bots = new Map();
   }
 
@@ -18,7 +22,7 @@ class BotManager {
     for (const config of botConfigs) {
       if (!config.enabled) continue;
       this.deps.store.registerBot(config);
-      const bot = new TradingBot(config, this.deps);
+      const bot = this.botFactory.createBot(config, this.deps);
       this.bots.set(config.id, bot);
     }
   }

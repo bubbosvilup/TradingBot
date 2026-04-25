@@ -1,7 +1,10 @@
+import type { BotFactory } from "../types/botFactory.ts";
+
 require("dotenv").config();
 
 const { ConfigLoader } = require("./configLoader.ts");
 const { BotManager } = require("./botManager.ts");
+const { TradingBot } = require("../bots/tradingBot.ts");
 const { SystemServer } = require("./systemServer.ts");
 const { StrategyRegistry } = require("./strategyRegistry.ts");
 const { WSManager } = require("./wsManager.ts");
@@ -288,7 +291,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     store
   });
 
-  const botManager = new BotManager({
+  const botDeps = {
     botArchitect,
     executionEngine,
     indicatorEngine,
@@ -302,6 +305,15 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     clock,
     strategyRegistry,
     strategySwitcher
+  };
+  const botFactory: BotFactory = {
+    createBot(config, deps) {
+      return new TradingBot(config, deps);
+    }
+  };
+  const botManager = new BotManager({
+    botFactory,
+    deps: botDeps
   });
 
   const enabledSymbols = enabledBots.map((bot: any) => bot.symbol);

@@ -5,6 +5,11 @@
   "main": "bot.js",
   "type": "commonjs",
   "scripts": {
+    "audit:any": "node scripts/audit-any.js",
+    "audit:architecture": "node scripts/audit-architecture.js",
+    "audit:boundaries": "npx -y -p dependency-cruiser@16.10.4 depcruise \"src/**/*.ts\" --include-only \"^(src|legacy)\" --config .dependency-cruiser.cjs --output-type err",
+    "audit:circular": "npx -y -p madge@8.0.0 madge src --circular --extensions ts",
+    "audit:deps": "npx -y -p dependency-cruiser@16.10.4 depcruise \"src/**/*.ts\" --include-only \"^src\" --output-type err --no-config",
     "backtest": "node scripts/backtest.js",
     "start": "node bot.js",
     "start:orchestrator": "node --disable-warning=ExperimentalWarning --experimental-strip-types src/core/orchestrator.ts",

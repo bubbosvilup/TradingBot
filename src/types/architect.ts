@@ -1,9 +1,7 @@
+import type { MarketRegime, TrendBias, VolatilityState, StructureState } from "./architectPrimitives.ts";
 import type { MtfPublishDiagnostics } from "./mtf.ts";
 
-export type MarketRegime = "trend" | "range" | "volatile" | "unclear";
-export type TrendBias = "bullish" | "bearish" | "neutral";
-export type VolatilityState = "compressed" | "normal" | "expanding";
-export type StructureState = "trending" | "choppy" | "reversal-risk" | "breakout-watch";
+export type { MarketRegime, TrendBias, VolatilityState, StructureState } from "./architectPrimitives.ts";
 export type RecommendedFamily = "trend_following" | "mean_reversion" | "no_trade";
 export type ArchitectDataMode = "live" | "mock" | "mixed" | "unknown";
 

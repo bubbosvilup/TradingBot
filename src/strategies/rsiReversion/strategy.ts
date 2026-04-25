@@ -1,6 +1,6 @@
 import type { MarketContext, Strategy, StrategyDecision, StrategyEntryEdgeInputs } from "../../types/strategy.ts";
-const { resolveExitPolicy } = require("../../roles/exitPolicyRegistry.ts");
-const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../../roles/recoveryTargetResolver.ts");
+const { resolveExitPolicy } = require("../../domain/exitPolicyRegistry.ts");
+const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../../domain/recoveryTargetResolver.ts");
 const { calculateTargetDistancePct, isTargetHit } = require("../../utils/tradeSide.ts");
 
 function clamp(value: number, min: number, max: number) {

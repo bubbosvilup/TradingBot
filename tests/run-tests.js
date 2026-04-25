@@ -5,6 +5,7 @@ const { runActiveStrategiesTests } = require("./activeStrategies.test");
 const { runArchitectServiceTests } = require("./architectService.test");
 const { runArchitectCoordinatorTests } = require("./architectCoordinator.test");
 const { runBotArchitectTests } = require("./botArchitect.test");
+const { runBotManagerTests } = require("./botManager.test");
 const { runConfigLoaderTests } = require("./configLoader.test");
 const { runContextBuilderTests } = require("./contextBuilder.test");
 const { runContextServiceTests } = require("./contextService.test");
@@ -52,6 +53,7 @@ async function main() {
     { name: "architectCoordinator", run: async () => runArchitectCoordinatorTests() },
     { name: "backtest", run: async () => runBacktestTests() },
     { name: "botArchitect", run: async () => runBotArchitectTests() },
+    { name: "botManager", run: async () => runBotManagerTests() },
     { name: "configLoader", run: async () => runConfigLoaderTests() },
     { name: "contextBuilder", run: async () => runContextBuilderTests() },
     { name: "contextService", run: async () => runContextServiceTests() },

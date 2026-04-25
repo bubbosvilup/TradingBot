@@ -15,7 +15,7 @@ import type {
 } from "../types/runtime.ts";
 
 const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
-const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("./configLoader.ts");
+const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("../types/portfolioKillSwitch.ts");
 const { resolveClock } = require("./clock.ts");
 
 interface PerformanceHistoryPoint {

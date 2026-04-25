@@ -1,4 +1,4 @@
-import type { MarketRegime, TrendBias, VolatilityState, StructureState } from "./architect.ts";
+import type { MarketRegime, TrendBias, VolatilityState, StructureState } from "./architectPrimitives.ts";
 
 /** Canonical timeframe identifiers for MTF analysis. */
 export type MtfTimeframeId = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";

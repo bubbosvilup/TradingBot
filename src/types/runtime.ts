@@ -5,7 +5,10 @@ import type { MarketTick } from "./market.ts";
 import type { PerformanceSnapshot } from "./performance.ts";
 import type { IndicatorSnapshot, Strategy, StrategyDecision } from "./strategy.ts";
 import type { ClosedTradeRecord, PositionRecord, TradeDirection } from "./trade.ts";
-import type { Clock } from "../core/clock.ts";
+import type { Clock } from "./clock.ts";
+import type { PortfolioKillSwitchMode } from "./portfolioKillSwitch.ts";
+
+export type { PortfolioKillSwitchMode } from "./portfolioKillSwitch.ts";
 
 export interface LoggerLike {
   info(message: string, metadata?: Record<string, unknown>): void;
@@ -33,8 +36,6 @@ export interface RiskProfileSettings {
     multiplier: number;
   };
 }
-
-export type PortfolioKillSwitchMode = "block_entries_only";
 
 export interface PortfolioKillSwitchConfig {
   enabled: boolean;
