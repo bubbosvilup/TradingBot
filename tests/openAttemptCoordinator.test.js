@@ -11,7 +11,15 @@ function createCoordinator(overrides = {}) {
       };
     },
     openLong() {
-      return null;
+      return {
+        ok: false,
+        error: {
+          kind: "execution",
+          code: "execution_open_rejected",
+          message: "fixture rejected",
+          recoverable: true
+        }
+      };
     },
     ...overrides.executionEngine
   };
@@ -72,7 +80,15 @@ async function runOpenAttemptCoordinatorTests() {
   const quantityRejectCoordinator = createCoordinator({
     executionEngine: {
       openLong() {
-        return null;
+        return {
+          ok: false,
+          error: {
+            kind: "execution",
+            code: "quantity_below_minimum",
+            message: "fixture rejected quantity",
+            recoverable: true
+          }
+        };
       }
     }
   });
@@ -95,7 +111,15 @@ async function runOpenAttemptCoordinatorTests() {
   const notionalRejectCoordinator = createCoordinator({
     executionEngine: {
       openLong() {
-        return null;
+        return {
+          ok: false,
+          error: {
+            kind: "execution",
+            code: "notional_below_minimum",
+            message: "fixture rejected notional",
+            recoverable: true
+          }
+        };
       },
       getTradeConstraints() {
         return {
@@ -125,15 +149,18 @@ async function runOpenAttemptCoordinatorTests() {
     executionEngine: {
       openLong(params) {
         return {
-          botId: params.botId,
-          confidence: params.confidence,
-          entryPrice: params.price,
-          id: "pos-1",
-          notes: ["entry"],
-          openedAt: 3_000,
-          quantity: params.quantity,
-          strategyId: params.strategyId,
-          symbol: params.symbol
+          ok: true,
+          position: {
+            botId: params.botId,
+            confidence: params.confidence,
+            entryPrice: params.price,
+            id: "pos-1",
+            notes: ["entry"],
+            openedAt: 3_000,
+            quantity: params.quantity,
+            strategyId: params.strategyId,
+            symbol: params.symbol
+          }
         };
       }
     }
@@ -163,16 +190,19 @@ async function runOpenAttemptCoordinatorTests() {
       openPosition(params) {
         openedShortParams = params;
         return {
-          botId: params.botId,
-          confidence: params.confidence,
-          entryPrice: params.price,
-          id: "pos-short-1",
-          notes: ["entry"],
-          openedAt: 4_000,
-          quantity: params.quantity,
-          side: params.side,
-          strategyId: params.strategyId,
-          symbol: params.symbol
+          ok: true,
+          position: {
+            botId: params.botId,
+            confidence: params.confidence,
+            entryPrice: params.price,
+            id: "pos-short-1",
+            notes: ["entry"],
+            openedAt: 4_000,
+            quantity: params.quantity,
+            side: params.side,
+            strategyId: params.strategyId,
+            symbol: params.symbol
+          }
         };
       }
     }
@@ -211,13 +241,16 @@ async function runOpenAttemptCoordinatorTests() {
       openLong() {
         fallbackLongCalled = true;
         return {
-          botId: "bot_test",
-          entryPrice: 100,
-          id: "wrong-long",
-          openedAt: 5_000,
-          quantity: 1,
-          strategyId: "emaCross",
-          symbol: "BTC/USDT"
+          ok: true,
+          position: {
+            botId: "bot_test",
+            entryPrice: 100,
+            id: "wrong-long",
+            openedAt: 5_000,
+            quantity: 1,
+            strategyId: "emaCross",
+            symbol: "BTC/USDT"
+          }
         };
       }
     }

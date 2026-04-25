@@ -7,6 +7,7 @@ import type { IndicatorSnapshot, Strategy, StrategyDecision } from "./strategy.t
 import type { ClosedTradeRecord, PositionRecord, TradeDirection } from "./trade.ts";
 import type { Clock } from "./clock.ts";
 import type { PortfolioKillSwitchMode } from "./portfolioKillSwitch.ts";
+import type { ExecutionCloseResult, ExecutionOpenResult } from "./executionResult.ts";
 
 export type { PortfolioKillSwitchMode } from "./portfolioKillSwitch.ts";
 
@@ -200,10 +201,10 @@ export interface ExecutionEngineLike {
     side: TradeDirection;
   };
   getTradeConstraints?(): TradeConstraints;
-  openLong(params: ExecutionOpenParams): PositionRecord | null;
-  openShort?(params: ExecutionOpenParams): PositionRecord | null;
-  openPosition?(params: ExecutionOpenPositionParams): PositionRecord | null;
-  closePosition(params: ExecutionCloseParams): ClosedTradeRecord | null;
+  openLong(params: ExecutionOpenParams): ExecutionOpenResult;
+  openShort?(params: ExecutionOpenParams): ExecutionOpenResult;
+  openPosition?(params: ExecutionOpenPositionParams): ExecutionOpenResult;
+  closePosition(params: ExecutionCloseParams): ExecutionCloseResult;
 }
 
 export interface RiskManagerLike {

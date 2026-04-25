@@ -1,5 +1,7 @@
 import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
 import type { Clock } from "../core/clock.ts";
+import type { ExecutionCloseResult, ExecutionOpenResult } from "../types/executionResult.ts";
+import type { ExecutionError } from "../types/errors.ts";
 
 const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
 const { resolveClock } = require("../core/clock.ts");
@@ -156,6 +158,16 @@ class ExecutionEngine {
     return Number.isFinite(totalImpact) ? totalImpact : null;
   }
 
+  buildExecutionError(code: string, message: string, context?: Record<string, unknown>): ExecutionError {
+    return {
+      kind: "execution",
+      code,
+      message,
+      recoverable: true,
+      ...(context ? { context } : {})
+    };
+  }
+
   openPosition(params: {
     botId: string;
     symbol: string;
@@ -173,7 +185,7 @@ class ExecutionEngine {
       expectedExitPrice?: number | null;
       entryArchitectRegime?: string | null;
     };
-  }): PositionRecord | null {
+  }): ExecutionOpenResult {
     const side = normalizeTradeSide(params.side);
     const constraints = validateTradeConstraints({
       minNotionalUsdt: this.minTradeNotionalUsdt,
@@ -201,7 +213,24 @@ class ExecutionEngine {
         strategy: params.strategyId,
         symbol: params.symbol
       });
-      return null;
+      return {
+        ok: false,
+        error: this.buildExecutionError(
+          rejectReason,
+          `Position open rejected: ${rejectReason}`,
+          {
+            botId: params.botId,
+            minNotionalUsdt: Number(constraints.minNotionalUsdt.toFixed(4)),
+            minQuantity: Number(constraints.minQuantity.toFixed(8)),
+            notionalUsdt: Number(constraints.notionalUsdt.toFixed(4)),
+            price: constraints.price,
+            quantity: constraints.quantity,
+            side,
+            strategyId: params.strategyId,
+            symbol: params.symbol
+          }
+        )
+      };
     }
 
     const order: OrderRecord = {
@@ -256,7 +285,11 @@ class ExecutionEngine {
       strategy: params.strategyId,
       symbol: params.symbol
     });
-    return position;
+    return {
+      ok: true,
+      order,
+      position
+    };
   }
 
   openLong(params: {
@@ -267,7 +300,7 @@ class ExecutionEngine {
     quantity: number;
     confidence: number;
     reason: string[];
-  }): PositionRecord | null {
+  }): ExecutionOpenResult {
     return this.openPosition({ ...params, side: "long" });
   }
 
@@ -279,7 +312,7 @@ class ExecutionEngine {
     quantity: number;
     confidence: number;
     reason: string[];
-  }): PositionRecord | null {
+  }): ExecutionOpenResult {
     return this.openPosition({ ...params, side: "short" });
   }
 
@@ -291,9 +324,22 @@ class ExecutionEngine {
     price: number;
     reason: string[];
     timestamp?: number;
-  }): ClosedTradeRecord | null {
+  }): ExecutionCloseResult {
     const position = this.store.getPosition(params.botId);
-    if (!position) return null;
+    if (!position) {
+      return {
+        ok: false,
+        error: this.buildExecutionError(
+          "position_not_found",
+          "Position close rejected: position_not_found",
+          {
+            botId: params.botId,
+            price: params.price,
+            reason: params.reason
+          }
+        )
+      };
+    }
 
     const economics = this.calculateCloseEconomics(position, params.price);
     const realizedNetPnlPct = this.calculateRealizedNetPnlPct(economics);
@@ -371,7 +417,11 @@ class ExecutionEngine {
       side: economics.side,
       symbol: position.symbol
     });
-    return closedTrade;
+    return {
+      ok: true,
+      closedTrade,
+      order
+    };
   }
 }
 

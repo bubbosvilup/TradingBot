@@ -100,8 +100,8 @@ function runExecutionEngineTests() {
       strategyId: "emaCross",
       symbol: "BTC/USDT"
     });
-    if (rejectedByQuantity !== null) {
-      throw new Error("execution engine accepted quantity below minimum");
+    if (rejectedByQuantity.ok !== false || rejectedByQuantity.error.code !== "quantity_below_minimum") {
+      throw new Error(`execution engine should reject quantity below minimum with a structured result: ${JSON.stringify(rejectedByQuantity)}`);
     }
     if (store.getPosition("bot_qty")) {
       throw new Error("execution engine should not create a position when quantity is below minimum");
@@ -119,8 +119,8 @@ function runExecutionEngineTests() {
       strategyId: "emaCross",
       symbol: "BTC/USDT"
     });
-    if (rejectedByNotional !== null) {
-      throw new Error("execution engine accepted notional below minimum");
+    if (rejectedByNotional.ok !== false || rejectedByNotional.error.code !== "notional_below_minimum") {
+      throw new Error(`execution engine should reject notional below minimum with a structured result: ${JSON.stringify(rejectedByNotional)}`);
     }
     if (store.getPosition("bot_notional")) {
       throw new Error("execution engine should not create a position when notional is below minimum");
@@ -138,8 +138,8 @@ function runExecutionEngineTests() {
       strategyId: "emaCross",
       symbol: "BTC/USDT"
     });
-    if (!opened) {
-      throw new Error("execution engine rejected a valid open");
+    if (opened.ok !== true || !opened.position) {
+      throw new Error(`execution engine should return ok true and position for a valid open: ${JSON.stringify(opened)}`);
     }
     if (!store.getPosition("bot_valid")) {
       throw new Error("execution engine did not persist a valid opened position");
@@ -147,7 +147,7 @@ function runExecutionEngineTests() {
     if (!logs.find((entry) => entry.event === "position_opened" && entry.metadata.botId === "bot_valid")) {
       throw new Error("missing position_opened log for valid order");
     }
-    const unrealized = engine.calculateUnrealizedEconomics(opened, 102);
+    const unrealized = engine.calculateUnrealizedEconomics(opened.position, 102);
     if (!approxEqual(unrealized.grossPnl, 1) || !approxEqual(unrealized.fees, 0.101, 1e-6) || !approxEqual(unrealized.netPnl, 0.899, 1e-6) || unrealized.side !== "long") {
       throw new Error(`execution engine should expose fee-aware unrealized economics for long positions: ${JSON.stringify(unrealized)}`);
     }
@@ -173,8 +173,8 @@ function runExecutionEngineTests() {
       reason: ["take_profit"],
       timestamp: 12_345
     });
-    if (!closed) {
-      throw new Error("execution engine rejected a valid close");
+    if (closed.ok !== true || !closed.closedTrade) {
+      throw new Error(`execution engine should return ok true and closedTrade for a valid close: ${JSON.stringify(closed)}`);
     }
     if (store.getPosition("bot_valid") !== null) {
       throw new Error("execution engine did not clear persisted position state after close");
@@ -185,7 +185,7 @@ function runExecutionEngineTests() {
     if (!logs.find((entry) => entry.event === "position_closed" && entry.metadata.botId === "bot_valid")) {
       throw new Error("missing position_closed log for valid close");
     }
-    if (closed.closedAt !== 12_345) {
+    if (closed.closedTrade.closedAt !== 12_345) {
       throw new Error(`execution engine should prefer the provided close timestamp over Date.now(): ${JSON.stringify(closed)}`);
     }
     const validCloseLog = logs.find((entry) => entry.event === "position_closed" && entry.metadata.botId === "bot_valid");
@@ -210,10 +210,10 @@ function runExecutionEngineTests() {
       strategyId: "rsiReversion",
       symbol: "BTC/USDT"
     });
-    if (!openedWithEdge) {
-      throw new Error("execution engine rejected edge diagnostics open");
+    if (openedWithEdge.ok !== true) {
+      throw new Error(`execution engine rejected edge diagnostics open: ${JSON.stringify(openedWithEdge)}`);
     }
-    if (openedWithEdge.expectedNetEdgePctAtEntry !== 0.01 || openedWithEdge.entryArchitectRegime !== "range") {
+    if (openedWithEdge.position.expectedNetEdgePctAtEntry !== 0.01 || openedWithEdge.position.entryArchitectRegime !== "range") {
       throw new Error(`opened position should retain entry-time edge diagnostics: ${JSON.stringify(openedWithEdge)}`);
     }
     const closedWithEdge = engine.closePosition({
@@ -222,19 +222,19 @@ function runExecutionEngineTests() {
       reason: ["edge_exit"],
       timestamp: 12_400
     });
-    if (!closedWithEdge) {
-      throw new Error("execution engine rejected edge diagnostics close");
+    if (closedWithEdge.ok !== true) {
+      throw new Error(`execution engine rejected edge diagnostics close: ${JSON.stringify(closedWithEdge)}`);
     }
-    if (closedWithEdge.expectedGrossEdgePctAtEntry !== 0.012
-      || closedWithEdge.expectedNetEdgePctAtEntry !== 0.01
-      || closedWithEdge.requiredEdgePctAtEntry !== 0.002
-      || closedWithEdge.entryArchitectRegime !== "range") {
+    if (closedWithEdge.closedTrade.expectedGrossEdgePctAtEntry !== 0.012
+      || closedWithEdge.closedTrade.expectedNetEdgePctAtEntry !== 0.01
+      || closedWithEdge.closedTrade.requiredEdgePctAtEntry !== 0.002
+      || closedWithEdge.closedTrade.entryArchitectRegime !== "range") {
       throw new Error(`closed trade should carry entry-time edge diagnostics: ${JSON.stringify(closedWithEdge)}`);
     }
-    if (!approxEqual(closedWithEdge.realizedNetPnlUsdt, closedWithEdge.netPnl)
-      || !approxEqual(closedWithEdge.realizedNetPnlPct, 0.799 / 100)
-      || !approxEqual(closedWithEdge.edgeErrorPct, (0.799 / 100) - 0.01)
-      || !approxEqual(closedWithEdge.slippageImpactPct, 0)) {
+    if (!approxEqual(closedWithEdge.closedTrade.realizedNetPnlUsdt, closedWithEdge.closedTrade.netPnl)
+      || !approxEqual(closedWithEdge.closedTrade.realizedNetPnlPct, 0.799 / 100)
+      || !approxEqual(closedWithEdge.closedTrade.edgeErrorPct, (0.799 / 100) - 0.01)
+      || !approxEqual(closedWithEdge.closedTrade.slippageImpactPct, 0)) {
       throw new Error(`closed trade should expose realized edge discrepancy metrics: ${JSON.stringify(closedWithEdge)}`);
     }
 
@@ -247,7 +247,7 @@ function runExecutionEngineTests() {
       strategyId: "emaCross",
       symbol: "BTC/USDT"
     });
-    if (!openedShort || openedShort.side !== "short") {
+    if (openedShort.ok !== true || openedShort.position.side !== "short") {
       throw new Error(`execution engine should open first-class short positions: ${JSON.stringify(openedShort)}`);
     }
     const closedShortProfit = engine.closePosition({
@@ -256,7 +256,7 @@ function runExecutionEngineTests() {
       reason: ["cover_profit"],
       timestamp: 12_456
     });
-    if (!closedShortProfit || closedShortProfit.side !== "short" || !approxEqual(closedShortProfit.pnl, 2) || !approxEqual(closedShortProfit.fees, 0.198, 1e-6) || !approxEqual(closedShortProfit.netPnl, 1.802, 1e-6)) {
+    if (closedShortProfit.ok !== true || closedShortProfit.closedTrade.side !== "short" || !approxEqual(closedShortProfit.closedTrade.pnl, 2) || !approxEqual(closedShortProfit.closedTrade.fees, 0.198, 1e-6) || !approxEqual(closedShortProfit.closedTrade.netPnl, 1.802, 1e-6)) {
       throw new Error(`short close should profit when price falls and charge both fees: ${JSON.stringify(closedShortProfit)}`);
     }
     const shortCloseLog = logs.find((entry) => entry.event === "position_closed" && entry.metadata.botId === "bot_short_valid");
@@ -273,15 +273,15 @@ function runExecutionEngineTests() {
       strategyId: "emaCross",
       symbol: "BTC/USDT"
     });
-    if (!openedShortLoss) {
-      throw new Error("execution engine rejected valid short loss test open");
+    if (openedShortLoss.ok !== true) {
+      throw new Error(`execution engine rejected valid short loss test open: ${JSON.stringify(openedShortLoss)}`);
     }
     const closedShortLoss = engine.closePosition({
       botId: "bot_short_loss",
       price: 102,
       reason: ["cover_loss"]
     });
-    if (!closedShortLoss || closedShortLoss.side !== "short" || !approxEqual(closedShortLoss.pnl, -2) || !approxEqual(closedShortLoss.fees, 0.202, 1e-6) || !approxEqual(closedShortLoss.netPnl, -2.202, 1e-6)) {
+    if (closedShortLoss.ok !== true || closedShortLoss.closedTrade.side !== "short" || !approxEqual(closedShortLoss.closedTrade.pnl, -2) || !approxEqual(closedShortLoss.closedTrade.fees, 0.202, 1e-6) || !approxEqual(closedShortLoss.closedTrade.netPnl, -2.202, 1e-6)) {
       throw new Error(`short close should lose when price rises and charge both fees: ${JSON.stringify(closedShortLoss)}`);
     }
 
@@ -322,7 +322,7 @@ function runExecutionEngineTests() {
         strategyId: "emaCross",
         symbol: "BTC/USDT"
       });
-      if (!openedCase) {
+      if (openedCase.ok !== true) {
         throw new Error(`execution engine rejected close-math test open for ${testCase.botId}`);
       }
 
@@ -331,32 +331,33 @@ function runExecutionEngineTests() {
         price: testCase.exitPrice,
         reason: ["test_close"]
       });
-      if (!closedCase) {
+      if (closedCase.ok !== true) {
         throw new Error(`execution engine rejected close-math test close for ${testCase.botId}`);
       }
+      const closedTrade = closedCase.closedTrade;
 
-      if (!approxEqual(closedCase.pnl, testCase.expected.grossPnl)) {
-        throw new Error(`${testCase.botId} grossPnl mismatch: ${closedCase.pnl}`);
+      if (!approxEqual(closedTrade.pnl, testCase.expected.grossPnl)) {
+        throw new Error(`${testCase.botId} grossPnl mismatch: ${closedTrade.pnl}`);
       }
-      if (!approxEqual(closedCase.fees, testCase.expected.fees, 1e-6)) {
-        throw new Error(`${testCase.botId} fees mismatch: ${closedCase.fees}`);
+      if (!approxEqual(closedTrade.fees, testCase.expected.fees, 1e-6)) {
+        throw new Error(`${testCase.botId} fees mismatch: ${closedTrade.fees}`);
       }
-      if (!approxEqual(closedCase.netPnl, testCase.expected.netPnl, 1e-6)) {
-        throw new Error(`${testCase.botId} netPnl mismatch: ${closedCase.netPnl}`);
+      if (!approxEqual(closedTrade.netPnl, testCase.expected.netPnl, 1e-6)) {
+        throw new Error(`${testCase.botId} netPnl mismatch: ${closedTrade.netPnl}`);
       }
-      if (!approxEqual(closedCase.netPnl, closedCase.pnl - closedCase.fees, 1e-9)) {
+      if (!approxEqual(closedTrade.netPnl, closedTrade.pnl - closedTrade.fees, 1e-9)) {
         throw new Error(`${testCase.botId} netPnl should equal grossPnl - fees`);
       }
-      if (testCase.expected.outcome === "profit" && !(closedCase.netPnl > 0)) {
+      if (testCase.expected.outcome === "profit" && !(closedTrade.netPnl > 0)) {
         throw new Error(`${testCase.botId} should remain profitable after fees`);
       }
-      if (testCase.expected.outcome === "breakeven" && !approxEqual(closedCase.netPnl, 0, 1e-9)) {
+      if (testCase.expected.outcome === "breakeven" && !approxEqual(closedTrade.netPnl, 0, 1e-9)) {
         throw new Error(`${testCase.botId} should be break-even after fees`);
       }
-      if ((testCase.expected.outcome === "loss" || testCase.expected.outcome === "fee_dominated_loss") && !(closedCase.netPnl < 0)) {
+      if ((testCase.expected.outcome === "loss" || testCase.expected.outcome === "fee_dominated_loss") && !(closedTrade.netPnl < 0)) {
         throw new Error(`${testCase.botId} should be net-negative after fees`);
       }
-      if (testCase.expected.outcome === "fee_dominated_loss" && !(closedCase.pnl > 0 && closedCase.netPnl < 0)) {
+      if (testCase.expected.outcome === "fee_dominated_loss" && !(closedTrade.pnl > 0 && closedTrade.netPnl < 0)) {
         throw new Error(`${testCase.botId} should demonstrate a positive gross move overwhelmed by fees`);
       }
     }
@@ -367,8 +368,8 @@ function runExecutionEngineTests() {
       price: 101,
       reason: ["no_position"]
     });
-    if (failedClose !== null) {
-      throw new Error("execution engine closed a missing position");
+    if (failedClose.ok !== false || failedClose.error.code !== "position_not_found") {
+      throw new Error(`execution engine should reject a missing position with position_not_found: ${JSON.stringify(failedClose)}`);
     }
     if (store.getPosition("bot_missing") !== null) {
       throw new Error("execution engine should not mutate persisted position state on failed close");

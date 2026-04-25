@@ -1621,7 +1621,7 @@ class TradingBot extends BaseBot {
       ? exitingTransition.position
       : positionSnapshot;
 
-    const closedTrade = this.deps.executionEngine.closePosition({
+    const closeResult = this.deps.executionEngine.closePosition({
       botId: this.config.id,
       expectedExitPrice: this.resolveExpectedExitPrice({
         exitPlan,
@@ -1635,11 +1635,14 @@ class TradingBot extends BaseBot {
       timestamp: snapshot.tick.timestamp
     });
 
-    if (!closedTrade) {
+    if (closeResult.ok === false) {
       this.deps.logger.bot(this.config, "RISK_CHANGE", {
         status: "position_close_rejected",
-        reason: "close_position_returned_null",
+        reason: closeResult.error.code,
         botId: this.config.id,
+        errorKind: closeResult.error.kind,
+        errorMessage: closeResult.error.message,
+        recoverable: closeResult.error.recoverable,
         symbol: this.config.symbol,
         strategyId: this.strategy.id,
         lifecycleEvent: exitPlan.lifecycleEvent || null,
@@ -1656,6 +1659,7 @@ class TradingBot extends BaseBot {
       });
       return;
     }
+    const closedTrade = closeResult.closedTrade;
     const closeClassification = this.classifyClosedTrade(closedTrade, exitPlan);
     const closedLifecycleEvent = resolveLifecycleEventFromReasons(
       Array.isArray(closedTrade.exitReason) ? closedTrade.exitReason : [],

@@ -552,7 +552,15 @@ function runTradingBotTests() {
     closeRejectHarness.store.updateBotState("bot_test", {
       exitSignalStreak: Math.max(closeRejectProfile.exitConfirmationTicks - 1, 0)
     });
-    closeRejectHarness.executionEngine.closePosition = () => null;
+    closeRejectHarness.executionEngine.closePosition = () => ({
+      ok: false,
+      error: {
+        kind: "execution",
+        code: "position_not_found",
+        message: "fixture close rejected",
+        recoverable: true
+      }
+    });
     closeRejectHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     if (!closeRejectHarness.store.getPosition("bot_test") || closeRejectHarness.store.getClosedTrades("bot_test").length !== 0) {
       throw new Error("failed closePosition should leave the open position unchanged and avoid recording a closed trade");
@@ -561,8 +569,8 @@ function runTradingBotTests() {
       entry.message === "RISK_CHANGE"
       && entry.metadata.status === "position_close_rejected"
     );
-    if (!closeRejectedLog || closeRejectedLog.metadata.reason !== "close_position_returned_null" || closeRejectedLog.metadata.positionId !== "pos-test" || closeRejectedLog.metadata.tickPrice !== 100.2) {
-      throw new Error(`closePosition null return should emit explicit operator-visible failure telemetry: ${JSON.stringify(closeRejectedLog)}`);
+    if (!closeRejectedLog || closeRejectedLog.metadata.reason !== "position_not_found" || closeRejectedLog.metadata.errorKind !== "execution" || closeRejectedLog.metadata.positionId !== "pos-test" || closeRejectedLog.metadata.tickPrice !== 100.2) {
+      throw new Error(`closePosition error result should emit explicit operator-visible failure telemetry: ${JSON.stringify(closeRejectedLog)}`);
     }
 
     process.env.LOG_TYPE = "strategy_debug";
@@ -3251,8 +3259,24 @@ function runTradingBotTests() {
       }),
       strategy: "emaCross"
     });
-    executionRejectedEconomicsHarness.executionEngine.openLong = () => null;
-    executionRejectedEconomicsHarness.executionEngine.openPosition = () => null;
+    executionRejectedEconomicsHarness.executionEngine.openLong = () => ({
+      ok: false,
+      error: {
+        kind: "execution",
+        code: "execution_open_rejected",
+        message: "fixture open rejected",
+        recoverable: true
+      }
+    });
+    executionRejectedEconomicsHarness.executionEngine.openPosition = () => ({
+      ok: false,
+      error: {
+        kind: "execution",
+        code: "execution_open_rejected",
+        message: "fixture open rejected",
+        recoverable: true
+      }
+    });
     let executionRejectedEconomicsCalls = 0;
     const originalExecutionRejectedEconomics = executionRejectedEconomicsHarness.bot.estimateEntryEconomics.bind(executionRejectedEconomicsHarness.bot);
     executionRejectedEconomicsHarness.bot.estimateEntryEconomics = (params) => {

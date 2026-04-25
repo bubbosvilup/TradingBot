@@ -183,16 +183,16 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
       };
     }
 
-    const opened = typeof this.executionEngine.openPosition === "function"
+    const openResult = typeof this.executionEngine.openPosition === "function"
       ? this.executionEngine.openPosition({ ...openParams, side })
       : side === "short"
         ? this.executionEngine.openShort(openParams)
         : this.executionEngine.openLong(openParams);
 
-    if (!opened) {
-      const blockReason = validation.quantity < executionConstraints.minQuantity
+    if (openResult.ok === false) {
+      const blockReason = openResult.error.code === "quantity_below_minimum"
         ? "execution_quantity_below_minimum"
-        : validation.notionalUsdt < executionConstraints.minNotionalUsdt
+        : openResult.error.code === "notional_below_minimum"
           ? "execution_notional_below_minimum"
           : "execution_open_rejected";
       return {
@@ -206,6 +206,7 @@ class OpenAttemptCoordinator implements OpenAttemptCoordinatorInstance {
         kind: "execution_rejected"
       };
     }
+    const opened = openResult.position;
 
     return {
       kind: "opened",
