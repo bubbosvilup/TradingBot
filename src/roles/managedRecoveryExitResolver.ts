@@ -25,6 +25,7 @@ function resolveManagedRecoveryExit(params: {
   protectiveExit?: ManagedRecoveryExitDescriptor | null;
   rsiExitThresholdHit: boolean;
   tickTimestamp: number;
+  runtimeTimestamp?: number;
   timeoutMs: number;
 }): ManagedRecoveryExitPlan {
   if (params.protectiveExit) {
@@ -34,7 +35,10 @@ function resolveManagedRecoveryExit(params: {
     };
   }
 
-  if ((params.tickTimestamp - params.managedRecoveryStartedAt) >= params.timeoutMs) {
+  const runtimeTimestamp = Number.isFinite(Number(params.runtimeTimestamp))
+    ? Number(params.runtimeTimestamp)
+    : params.tickTimestamp;
+  if ((runtimeTimestamp - params.managedRecoveryStartedAt) >= params.timeoutMs) {
     return {
       exitMechanism: "recovery",
       exitNow: true,

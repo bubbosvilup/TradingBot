@@ -624,6 +624,7 @@ class TradingBot extends BaseBot {
       position: params.position,
       protectionMode: params.protectionMode,
       protectionStopPct: this.deps.riskManager.getProfile(this.config.riskProfile, this.config.riskOverrides || null).emergencyStopPct,
+      runtimeTimestamp: this.now(),
       signalTimestamp: params.signalTimestamp
     });
   }
@@ -748,7 +749,7 @@ class TradingBot extends BaseBot {
       this.exitOutcomeCoordinator.buildDeferredManagedRecoveryOutcome({
         estimatedNetPnl: estimatedExitEconomics.netPnl,
         exitFloorNetPnlUsdt: Number(managedRecoveryPosition.managedRecoveryExitFloorNetPnlUsdt || 0),
-        managedRecoveryStartedAt: managedRecoveryPosition.managedRecoveryStartedAt || params.snapshot.tick.timestamp,
+        managedRecoveryStartedAt: managedRecoveryPosition.managedRecoveryStartedAt || this.now(),
         metadata: {
           ...managedRecoveryTelemetry,
           latestPrice: Number(Number(params.snapshot.tick.price || 0).toFixed(4))
@@ -818,6 +819,7 @@ class TradingBot extends BaseBot {
       position: params.position,
       resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) =>
         this.telemetry.resolveInvalidationLevel(architectState, mode),
+      runtimeTimestamp: this.now(),
       signalState: params.signalState,
       tick: params.tick
     });
@@ -1267,7 +1269,24 @@ class TradingBot extends BaseBot {
       performance: snapshot.performance,
       position: snapshot.position
     });
-    const decision = this.strategy.evaluate(context);
+    let decision;
+    try {
+      decision = this.strategy.evaluate(context);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.deps.logger.bot(this.config, "strategy_evaluate_failed", {
+        errorMessage,
+        errorName: error instanceof Error ? error.name : null,
+        reason: "strategy_error",
+        strategyId: this.strategy.id,
+        symbol: this.config.symbol
+      });
+      decision = {
+        action: "hold",
+        confidence: 0,
+        reason: ["strategy_error"]
+      };
+    }
     this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, this.now());
     this.deps.store.updateBotState(this.config.id, {
       lastDecision: decision.action,

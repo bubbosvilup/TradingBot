@@ -340,6 +340,42 @@ function runTradingBotTests() {
       throw new Error(`bot runtime lifecycle timestamps should use injected clock, not tick timestamp: ${JSON.stringify({ clockedPipeline, clockedState })}`);
     }
 
+    let throwingStrategyCalls = 0;
+    const throwingStrategyHarness = createHarness(() => {
+      throwingStrategyCalls += 1;
+      if (throwingStrategyCalls === 1) {
+        throw new Error("fixture_strategy_failure");
+      }
+      return {
+        action: "buy",
+        confidence: 0.93,
+        reason: ["buy_signal"]
+      };
+    }, {
+      strategy: "emaCross"
+    });
+    throwingStrategyHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    if (throwingStrategyHarness.store.getPosition("bot_test")) {
+      throw new Error("throwing strategy should not open a position on the failed tick");
+    }
+    const strategyErrorState = throwingStrategyHarness.store.getBotState("bot_test");
+    if (strategyErrorState?.lastDecision !== "hold" || !strategyErrorState?.lastDecisionReasons?.includes("strategy_error")) {
+      throw new Error(`throwing strategy should record a safe strategy_error hold decision: ${JSON.stringify(strategyErrorState)}`);
+    }
+    const strategyErrorLog = throwingStrategyHarness.botLogs.find((entry) =>
+      entry.message === "strategy_evaluate_failed"
+      && entry.metadata.reason === "strategy_error"
+      && String(entry.metadata.errorMessage || "").includes("fixture_strategy_failure")
+    );
+    if (!strategyErrorLog) {
+      throw new Error(`throwing strategy should be logged with structured strategy_evaluate_failed metadata: ${JSON.stringify(throwingStrategyHarness.botLogs)}`);
+    }
+    throwingStrategyHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock + 1_000 });
+    throwingStrategyHarness.bot.onMarketTick({ price: 100.4, source: "mock", symbol: "BTC/USDT", timestamp: clock + 2_000 });
+    if (!throwingStrategyHarness.store.getPosition("bot_test")) {
+      throw new Error("bot should continue processing later ticks after a strategy.evaluate failure");
+    }
+
     const normalExitHarness = createHarness(() => ({
       action: "hold",
       confidence: 0.5,

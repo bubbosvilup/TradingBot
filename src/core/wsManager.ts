@@ -1,7 +1,8 @@
 import type { MarketKline, MarketTick } from "../types/market.ts";
+import type { Clock } from "./clock.ts";
 
 const { EventEmitter } = require("node:events");
-const { now } = require("../utils/time.ts");
+const { resolveClock } = require("./clock.ts");
 
 const KNOWN_QUOTES = [
   "USDT",
@@ -59,10 +60,12 @@ class WSManager {
   heartbeatMs: number;
   idleTimeoutMs: number;
   randomFn: () => number;
+  clock: Clock;
 
   constructor(deps: {
     logger?: any;
     websocketFactory?: ((url: string) => any) | null;
+    clock?: Clock;
     reconnectBaseMs?: number;
     reconnectMaxMs?: number;
     maxReconnectAttempts?: number;
@@ -82,6 +85,11 @@ class WSManager {
     this.heartbeatMs = Math.max(deps.heartbeatMs || 10_000, 2000);
     this.idleTimeoutMs = Math.max(deps.idleTimeoutMs || 20_000, this.heartbeatMs * 2);
     this.randomFn = deps.randomFn || Math.random;
+    this.clock = resolveClock(deps.clock);
+  }
+
+  now() {
+    return this.clock.now();
   }
 
   subscribe(channel: string, handler: (...args: any[]) => void) {
@@ -227,7 +235,7 @@ class WSManager {
     if (state.closedManually) return;
     const url = state.buildUrl();
     const description = state.describe();
-    state.lastStatsAt = now();
+    state.lastStatsAt = this.now();
     state.messageCount = 0;
     state.totalLatencyMs = 0;
     state.totalTicks = 0;
@@ -238,7 +246,7 @@ class WSManager {
       mode: state.mode,
       reconnectAttempt: state.reconnectAttempt,
       status: "connecting",
-      timestamp: now()
+      timestamp: this.now()
     });
     this.logger.info("ws_connecting", {
       connectionId: state.connectionId,
@@ -263,7 +271,7 @@ class WSManager {
     attachSocketHandler(socket, "open", () => {
       state.reconnectAttempt = 0;
       state.degradedAt = null;
-      state.connectedAt = now();
+      state.connectedAt = this.now();
       state.lastMessageAt = state.connectedAt;
       this.publish(`ws:status:${state.connectionId}`, {
         connectionId: state.connectionId,
@@ -290,7 +298,7 @@ class WSManager {
         mode: state.mode,
         reconnectAttempt: state.reconnectAttempt,
         status: "error",
-        timestamp: now()
+        timestamp: this.now()
       });
       this.logger.warn("ws_error", {
         connectionId: state.connectionId,
@@ -302,7 +310,7 @@ class WSManager {
       this.stopStatsTimer(state);
       this.stopHealthTimer(state);
       state.socket = null;
-      const disconnectedAt = now();
+      const disconnectedAt = this.now();
       this.publish(`ws:status:${state.connectionId}`, {
         code: event?.code || 0,
         connectionId: state.connectionId,
@@ -338,7 +346,7 @@ class WSManager {
       return;
     }
 
-    const receivedAt = now();
+    const receivedAt = this.now();
     const data = payload?.data || payload;
     state.messageCount += 1;
     state.lastMessageAt = receivedAt;
@@ -388,7 +396,7 @@ class WSManager {
       receivedAt,
       source: "ws",
       symbol: fromBinanceSymbol(data.s),
-      timestamp: Number(data.T || data.E || now())
+      timestamp: Number(data.T || data.E || receivedAt)
     };
   }
 
@@ -406,7 +414,7 @@ class WSManager {
       receivedAt,
       source: "ws",
       symbol: fromBinanceSymbol(data.k.s || data.s),
-      timestamp: Number(data.E || data.k.T || now()),
+      timestamp: Number(data.E || data.k.T || receivedAt),
       volume: Number(data.k.v)
     };
   }
@@ -430,7 +438,7 @@ class WSManager {
         },
         receivedAt,
         symbol: fromBinanceSymbol(data.s),
-        timestamp: Number(data.E || data.T || now()),
+        timestamp: Number(data.E || data.T || receivedAt),
         type: "order_update"
       };
     }
@@ -454,7 +462,7 @@ class WSManager {
           },
         receivedAt,
         symbol: null,
-        timestamp: Number(data.E || data.T || now()),
+        timestamp: Number(data.E || data.T || receivedAt),
         type: "balance_update"
       };
     }
@@ -473,7 +481,7 @@ class WSManager {
   startStatsTimer(state: any) {
     this.stopStatsTimer(state);
     state.statsTimer = setInterval(() => {
-      const windowMs = Math.max(now() - state.lastStatsAt, 1);
+      const windowMs = Math.max(this.now() - state.lastStatsAt, 1);
       if (state.messageCount <= 0) return;
       const avgLatencyMs = state.totalTicks > 0 ? state.totalLatencyMs / state.totalTicks : 0;
       this.logger.info("ws_data_flow", {
@@ -483,7 +491,7 @@ class WSManager {
         ticks: state.totalTicks,
         windowMs
       });
-      state.lastStatsAt = now();
+      state.lastStatsAt = this.now();
       state.messageCount = 0;
       state.totalLatencyMs = 0;
       state.totalTicks = 0;
@@ -503,7 +511,7 @@ class WSManager {
     this.stopHealthTimer(state);
     state.healthTimer = setInterval(() => {
       if (!state.socket || !state.lastMessageAt) return;
-      const idleMs = now() - state.lastMessageAt;
+      const idleMs = this.now() - state.lastMessageAt;
       if (idleMs < this.idleTimeoutMs) return;
       this.logger.warn("ws_idle_timeout", {
         connectionId: state.connectionId,
@@ -534,7 +542,7 @@ class WSManager {
     const nextAttempt = state.reconnectAttempt + 1;
     if (nextAttempt > this.maxReconnectAttempts) {
       state.reconnectAttempt = nextAttempt;
-      state.degradedAt = now();
+      state.degradedAt = this.now();
       this.publish(`ws:status:${state.connectionId}`, {
         connectionId: state.connectionId,
         mode: state.mode,
@@ -561,7 +569,7 @@ class WSManager {
       reason,
       reconnectAttempt: state.reconnectAttempt,
       status: "reconnecting",
-      timestamp: now()
+      timestamp: this.now()
     });
     this.logger.warn("ws_reconnecting", {
       attempt: state.reconnectAttempt,

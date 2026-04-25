@@ -128,6 +128,41 @@ function runExitDecisionCoordinatorTests() {
     throw new Error(`short protective exit should trigger when price rises against the short: ${JSON.stringify(shortProtectivePlan)}`);
   }
 
+  const exchangeSkewHoldPlan = coordinator.resolve({
+    decision: {
+      action: "sell",
+      confidence: 0.9,
+      reason: ["exit_signal"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics(position, price) {
+      return { netPnl: (price - position.entryPrice) * position.quantity };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy,
+    managedRecoveryTarget: null,
+    minHoldMs: 15_000,
+    position: createPosition({
+      openedAt: 1_000_000,
+      quantity: 1,
+      strategyId: "emaCross"
+    }),
+    resolveInvalidationLevel() {
+      return null;
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 2
+    }),
+    tick: createTick({
+      price: 100.2,
+      timestamp: 1_100_000
+    }),
+    runtimeTimestamp: 1_005_000
+  });
+  if (exchangeSkewHoldPlan.exitNow || !exchangeSkewHoldPlan.reason.includes("minimum_hold_15000ms")) {
+    throw new Error(`future exchange timestamp must not bypass runtime min-hold timing: ${JSON.stringify(exchangeSkewHoldPlan)}`);
+  }
+
   const invalidationPlan = coordinator.resolve({
     architectState: {
       blockReason: null,
@@ -260,6 +295,45 @@ function runExitDecisionCoordinatorTests() {
   });
   if (!timeoutPlan.exitNow || timeoutPlan.exitMechanism !== "recovery" || timeoutPlan.lifecycleEvent !== "RECOVERY_TIMEOUT" || !timeoutPlan.reason.includes("time_exhaustion_exit")) {
     throw new Error(`managed recovery timeout planning regressed: ${JSON.stringify(timeoutPlan)}`);
+  }
+
+  const exchangeSkewRecoveryPlan = coordinator.resolve({
+    architectState: null,
+    decision: {
+      action: "hold",
+      confidence: 0.5,
+      reason: ["hold_recovery"]
+    },
+    emergencyStopPct: 0.01,
+    estimateExitEconomics(position, price) {
+      return { netPnl: (price - position.entryPrice) * position.quantity };
+    },
+    exitConfirmationTicks: 2,
+    exitPolicy,
+    managedRecoveryTarget: {
+      hit: false
+    },
+    minHoldMs: 15_000,
+    position: createPosition({
+      lifecycleMode: "managed_recovery",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryExitFloorNetPnlUsdt: 0.05,
+      managedRecoveryStartedAt: 1_000_000,
+      strategyId: "rsiReversion"
+    }),
+    resolveInvalidationLevel() {
+      return null;
+    },
+    signalState: createSignalState({
+      exitSignalStreak: 0
+    }),
+    tick: createTick({
+      timestamp: 1_100_000
+    }),
+    runtimeTimestamp: 1_030_000
+  });
+  if (exchangeSkewRecoveryPlan.exitNow || exchangeSkewRecoveryPlan.reason.includes("time_exhaustion_exit")) {
+    throw new Error(`future exchange timestamp must not trigger managed recovery timeout early: ${JSON.stringify(exchangeSkewRecoveryPlan)}`);
   }
 
   const unconfirmedPlan = coordinator.resolve({

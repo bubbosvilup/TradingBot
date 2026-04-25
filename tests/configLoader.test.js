@@ -421,6 +421,19 @@ function runConfigLoaderTests() {
     ]
   }, "invalid allowedStrategies entry");
 
+  expectConfigError({
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_missing_base_strategy",
+        riskProfile: "medium",
+        strategy: "rsiReversion",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "bot \"bot_missing_base_strategy\" base strategy \"rsiReversion\" must be included in allowedStrategies");
+
   const uniqueSymbolsRootDir = createTempConfigRoot({
     bots: [
       {

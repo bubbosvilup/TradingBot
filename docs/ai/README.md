@@ -53,8 +53,8 @@ Primary use cases:
 - launcher/debug-capture planning that preserves runtime safety and keeps output schemas intentional
 - roadmap planning:
   - v18 is release candidate / commit safety
-  - v18.1 owns targeted technical hardening
-  - v18.2 owns human refactor and abstraction cleanup
+  - v18.1 owns technical microfixes
+  - v18.2 owns repo humanization, boundaries, contracts, and types
   - v19 owns modern replay/backtest parity
   - v20 owns futures/margin realism
   - v21 owns strategy lab and optimization discipline

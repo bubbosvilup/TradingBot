@@ -392,7 +392,7 @@ Backtest / replay status
 
 ### Focus operativo successivo
 
-- Il focus immediato dopo v18 e v18.1: hardening tecnico mirato senza grandi redesign.
+- Il focus immediato dopo v18 e v18.1: microfix tecnici senza grandi redesign.
 - TickProcessingSnapshot / hot-path history sharing:
   - ridurre letture duplicate di price history
   - arrivare a un solo snapshot immutabile per tick solo se il cambio resta piccolo e verificabile
@@ -413,12 +413,7 @@ Backtest / replay status
   - documentare reset post-loss latch
   - documentare cosa fare se `UserStream` resta disconnected
   - spiegare cosa significa `paper_full_notional_simplified`
-- v18.2 resta il contenitore per refactor umano:
-  - smontare complessita inutile
-  - ridurre abstraction tax
-  - rendere `TradingBot` e roles piu leggibili
-  - eliminare wrapper/pass-through senza comportamento proprio
-  - migliorare nomi e confini senza cambiare trading behavior
+- v18.2 resta il contenitore per repo humanization, boundaries, contracts e types.
 
 ## Aggiornamenti del 2026-04-22
 
@@ -771,10 +766,11 @@ Hotspot da trattare con cautela:
 - `BacktestEngine` oggi e un ponte verso il legacy, non il runtime finale di replay.
 - Il path live futuro resta nel repository ma non deve essere riattivato accidentalmente dal runtime attivo.
 - `paper_full_notional_simplified` indica il modello paper attuale per short: contabilita full-notional semplificata, non futures margin realistico.
+- Runbook operativo: [docs/operations.md](docs/operations.md)
 - Il prossimo lavoro utile e ordinato cosi:
   - v18: release candidate / commit safety
-  - v18.1: hardening tecnico mirato
-  - v18.2: human refactor
+  - v18.1: microfix tecnici
+  - v18.2: repo humanization + boundaries + contracts + types
   - v19: backtest moderno/paritario
   - v20: short/futures/margin realism
   - v21: strategy lab / optimization
@@ -790,7 +786,7 @@ Hotspot da trattare con cautela:
   - latch post-loss globale a livello bot
   - validazione recovery `targetOffsetPct`
   - requisito WebSocket nativo esplicito
-- v18.1 -> hardening tecnico mirato:
+- v18.1 -> microfix tecnici:
   - TickProcessingSnapshot / hot-path history sharing
   - time-base cleanup
   - strategy error boundary
@@ -802,12 +798,54 @@ Hotspot da trattare con cautela:
   - legacy backtest smoke test minimo
   - MarketStream naming residuo
   - runbook reset latch, UserStream disconnected, `paper_full_notional_simplified`
-- v18.2 -> human refactor:
-  - smontare complessita inutile
-  - ridurre abstraction tax
-  - rendere `TradingBot` e roles piu leggibili
-  - eliminare wrapper/pass-through senza valore testabile
-  - nomi e confini piu umani
+- v18.2 -> repo humanization + boundaries + contracts + types:
+  - v18.2-A dependency map + rules:
+    - generare grafo import
+    - identificare cicli
+    - definire layer
+    - aggiungere dependency-cruiser
+    - aggiungere script CI/test
+  - v18.2-B error taxonomy:
+    - definire errori discriminanti
+    - convertire path config, risk, execution e invariant
+    - evitare string matching downstream
+  - v18.2-C state machines:
+    - posizioni
+    - ordini
+    - transition guards
+    - contract tests
+  - v18.2-D Zod config validation:
+    - config schema
+    - defaults espliciti
+    - errori leggibili
+    - rimuovere parse manuale fragile dove possibile
+  - v18.2-E contract tests:
+    - Strategy
+    - Execution
+    - StateStore
+    - MarketStream
+    - Bot
+    - Architect
+  - v18.2-F reduce `any`:
+    - audit count iniziale
+    - target riduzione almeno 70%
+    - sostituzione progressiva con tipi veri o `unknown`
+  - v18.2-G human flow docs:
+    - entry flow
+    - exit flow
+    - recovery flow
+    - architect switch flow
+    - file map meno generica e piu orientata a "dove guardare per capire X"
+  - criteri di uscita:
+    - dependency-cruiser passa
+    - zero circular imports tra layer principali
+    - contract tests verdi
+    - state machines esplicite per position/order
+    - config validata con schema
+    - errori discriminanti nei path principali
+    - `any` ridotti almeno del 70%
+    - entry/exit flow documentato chiaramente
+    - `TradingBot.ts` piu leggibile o almeno segmentato con confini chiari
 - v19 -> backtest moderno/paritario:
   - data layer serio e dataset quality scanner
   - event-driven replay con clock deterministico e no lookahead

@@ -71,6 +71,10 @@ interface SystemServerStore {
     feeRate?: number;
     now?: number;
   }): PortfolioKillSwitchState;
+  resetPortfolioKillSwitchState?(options?: {
+    feeRate?: number;
+    now?: number;
+  }): PortfolioKillSwitchState;
   getSymbolStateSnapshot(options?: {
     now?: number;
   }): SymbolStateRetentionSnapshot;
@@ -432,6 +436,41 @@ class SystemServer {
       ok: true,
       postLossArchitectLatchActive: false,
       postLossArchitectLatchTimedOutAt: null
+    });
+  }
+
+  handlePortfolioKillSwitchResetRequest(response: any) {
+    const currentState = readPortfolioKillSwitchState(this.store, { feeRate: this.feeRate });
+    if (!currentState.triggered && !currentState.blockingEntries) {
+      this.json(response, {
+        error: "portfolio_kill_switch_reset_not_required",
+        ok: false,
+        portfolioKillSwitch: currentState
+      }, 409);
+      return;
+    }
+
+    const resetState = typeof this.store.resetPortfolioKillSwitchState === "function"
+      ? this.store.resetPortfolioKillSwitchState({ feeRate: this.feeRate, now: Date.now() })
+      : {
+          ...currentState,
+          blockingEntries: false,
+          peakEquityUsdt: currentState.currentEquityUsdt,
+          reason: null,
+          triggered: false,
+          triggeredAt: null
+        };
+
+    this.logger.info("manual_portfolio_kill_switch_reset", {
+      previousPeakEquityUsdt: currentState.peakEquityUsdt,
+      previousReason: currentState.reason,
+      previousTriggeredAt: currentState.triggeredAt,
+      resetPeakEquityUsdt: resetState.peakEquityUsdt
+    });
+    this.json(response, {
+      action: "manual_portfolio_kill_switch_reset",
+      ok: true,
+      portfolioKillSwitch: resetState
     });
   }
 
@@ -1153,6 +1192,10 @@ class SystemServer {
     const postLossLatchResetMatch = pathname.match(/^\/api\/bots\/([^/]+)\/reset-post-loss-latch$/);
     if (method === "POST" && postLossLatchResetMatch) {
       this.handlePostLossLatchResetRequest(decodeURIComponent(postLossLatchResetMatch[1]), response);
+      return;
+    }
+    if (method === "POST" && pathname === "/api/kill-switch/reset") {
+      this.handlePortfolioKillSwitchResetRequest(response);
       return;
     }
 

@@ -10,6 +10,7 @@ function runWsManagerTests() {
   const publishedStatuses = [];
   const logs = [];
   const originalGlobalWebSocket = globalThis.WebSocket;
+  let wsNow = 5_000;
 
   class NativeLikeWebSocket extends FakeWebSocket {}
   const nativeSockets = [];
@@ -71,6 +72,9 @@ function runWsManagerTests() {
   globalThis.WebSocket = originalGlobalWebSocket;
 
   const manager = new WSManager({
+    clock: {
+      now: () => wsNow
+    },
     logger: {
       info(event, metadata) {
         logs.push({ event, metadata });
@@ -137,7 +141,9 @@ function runWsManagerTests() {
     throw new Error(`unexpected combined stream url: ${sockets[0].url}`);
   }
 
+  wsNow = 6_000;
   sockets[0].emit("open");
+  wsNow = 7_000;
   sockets[0].emit("message", {
     data: JSON.stringify({
       data: {
@@ -175,6 +181,11 @@ function runWsManagerTests() {
 
   if (ticks.length !== 1 || ticks[0].symbol !== "BTC/USDT" || ticks[0].price !== 68250.12) {
     throw new Error(`tick normalization failed: ${JSON.stringify(ticks)}`);
+  }
+  if (publishedStatuses[0]?.timestamp !== 5_000
+    || !publishedStatuses.find((status) => status.status === "connected" && status.timestamp === 6_000)
+    || ticks[0].receivedAt !== 7_000) {
+    throw new Error(`ws manager should use injected clock for infrastructure timestamps and receivedAt: ${JSON.stringify({ publishedStatuses, ticks })}`);
   }
   if (klines.length !== 1 || klines[0].interval !== "1m" || klines[0].symbol !== "BTC/USDT") {
     throw new Error(`kline normalization failed: ${JSON.stringify(klines)}`);

@@ -91,6 +91,7 @@ export interface BuildExitTelemetryParams {
   position: PositionRecord;
   protectionMode?: ProtectionStopMode | string | null;
   protectionStopPct: number;
+  runtimeTimestamp?: number;
   signalTimestamp: number;
 }
 
@@ -424,6 +425,9 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
 
   buildExitTelemetry(params: BuildExitTelemetryParams) {
     const signalTimestamp = Number(params.signalTimestamp);
+    const runtimeTimestamp = Number.isFinite(Number(params.runtimeTimestamp))
+      ? Number(params.runtimeTimestamp)
+      : signalTimestamp;
     const executionTimestamp = Number.isFinite(Number(params.executionTimestamp))
       ? Number(params.executionTimestamp)
       : null;
@@ -431,7 +435,7 @@ class TradingBotTelemetry implements TradingBotTelemetryInstance {
     const timeoutRemainingMs = isManagedRecoveryPosition(params.position)
       ? Math.max(
           0,
-          (Number(params.position.managedRecoveryStartedAt || params.position.openedAt || signalTimestamp) + managedRecoveryTimeoutMs) - signalTimestamp
+          (Number(params.position.managedRecoveryStartedAt || params.position.openedAt || runtimeTimestamp) + managedRecoveryTimeoutMs) - runtimeTimestamp
         )
       : null;
 

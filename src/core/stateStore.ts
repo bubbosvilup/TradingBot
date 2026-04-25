@@ -1208,10 +1208,7 @@ class StateStore {
     }
 
     const currentEquityUsdt = initialEquityUsdt + realizedPnl + unrealizedPnl;
-    const previousPeakEquityUsdt = Math.max(
-      Number(this.portfolioKillSwitchState.peakEquityUsdt) || 0,
-      initialEquityUsdt
-    );
+    const previousPeakEquityUsdt = Number(this.portfolioKillSwitchState.peakEquityUsdt) || initialEquityUsdt;
     const peakEquityUsdt = this.portfolioKillSwitchState.triggered
       ? previousPeakEquityUsdt
       : Math.max(previousPeakEquityUsdt, currentEquityUsdt);
@@ -1264,6 +1261,20 @@ class StateStore {
 
   getPortfolioKillSwitchState(options: { feeRate?: number; now?: number } = {}) {
     return this.computePortfolioKillSwitchState(options);
+  }
+
+  resetPortfolioKillSwitchState(options: { feeRate?: number; now?: number } = {}) {
+    const currentState = this.computePortfolioKillSwitchState(options);
+    const nextState = {
+      ...currentState,
+      blockingEntries: false,
+      peakEquityUsdt: currentState.currentEquityUsdt,
+      reason: null,
+      triggered: false,
+      triggeredAt: null
+    };
+    this.portfolioKillSwitchState = nextState;
+    return nextState;
   }
 
   createPipelineSnapshot(symbol: string): PipelineSnapshot {

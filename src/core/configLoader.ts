@@ -179,6 +179,11 @@ class ConfigLoader {
             throw new Error(`${label} has invalid allowedStrategies entry "${String(allowedStrategy || "")}"`);
           }
         }
+
+        const allowedStrategyIds = new Set(bot.allowedStrategies.map((allowedStrategy) => String(allowedStrategy || "").trim()));
+        if (!allowedStrategyIds.has(strategy)) {
+          throw new Error(`bot "${String(bot.id || `bot[${index}]`)}" base strategy "${strategy}" must be included in allowedStrategies`);
+        }
       }
 
       if (bot.postLossLatchMaxMs !== undefined) {

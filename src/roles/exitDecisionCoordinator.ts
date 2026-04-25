@@ -41,6 +41,7 @@ export interface ExitDecisionCoordinatorInstance {
     resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) => string | null;
     signalState: any;
     tick: MarketTick;
+    runtimeTimestamp?: number;
   }): ExitPlan;
 }
 
@@ -161,6 +162,7 @@ function hasFamilyMismatchConfirmation(params: {
   architectState: any;
   position: PositionRecord;
   tickTimestamp: number;
+  runtimeTimestamp?: number;
 }) {
   const publisher = params.architectState?.publisher || {};
   const challengerCount = Number(publisher.challengerCount);
@@ -173,7 +175,10 @@ function hasFamilyMismatchConfirmation(params: {
     return true;
   }
 
-  const holdMs = params.tickTimestamp - params.position.openedAt;
+  const runtimeTimestamp = Number.isFinite(Number(params.runtimeTimestamp))
+    ? Number(params.runtimeTimestamp)
+    : params.tickTimestamp;
+  const holdMs = runtimeTimestamp - params.position.openedAt;
   return holdMs >= resolveMinRegimeInvalidationHoldMs(params.architectState);
 }
 
@@ -184,6 +189,7 @@ function resolveManagedRecoveryInvalidation(params: {
   position: PositionRecord;
   resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) => string | null;
   tickTimestamp: number;
+  runtimeTimestamp?: number;
 }) {
   const modes = Array.isArray(params.exitPolicy?.invalidation?.modes)
     ? params.exitPolicy.invalidation.modes
@@ -192,7 +198,10 @@ function resolveManagedRecoveryInvalidation(params: {
   if (!invalidationMode) {
     return null;
   }
-  const holdMs = params.tickTimestamp - params.position.openedAt;
+  const runtimeTimestamp = Number.isFinite(Number(params.runtimeTimestamp))
+    ? Number(params.runtimeTimestamp)
+    : params.tickTimestamp;
+  const holdMs = runtimeTimestamp - params.position.openedAt;
   const minRegimeInvalidationHoldMs = resolveMinRegimeInvalidationHoldMs(params.architectState);
   if (invalidationRequiresGrace(invalidationMode) && holdMs < minRegimeInvalidationHoldMs) {
     return null;
@@ -200,7 +209,8 @@ function resolveManagedRecoveryInvalidation(params: {
   if (invalidationMode === "family_mismatch" && !hasFamilyMismatchConfirmation({
     architectState: params.architectState,
     position: params.position,
-    tickTimestamp: params.tickTimestamp
+    tickTimestamp: params.tickTimestamp,
+    runtimeTimestamp
   })) {
     return null;
   }
@@ -262,8 +272,12 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
     resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) => string | null;
     signalState: any;
     tick: MarketTick;
+    runtimeTimestamp?: number;
   }): ExitPlan {
-    const holdMs = params.tick.timestamp - params.position.openedAt;
+    const runtimeTimestamp = Number.isFinite(Number(params.runtimeTimestamp))
+      ? Number(params.runtimeTimestamp)
+      : params.tick.timestamp;
+    const holdMs = runtimeTimestamp - params.position.openedAt;
     const rawDecisionReasons = getDecisionReasons(params.decision);
     const protectiveExit = resolveProtectiveExit({
       decisionReasons: rawDecisionReasons,
@@ -296,7 +310,8 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
           exitPolicy: params.exitPolicy,
           position: params.position,
           resolveInvalidationLevel: params.resolveInvalidationLevel,
-          tickTimestamp: params.tick.timestamp
+          tickTimestamp: params.tick.timestamp,
+          runtimeTimestamp
         })
         : null;
       return resolveManagedRecoveryExit({
@@ -310,6 +325,7 @@ class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
         protectiveExit,
         rsiExitThresholdHit,
         tickTimestamp: params.tick.timestamp,
+        runtimeTimestamp,
         timeoutMs: managedRecoveryPolicy.timeoutMs
       });
     }

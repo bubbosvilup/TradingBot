@@ -92,8 +92,8 @@ Boundary map:
 Roadmap boundary:
 
 - v18: release candidate / commit safety. Only release-critical regressions should enter before the release commit.
-- v18.1: targeted technical hardening only. Safe targets are TickProcessingSnapshot/hot-path history sharing, time-base cleanup, strategy error boundary, small config-validation gaps, explicit kill-switch reset, deterministic/testability fixes, MTF boundary validation if shared cleanly, injected SystemServer clock use, legacy smoke tests, local MarketStream naming, and operator docs.
-- v18.2: human refactor only. Reduce unnecessary complexity, abstraction tax, wrapper/pass-through layers, and unclear names/boundaries without changing runtime behavior.
+- v18.1: technical microfixes only. Safe targets are TickProcessingSnapshot/hot-path history sharing, time-base cleanup, strategy error boundary, small config-validation gaps, explicit kill-switch reset, deterministic/testability fixes, MTF boundary validation if shared cleanly, injected SystemServer clock use, legacy smoke tests, local MarketStream naming, and operator docs.
+- v18.2: repo humanization + boundaries + contracts + types. It owns dependency-cruiser/layer rules, discriminated error taxonomy, explicit position/order state machines, Zod config validation, contract tests for main boundaries, at least 70% `any` reduction, and human flow docs for entry/exit/recovery/architect switch.
 - v19: modern backtest parity. It must solve data quality, event replay, execution realism, strategic reporting, anti-lookahead, and legacy deprecation.
 - v20: paper futures isolated-margin realism for economically honest shorts.
 - v21: strategy lab and optimization focused on robustness, walk-forward validation, out-of-sample discipline, Monte Carlo stress, and fair benchmarks.

@@ -832,9 +832,21 @@ async function runSystemServerTests() {
   });
   killSwitchResumeStore.updateBotState("bot_kill_paused", {
     availableBalanceUsdt: 80,
+    cooldownReason: "loss_cooldown",
+    cooldownUntil: now + 90_000,
+    lastDecisionReasons: ["post_loss_architect_latch", "cooldown_active"],
     pausedReason: "max_drawdown_reached",
+    postLossArchitectLatchActive: true,
+    postLossArchitectLatchStartedAt: now - 20_000,
+    postLossArchitectLatchStrategyId: "emaCross",
     realizedPnl: -20,
     status: "paused"
+  });
+  killSwitchResumeStore.setMarketDataFreshness("ADA/USDT", {
+    lastTickTimestamp: now - 120_000,
+    reason: "market_data_stale",
+    status: "stale",
+    updatedAt: now - 120_000
   });
   killSwitchResumeStore.setPortfolioKillSwitchConfig({
     enabled: true,
@@ -864,10 +876,15 @@ async function runSystemServerTests() {
     winRate: 0,
     wins: 0
   });
+  const killSwitchLogs = [];
   const killSwitchResumeServer = new SystemServer({
     executionMode: "paper",
     feedMode: "live",
-    logger: { info() {} },
+    logger: {
+      info(message, metadata) {
+        killSwitchLogs.push({ message, metadata });
+      }
+    },
     port: 3108,
     startedAt: now - 1000,
     store: killSwitchResumeStore
@@ -888,6 +905,58 @@ async function runSystemServerTests() {
     || killSwitchPulse.focusPanel.actions.resume.enabled !== false
     || killSwitchPulse.focusPanel.actions.resume.reason !== "portfolio_kill_switch_active") {
     throw new Error(`pulse should normalize kill-switch-triggered state and disable resume explicitly: ${JSON.stringify(killSwitchPulse)}`);
+  }
+  const killSwitchStateBeforeReset = killSwitchResumeStore.getPortfolioKillSwitchState({ feeRate: 0, now });
+  if (!killSwitchStateBeforeReset.triggered || !killSwitchStateBeforeReset.blockingEntries) {
+    throw new Error(`portfolio kill switch should block entries before manual reset: ${JSON.stringify(killSwitchStateBeforeReset)}`);
+  }
+  const stateBeforeKillSwitchReset = killSwitchResumeStore.getBotState("bot_kill_paused");
+  const freshnessBeforeKillSwitchReset = killSwitchResumeStore.getMarketDataFreshness("ADA/USDT");
+  const resetKillSwitchResponse = createResponseRecorder();
+  killSwitchResumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3108" },
+    method: "POST",
+    url: "/api/kill-switch/reset"
+  }, resetKillSwitchResponse);
+  const resetKillSwitchPayload = JSON.parse(String(resetKillSwitchResponse.body || "{}"));
+  const killSwitchStateAfterReset = killSwitchResumeStore.getPortfolioKillSwitchState({ feeRate: 0, now: now + 1 });
+  const stateAfterKillSwitchReset = killSwitchResumeStore.getBotState("bot_kill_paused");
+  const freshnessAfterKillSwitchReset = killSwitchResumeStore.getMarketDataFreshness("ADA/USDT");
+  if (resetKillSwitchResponse.statusCode !== 200
+    || resetKillSwitchPayload.ok !== true
+    || resetKillSwitchPayload.action !== "manual_portfolio_kill_switch_reset"
+    || resetKillSwitchPayload.portfolioKillSwitch?.triggered !== false) {
+    throw new Error(`portfolio kill-switch reset API should surface the explicit operator action: ${JSON.stringify({ resetKillSwitchResponse, resetKillSwitchPayload })}`);
+  }
+  if (killSwitchStateAfterReset.triggered !== false
+    || killSwitchStateAfterReset.blockingEntries !== false
+    || killSwitchStateAfterReset.triggeredAt !== null
+    || killSwitchStateAfterReset.reason !== null) {
+    throw new Error(`portfolio kill-switch reset API should clear only trigger state: ${JSON.stringify(killSwitchStateAfterReset)}`);
+  }
+  if (stateAfterKillSwitchReset.status !== stateBeforeKillSwitchReset.status
+    || stateAfterKillSwitchReset.pausedReason !== stateBeforeKillSwitchReset.pausedReason
+    || stateAfterKillSwitchReset.cooldownReason !== stateBeforeKillSwitchReset.cooldownReason
+    || stateAfterKillSwitchReset.cooldownUntil !== stateBeforeKillSwitchReset.cooldownUntil
+    || stateAfterKillSwitchReset.postLossArchitectLatchActive !== stateBeforeKillSwitchReset.postLossArchitectLatchActive
+    || stateAfterKillSwitchReset.postLossArchitectLatchStartedAt !== stateBeforeKillSwitchReset.postLossArchitectLatchStartedAt
+    || stateAfterKillSwitchReset.postLossArchitectLatchStrategyId !== stateBeforeKillSwitchReset.postLossArchitectLatchStrategyId
+    || stateAfterKillSwitchReset.availableBalanceUsdt !== stateBeforeKillSwitchReset.availableBalanceUsdt
+    || stateAfterKillSwitchReset.realizedPnl !== stateBeforeKillSwitchReset.realizedPnl
+    || JSON.stringify(freshnessAfterKillSwitchReset) !== JSON.stringify(freshnessBeforeKillSwitchReset)) {
+    throw new Error(`portfolio kill-switch reset API must not mutate unrelated bot/freshness state: ${JSON.stringify({ stateBeforeKillSwitchReset, stateAfterKillSwitchReset, freshnessBeforeKillSwitchReset, freshnessAfterKillSwitchReset })}`);
+  }
+  if (!killSwitchLogs.find((entry) => entry.message === "manual_portfolio_kill_switch_reset")) {
+    throw new Error(`portfolio kill-switch reset API should log the manual reset action: ${JSON.stringify(killSwitchLogs)}`);
+  }
+  const repeatKillSwitchResetResponse = createResponseRecorder();
+  killSwitchResumeServer.handleRequest({
+    headers: { host: "127.0.0.1:3108" },
+    method: "POST",
+    url: "/api/kill-switch/reset"
+  }, repeatKillSwitchResetResponse);
+  if (repeatKillSwitchResetResponse.statusCode !== 409 || JSON.parse(String(repeatKillSwitchResetResponse.body || "{}")).error !== "portfolio_kill_switch_reset_not_required") {
+    throw new Error(`portfolio kill-switch reset API should reject no-op reset when not triggered: ${JSON.stringify(repeatKillSwitchResetResponse)}`);
   }
 
   const filteredApiStore = new StateStore();

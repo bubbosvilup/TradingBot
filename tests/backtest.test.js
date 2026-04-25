@@ -43,6 +43,13 @@ function makeCandle(timestamp, open, high, low, close, volume) {
   return [timestamp, open, high, low, close, volume];
 }
 
+function assertClose(actual, expected, tolerance = 1e-9) {
+  assert.ok(
+    Math.abs(Number(actual) - expected) <= tolerance,
+    `expected ${actual} to be within ${tolerance} of ${expected}`
+  );
+}
+
 function buildReplayEligibleHistories(symbol, startPrice, hourlyDrift) {
   const hourBaseTime = Date.UTC(2026, 2, 24, 0, 0, 0);
   const tradeBaseTime = Date.UTC(2026, 2, 28, 0, 0, 0);
@@ -196,6 +203,24 @@ async function runBacktestTests() {
 
   const BacktestEngine = loadBacktestEngine();
   const engine = new BacktestEngine();
+  const smokeReport = engine.compareStrategyModes({
+    baseConfig: config,
+    symbolHistories: buildReplayEligibleHistories("TREND/USDT", 100, 0.25)
+  });
+  const smokeAdaptive = smokeReport.modes.find((mode) => mode.strategyMode === "adaptive");
+  assert.ok(smokeAdaptive, "legacy smoke should include adaptive mode output");
+  assert.equal(smokeReport.symbolCount, 1);
+  assert.equal(smokeAdaptive.stats.totalClosedRounds, 1);
+  assert.equal(smokeAdaptive.summary.completedRounds, 1);
+  assert.equal(smokeAdaptive.summary.buyReadyCount, 1);
+  assert.equal(smokeAdaptive.rounds.length, 1);
+  assert.equal(smokeAdaptive.rounds[0].symbol, "TREND/USDT");
+  assert.equal(smokeAdaptive.rounds[0].events.map((event) => event.action).join(","), "BUY,SELL_PARTIAL,SELL_FULL");
+  assert.equal(smokeAdaptive.rounds[0].durationMinutes, 205);
+  assertClose(smokeAdaptive.stats.averageClosedTradePnl, 0.9780783742753876);
+  assertClose(smokeAdaptive.stats.totalFeesPaid, 0.07179987825252791);
+  assertClose(smokeAdaptive.stats.totalSlippagePaid, 0.053850529536840566);
+
   const report = engine.compareStrategyModes({
     baseConfig: config,
     symbolHistories: histories

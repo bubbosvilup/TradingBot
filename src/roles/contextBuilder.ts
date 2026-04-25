@@ -29,7 +29,10 @@ class ContextBuilder {
     const requestedEffectiveTicks = Array.isArray(params.effectiveTicks)
       ? params.effectiveTicks.filter((tick) => Number.isFinite(Number(tick?.price)) && Number.isFinite(Number(tick?.timestamp)))
       : [];
-    const observedAt = params.observedAt || Date.now();
+    const observedAt = Number(params.observedAt);
+    if (!Number.isFinite(observedAt)) {
+      throw new Error("ContextBuilder.createSnapshot requires finite observedAt");
+    }
 
     if (ticks.length <= 0) {
       return this.createEmptySnapshot(params.symbol, params.dataMode, observedAt);

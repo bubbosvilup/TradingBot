@@ -22,6 +22,22 @@ function runContextBuilderTests() {
   const builder = new ContextBuilder({ indicatorEngine: new IndicatorEngine() });
   const ticks = buildTicks(1_000_000, 12, 10_000, 100, 1);
 
+  let missingObservedAtRejected = false;
+  try {
+    builder.createSnapshot({
+      dataMode: "live",
+      maxWindowMs: 60_000,
+      symbol: "BTC/USDT",
+      ticks,
+      warmupMs: 30_000
+    });
+  } catch (error) {
+    missingObservedAtRejected = String(error?.message || "").includes("observedAt");
+  }
+  if (!missingObservedAtRejected) {
+    throw new Error("context builder should reject missing observedAt instead of falling back to Date.now()");
+  }
+
   const fullWindow = builder.createSnapshot({
     dataMode: "live",
     maxWindowMs: 60_000,

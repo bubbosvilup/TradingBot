@@ -50,7 +50,7 @@ Work top-down unless a task explicitly says otherwise.
   - negative `exitPolicy.recovery.targetOffsetPct` is rejected explicitly
   - default WebSocket construction uses `globalThis.WebSocket` with a clear Node/runtime guard
 - Current: v18 release candidate / commit safety. Only release-critical regressions should enter v18.
-- Next: v18.1 targeted technical hardening. Keep this small and targeted:
+- Next: v18.1 technical microfixes. Keep this small and targeted:
   - TickProcessingSnapshot / hot-path history sharing only if it reduces duplicate price-history reads without broad runtime churn
   - time-base cleanup where residual mixed clocks affect determinism/testability
   - strategy error boundary if it can isolate strategy failures without changing decisions
@@ -62,11 +62,15 @@ Work top-down unless a task explicitly says otherwise.
   - legacy backtest smoke test with deterministic trade count / PnL expectations
   - local MarketStream naming cleanup where safe
   - operational runbook for post-loss latch reset, disconnected UserStream, and paper short accounting
-- v18.2: human refactor only after v18.1 hardening:
-  - remove unnecessary complexity and abstraction tax
-  - make `TradingBot` and roles easier to read
-  - remove wrapper/pass-through layers that do not protect a boundary or add testable behavior
-  - improve names and ownership boundaries without changing runtime behavior
+- v18.2: repo humanization + boundaries + contracts + types:
+  - A: dependency map + rules: import graph, circular import audit, layer rules, dependency-cruiser, CI/test script
+  - B: error taxonomy: discriminated errors for config/risk/execution/invariants, no downstream string matching
+  - C: state machines: position/order transitions, guards, contract tests
+  - D: Zod config validation: schema, explicit defaults, readable errors, less fragile manual parsing
+  - E: contract tests: Strategy, Execution, StateStore, MarketStream, Bot, Architect
+  - F: reduce `any`: initial audit count, target at least 70% reduction, replace with real types or `unknown`
+  - G: human flow docs: entry, exit, recovery, architect switch, and "where to look to understand X" file map
+  - exit criteria: dependency-cruiser passes, no circular imports between main layers, contract tests green, explicit position/order state machines, schema-validated config, discriminated errors in main paths, `any` reduced by at least 70%, clear entry/exit docs, and `TradingBot.ts` more readable or clearly segmented
 
 ## P3
 
@@ -115,5 +119,5 @@ Priority notes:
 - MTF thresholds intentionally remain split:
   - `mtf.instabilityThreshold` default `0.5` = architect usability/blocking threshold
   - `mtfParamResolver` `0.25` = stricter parameter-widening coherence threshold
-- v18.1 must stay hardening-only and v18.2 human-refactor-only. Do not start v19 replay, v20 margin realism, or v21 optimization work inside either track.
+- v18.1 must stay microfix-only and v18.2 must stay repo-humanization/boundary/contract/type work. Do not start v19 replay, v20 margin realism, or v21 optimization work inside either track.
 - Modern backtest work must not claim profitability until data quality, execution assumptions, anti-lookahead tests, and reporting are in place.
