@@ -365,6 +365,9 @@ function runTradingBotTests() {
     const strategyErrorLog = throwingStrategyHarness.botLogs.find((entry) =>
       entry.message === "strategy_evaluate_failed"
       && entry.metadata.reason === "strategy_error"
+      && entry.metadata.errorKind === "strategy"
+      && entry.metadata.errorCode === "strategy_evaluate_failed"
+      && entry.metadata.recoverable === true
       && String(entry.metadata.errorMessage || "").includes("fixture_strategy_failure")
     );
     if (!strategyErrorLog) {

@@ -38,6 +38,33 @@ function expectConfigError(config, expectedMessagePart) {
   }
 }
 
+function expectStructuredConfigError(config, expectedMessagePart, expectedCode) {
+  const rootDir = createTempConfigRoot(config);
+  try {
+    new ConfigLoader(rootDir).loadBotsConfig();
+    throw new Error(`expected config load to fail with ${expectedMessagePart}`);
+  } catch (error) {
+    if (String(error && error.message).startsWith("expected config load to fail with ")) {
+      throw error;
+    }
+    if (!String(error && error.message).includes(expectedMessagePart)) {
+      throw new Error(`unexpected config validation error: ${error && error.stack ? error.stack : error}`);
+    }
+    if (error.kind !== "config" || error.code !== expectedCode || error.recoverable !== false) {
+      throw new Error(`config validation should throw structured ConfigError: ${JSON.stringify({
+        code: error.code,
+        kind: error.kind,
+        recoverable: error.recoverable
+      })}`);
+    }
+    if (!error.context || error.context.configPath !== "bots.config.json") {
+      throw new Error(`ConfigError should include config path context: ${JSON.stringify(error.context)}`);
+    }
+  } finally {
+    fs.rmSync(rootDir, { force: true, recursive: true });
+  }
+}
+
 function runConfigLoaderTests() {
   const validRootDir = createTempConfigRoot({
     bots: [
@@ -105,7 +132,7 @@ function runConfigLoaderTests() {
     fs.rmSync(validRootDir, { force: true, recursive: true });
   }
 
-  expectConfigError({
+  expectStructuredConfigError({
     executionMode: "live",
     bots: [
       {
@@ -117,7 +144,7 @@ function runConfigLoaderTests() {
         symbol: "BTC/USDT"
       }
     ]
-  }, "unsupported executionMode \"live\"");
+  }, "unsupported executionMode \"live\"", "unsupported_execution_mode");
 
   expectConfigError({
     marketMode: "mock",

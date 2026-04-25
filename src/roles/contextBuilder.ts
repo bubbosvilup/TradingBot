@@ -3,6 +3,7 @@ import type { ContextSnapshot } from "../types/context.ts";
 import type { MarketTick } from "../types/market.ts";
 
 const { clamp, mean, stddev } = require("../utils/math.ts");
+const { createInvariantError } = require("../types/errors.ts");
 
 class ContextBuilder {
   indicatorEngine: any;
@@ -31,7 +32,14 @@ class ContextBuilder {
       : [];
     const observedAt = Number(params.observedAt);
     if (!Number.isFinite(observedAt)) {
-      throw new Error("ContextBuilder.createSnapshot requires finite observedAt");
+      throw createInvariantError(
+        "context_observed_at_invalid",
+        "ContextBuilder.createSnapshot requires finite observedAt",
+        {
+          observedAt: params.observedAt,
+          symbol: params.symbol
+        }
+      );
     }
 
     if (ticks.length <= 0) {

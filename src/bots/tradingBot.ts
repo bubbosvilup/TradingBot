@@ -53,6 +53,7 @@ const {
 } = require("../roles/positionLifecycleManager.ts");
 const { resolveExitPolicy } = require("../roles/exitPolicyRegistry.ts");
 const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../roles/recoveryTargetResolver.ts");
+const { createStrategyError } = require("../types/errors.ts");
 const {
   calculateDirectionalGrossPnl,
   isTargetHit,
@@ -1274,10 +1275,23 @@ class TradingBot extends BaseBot {
       decision = this.strategy.evaluate(context);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.deps.logger.bot(this.config, "strategy_evaluate_failed", {
+      const strategyError = createStrategyError(
+        "strategy_evaluate_failed",
         errorMessage,
+        {
+          botId: this.config.id,
+          strategyId: this.strategy.id,
+          symbol: this.config.symbol
+        },
+        error
+      );
+      this.deps.logger.bot(this.config, "strategy_evaluate_failed", {
+        errorCode: strategyError.code,
+        errorKind: strategyError.kind,
+        errorMessage: strategyError.message,
         errorName: error instanceof Error ? error.name : null,
         reason: "strategy_error",
+        recoverable: strategyError.recoverable,
         strategyId: this.strategy.id,
         symbol: this.config.symbol
       });

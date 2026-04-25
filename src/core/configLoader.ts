@@ -5,6 +5,7 @@ import type { PortfolioKillSwitchConfig, RuntimeTuningConfig } from "../types/ru
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { createConfigError } = require("../types/errors.ts");
 const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("../types/portfolioKillSwitch.ts");
 
 const VALID_RISK_PROFILES = new Set(["low", "medium", "high"]);
@@ -124,6 +125,13 @@ class ConfigLoader {
     return path.resolve(this.rootDir, relativePath);
   }
 
+  createConfigValidationError(code: string, message: string, context: Record<string, unknown> = {}) {
+    return createConfigError(code, message, {
+      configPath: "bots.config.json",
+      ...context
+    });
+  }
+
   validateBotsConfig(config: {
     bots?: BotConfig[];
   }) {
@@ -217,17 +225,29 @@ class ConfigLoader {
     if (config.executionMode !== undefined) {
       const executionMode = String(config.executionMode || "").trim().toLowerCase();
       if (executionMode === "live") {
-        throw new Error("bots.config.json has unsupported executionMode \"live\"; active runtime is paper-only");
+        throw this.createConfigValidationError(
+          "unsupported_execution_mode",
+          "bots.config.json has unsupported executionMode \"live\"; active runtime is paper-only",
+          { field: "executionMode", value: config.executionMode }
+        );
       }
       if (executionMode !== "paper") {
-        throw new Error(`bots.config.json has invalid executionMode "${String(config.executionMode || "")}"`);
+        throw this.createConfigValidationError(
+          "invalid_execution_mode",
+          `bots.config.json has invalid executionMode "${String(config.executionMode || "")}"`,
+          { field: "executionMode", value: config.executionMode }
+        );
       }
     }
 
     if (config.marketMode !== undefined) {
       const marketMode = String(config.marketMode || "").trim().toLowerCase();
       if (marketMode !== "live") {
-        throw new Error(`bots.config.json has unsupported marketMode "${String(config.marketMode || "")}"; active runtime requires live market data`);
+        throw this.createConfigValidationError(
+          "unsupported_market_mode",
+          `bots.config.json has unsupported marketMode "${String(config.marketMode || "")}"; active runtime requires live market data`,
+          { field: "marketMode", value: config.marketMode }
+        );
       }
     }
 

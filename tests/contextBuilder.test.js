@@ -32,10 +32,13 @@ function runContextBuilderTests() {
       warmupMs: 30_000
     });
   } catch (error) {
-    missingObservedAtRejected = String(error?.message || "").includes("observedAt");
+    missingObservedAtRejected = String(error?.message || "").includes("observedAt")
+      && error?.kind === "invariant"
+      && error?.code === "context_observed_at_invalid"
+      && error?.recoverable === false;
   }
   if (!missingObservedAtRejected) {
-    throw new Error("context builder should reject missing observedAt instead of falling back to Date.now()");
+    throw new Error("context builder should reject missing observedAt with a structured invariant error instead of falling back to Date.now()");
   }
 
   const fullWindow = builder.createSnapshot({
