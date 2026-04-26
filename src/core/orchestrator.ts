@@ -1,4 +1,9 @@
 import type { BotFactory } from "../types/botFactory.ts";
+import type { BotConfig } from "../types/bot.ts";
+import type { SystemEvent } from "../types/event.ts";
+import type { HistoricalPreloadConfig, MarketMode, MarketStreamConfig } from "../types/market.ts";
+import type { MtfRuntimeConfig } from "../types/mtf.ts";
+import type { PortfolioKillSwitchConfig } from "../types/runtime.ts";
 
 require("dotenv").config();
 
@@ -29,6 +34,37 @@ const { formatDuration, sleep } = require("../utils/time.ts");
 const { ExperimentReporter } = require("./experimentReporter.ts");
 const { systemClock } = require("./clock.ts");
 
+type BotsRuntimeConfig = {
+  bots?: BotConfig[];
+  architectPublishIntervalMs?: number;
+  architectWarmupMs?: number;
+  executionMode?: "paper" | "live";
+  experimentMetrics?: {
+    enabled?: boolean;
+    label?: string;
+    summaryIntervalMs?: number;
+  };
+  historicalPreload?: HistoricalPreloadConfig;
+  loggingMode?: string;
+  market?: MarketStreamConfig;
+  marketMode?: MarketMode;
+  mtf?: MtfRuntimeConfig;
+  portfolioKillSwitch?: PortfolioKillSwitchConfig;
+  postLossLatchMaxMs?: number;
+  postLossLatchMinFreshPublications?: number;
+  symbolStateRetentionMs?: number;
+  userStreamRequestTimeoutMs?: number;
+};
+
+type UserStreamEventPayload = {
+  order?: {
+    botId?: string | null;
+    side?: string | null;
+    symbol?: string | null;
+  } | null;
+  type?: string | null;
+};
+
 function parseOptionalBooleanFlag(value: string | undefined | null, name: string) {
   if (value === undefined || value === null || String(value).trim() === "") return null;
   const normalized = String(value).trim().toLowerCase();
@@ -37,7 +73,7 @@ function parseOptionalBooleanFlag(value: string | undefined | null, name: string
   throw new Error(`${name}=${value} is invalid; expected true/false, 1/0, yes/no, or on/off`);
 }
 
-function resolveMtfRuntimeConfig(config: any, env: NodeJS.ProcessEnv = process.env) {
+function resolveMtfRuntimeConfig(config: Pick<BotsRuntimeConfig, "mtf"> | null | undefined, env: NodeJS.ProcessEnv = process.env) {
   const baseMtfConfig = config?.mtf || {};
   const envEnabled = parseOptionalBooleanFlag(env.MTF_ENABLED, "MTF_ENABLED");
   const configEnabled = baseMtfConfig.enabled === undefined ? false : Boolean(baseMtfConfig.enabled);
@@ -145,7 +181,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   };
   const store = new StateStore({ clock, maxEvents: 300, maxPriceHistory: 600 });
   const logger = createLogger("orchestrator", {
-    eventSink: (event: any) => store.appendEvent(event)
+    eventSink: (event: SystemEvent) => store.appendEvent(event)
   });
   const configLoader = new ConfigLoader();
   const botConfig = configLoader.loadBotsConfig();
@@ -213,9 +249,9 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
   const resolveStrategyFamily = (strategyId: string | null | undefined) => strategyRegistry.getStrategyFamily(strategyId);
   const strategySwitcher = new StrategySwitcher({ resolveStrategyFamily });
 
-  const enabledBots = (botConfig.bots || [])
-    .filter((bot: any) => bot.enabled)
-    .map((bot: any) => ({
+  const enabledBots: BotConfig[] = (botConfig.bots || [])
+    .filter((bot: BotConfig) => bot.enabled)
+    .map((bot: BotConfig) => ({
       ...bot,
       mtf: bot.mtf || mtfConfig,
       postLossArchitectLatchPublishesRequired: Number.isFinite(Number(bot.postLossArchitectLatchPublishesRequired))
@@ -316,7 +352,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     deps: botDeps
   });
 
-  const enabledSymbols = enabledBots.map((bot: any) => bot.symbol);
+  const enabledSymbols = enabledBots.map((bot) => bot.symbol);
   const historicalPreloadResult = await historicalBootstrapService.run(enabledSymbols, { observedAt: startedAt });
   botManager.initialize(enabledBots);
   marketStream.start(enabledSymbols);
@@ -327,7 +363,7 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     systemServer.start();
   }
 
-  userStream.subscribe((payload: any) => {
+  userStream.subscribe((payload: UserStreamEventPayload) => {
     if (!isSilent) {
       logger.info("user_stream_event", {
         botId: payload.order?.botId || "n/a",
@@ -465,8 +501,8 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
 
   while (!stopped) {
     const loopNow = clock.now();
-    if (typeof (store as any).markMarketDataStaleIfExpired === "function") {
-      (store as any).markMarketDataStaleIfExpired(enabledSymbols, {
+    if (typeof store.markMarketDataStaleIfExpired === "function") {
+      store.markMarketDataStaleIfExpired(enabledSymbols, {
         now: loopNow,
         staleAfterMs: marketStream.fallbackStaleAfterMs
       });
@@ -484,11 +520,11 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
     }
     const snapshot = store.getSystemSnapshot();
     const portfolioKillSwitch = store.commitPortfolioKillSwitchState({ feeRate: executionFee.feeRate, now: loopNow });
-    const runningBots = snapshot.botStates.filter((bot: any) => bot.status === "running");
+    const runningBots = snapshot.botStates.filter((bot) => bot.status === "running");
     const latestPricesSummary = snapshot.latestPrices
-      .map((entry: any) => `${entry.symbol}:${entry.price.toFixed(2)}`)
+      .map((entry) => `${entry.symbol}:${entry.price.toFixed(2)}`)
       .join(", ");
-    const botSummaries = runningBots.map((bot: any) => (
+    const botSummaries = runningBots.map((bot) => (
       `${bot.botId}:${bot.activeStrategyId}/${bot.architectSyncStatus}/${bot.lastDecision}`
       + ` eval=${bot.entryEvaluationsCount || 0}`
       + ` logged=${bot.entryEvaluationLogsCount || 0}`
@@ -508,9 +544,9 @@ async function startOrchestrator(runtimeOptions: { durationMs?: number | null; s
         symbolStateLastCleanupAt: symbolState.lastCleanupAt,
         symbolStateStaleCandidates: symbolState.staleCandidateSymbols.length,
         symbolStateTracked: symbolState.trackedSymbols.length,
-        pendingBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "pending").length,
-        syncedBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "synced").length,
-        waitingFlatBots: runningBots.filter((bot: any) => bot.architectSyncStatus === "waiting_flat").length
+        pendingBots: runningBots.filter((bot) => bot.architectSyncStatus === "pending").length,
+        syncedBots: runningBots.filter((bot) => bot.architectSyncStatus === "synced").length,
+        waitingFlatBots: runningBots.filter((bot) => bot.architectSyncStatus === "waiting_flat").length
       });
     }
 

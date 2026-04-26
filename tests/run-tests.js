@@ -37,6 +37,7 @@ const { runRuntimeTests } = require("./runtime.test");
 const { runStateStoreTests } = require("./stateStore.test");
 const { runStateStoreContractTests } = require("./contracts/stateStore.contract.test");
 const { runStateSelectorsTests } = require("./stateSelectors.test");
+const { runStateTransitionsContractTests } = require("./contracts/stateTransitions.contract.test");
 const { runStrategyTests } = require("./strategy.test");
 const { runStrategyContractTests } = require("./contracts/strategy.contract.test");
 const { runStrategySwitcherTests } = require("./strategySwitcher.test");
@@ -89,6 +90,7 @@ async function main() {
     { name: "stateStore", run: async () => runStateStoreTests() },
     { name: "contract.stateStore", run: async () => runStateStoreContractTests() },
     { name: "stateSelectors", run: async () => runStateSelectorsTests() },
+    { name: "contract.stateTransitions", run: async () => runStateTransitionsContractTests() },
     { name: "strategy", run: async () => runStrategyTests() },
     { name: "contract.strategy", run: async () => runStrategyContractTests() },
     { name: "strategySwitcher", run: async () => runStrategySwitcherTests() },

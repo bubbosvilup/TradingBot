@@ -1,11 +1,71 @@
 import type { HistoricalPreloadConfig, MarketKline, MarketTick } from "../types/market.ts";
 import type { MtfRuntimeConfig } from "../types/mtf.ts";
+import type { LoggerLike } from "../types/runtime.ts";
 
 const DEFAULT_PRICE_TIMEFRAME = "1m";
 const DEFAULT_MAX_HORIZON_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIMIT = 600;
 const VALID_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
+
+type HistoricalPreloadStore = {
+  updateKline(kline: MarketKline): void;
+  updatePrice(tick: MarketTick): void;
+};
+
+type HistoricalKlineSymbolResult = {
+  error: string | null;
+  klineCount: number;
+  symbol: string;
+};
+
+type HistoricalKlineFetchResult = {
+  interval: string;
+  klinesBySymbol: Record<string, MarketKline[]>;
+  observedAt: number;
+  since: number;
+  symbolResults: HistoricalKlineSymbolResult[];
+};
+
+type HistoricalPreloadMarketStream = {
+  fetchHistoricalKlines(params: {
+    symbols: string[];
+    interval: string;
+    since: number;
+    limit: number;
+    observedAt?: number;
+  }): Promise<HistoricalKlineFetchResult>;
+};
+
+type HistoricalPreloadSymbolStats = {
+  errors: string[];
+  klineCounts: Record<string, number>;
+  priceTicks: number;
+  symbol: string;
+};
+
+type HistoricalPreloadSummary = {
+  durationMs: number;
+  enabled: boolean;
+  errors?: string[];
+  horizonMs?: number;
+  missingPriceSymbols?: string[];
+  outcome: "completed" | "disabled" | "failed" | "partial";
+  priceTimeframe?: string;
+  reason?: string | null;
+  required: boolean;
+  symbolStats?: HistoricalPreloadSymbolStats[];
+  symbols: string[];
+  timeframes?: string[];
+};
+
+type HistoricalPreloadError = Error & {
+  historicalPreloadLogged?: boolean;
+};
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function parseOptionalBooleanFlag(value: string | undefined | null, name: string) {
   if (value === undefined || value === null || String(value).trim() === "") return null;
@@ -140,15 +200,15 @@ function resolveHistoricalPreloadRuntimeConfig(params: {
 }
 
 class HistoricalBootstrapService {
-  store: any;
-  marketStream: any;
-  logger: any;
+  store: HistoricalPreloadStore;
+  marketStream: HistoricalPreloadMarketStream;
+  logger: LoggerLike;
   config: ReturnType<typeof resolveHistoricalPreloadRuntimeConfig>;
 
   constructor(deps: {
-    store: any;
-    marketStream: any;
-    logger: any;
+    store: HistoricalPreloadStore;
+    marketStream: HistoricalPreloadMarketStream;
+    logger: LoggerLike;
     config?: HistoricalPreloadConfig | null;
     env?: NodeJS.ProcessEnv;
     contextMaxWindowMs: number;
@@ -210,27 +270,28 @@ class HistoricalBootstrapService {
       }
       if (this.config.required) {
         this.logger.error("historical_preload_failed", this.logSummary(summary));
-        const error = new Error(`required historical preload failed: ${summary.reason}`);
-        (error as any).historicalPreloadLogged = true;
+        const error = new Error(`required historical preload failed: ${summary.reason}`) as HistoricalPreloadError;
+        error.historicalPreloadLogged = true;
         throw error;
       }
       this.logger.warn("historical_preload_degraded", this.logSummary(summary));
       return summary;
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       const failed = {
         durationMs: Date.now() - startedAt,
         enabled: true,
-        errors: [error?.message || String(error)],
+        errors: [message],
         horizonMs: this.config.horizonMs,
         outcome: "failed",
         priceTimeframe: this.config.priceTimeframe,
-        reason: error?.message || String(error),
+        reason: message,
         required: this.config.required,
         symbols: requestedSymbols,
         timeframes: this.config.timeframes
-      };
+      } as HistoricalPreloadSummary;
       if (this.config.required) {
-        if (!(error as any)?.historicalPreloadLogged) {
+        if (!(error as HistoricalPreloadError)?.historicalPreloadLogged) {
           this.logger.error("historical_preload_failed", this.logSummary(failed));
         }
         throw error;
@@ -240,9 +301,9 @@ class HistoricalBootstrapService {
     }
   }
 
-  async executePreload(symbols: string[], observedAt: number) {
+  async executePreload(symbols: string[], observedAt: number): Promise<HistoricalPreloadSummary> {
     const startedAt = Date.now();
-    const statsBySymbol = new Map<string, any>();
+    const statsBySymbol = new Map<string, HistoricalPreloadSymbolStats>();
     for (const symbol of symbols) {
       statsBySymbol.set(symbol, {
         errors: [],
@@ -256,7 +317,7 @@ class HistoricalBootstrapService {
 
     for (const timeframe of this.config.timeframes) {
       const limit = this.resolveLimitForTimeframe(timeframe);
-      const result: any = await this.withTimeout<any>(
+      const result = await this.withTimeout<HistoricalKlineFetchResult>(
         this.marketStream.fetchHistoricalKlines({
           interval: timeframe,
           limit,
@@ -280,6 +341,7 @@ class HistoricalBootstrapService {
 
       for (const symbol of symbols) {
         const symbolStats = statsBySymbol.get(symbol);
+        if (!symbolStats) continue;
         const klines = result.klinesBySymbol?.[symbol] || [];
         const closedKlines = klines.filter((kline: MarketKline) => kline && kline.isClosed !== false);
         symbolStats.klineCounts[timeframe] = closedKlines.length;
@@ -310,7 +372,7 @@ class HistoricalBootstrapService {
       errors: fetchErrors,
       horizonMs: this.config.horizonMs,
       missingPriceSymbols,
-      outcome: isPartial ? "partial" : "completed",
+      outcome: isPartial ? "partial" as const : "completed" as const,
       priceTimeframe: this.config.priceTimeframe,
       reason,
       required: this.config.required,
@@ -345,7 +407,7 @@ class HistoricalBootstrapService {
     }) as Promise<T>;
   }
 
-  logSummary(summary: any) {
+  logSummary(summary: HistoricalPreloadSummary) {
     return {
       durationMs: summary.durationMs,
       errors: Array.isArray(summary.errors) ? summary.errors.join("; ") : "",

@@ -1,6 +1,8 @@
 import type { ArchitectAssessment, ArchitectPublisherState, MarketRegime, RecommendedFamily } from "../types/architect.ts";
+import type { ContextSnapshot } from "../types/context.ts";
 import type { MarketTick } from "../types/market.ts";
 import type { MtfFrameConfig, MtfPublishDiagnostics, MtfSnapshot } from "../types/mtf.ts";
+import type { BotStateStoreLike, LoggerLike, MarketStreamLike } from "../types/runtime.ts";
 
 const { aggregateMtfSnapshots } = require("../roles/mtfContextAggregator.ts");
 const { elapsedMs, startTimer } = require("../utils/timing.ts");
@@ -13,37 +15,58 @@ const DEFAULT_MTF_FRAMES: MtfFrameConfig[] = [
 const DEFAULT_MTF_INSTABILITY_THRESHOLD = 0.5;
 const MTF_MIN_READY_FRAMES = 2;
 
+type ArchitectStore = BotStateStoreLike & {
+  setArchitectObservedAssessment(symbol: string, assessment: ArchitectAssessment): void;
+  setArchitectPublishedAssessment(symbol: string, assessment: ArchitectAssessment): void;
+  setArchitectPublisherState(symbol: string, state: ArchitectPublisherState): void;
+};
+
+type BotArchitectLike = {
+  minMaturity?: number;
+  assess(context: ContextSnapshot): ArchitectAssessment;
+};
+
+type MtfContextServiceLike = {
+  buildMtfSnapshots(params: {
+    symbol: string;
+    now: number;
+    frames: MtfFrameConfig[];
+  }): MtfSnapshot[];
+};
+
+type ArchitectServiceDeps = {
+  store: ArchitectStore;
+  marketStream: MarketStreamLike;
+  botArchitect: BotArchitectLike;
+  logger: LoggerLike;
+  publishIntervalMs?: number;
+  switchDelta?: number;
+  requiredConfirmations?: number;
+  warmupMs?: number;
+  mtfContextService?: MtfContextServiceLike | null;
+  mtfConfig?: {
+    enabled?: boolean;
+    frames?: MtfFrameConfig[];
+    instabilityThreshold?: number;
+  };
+};
+
 class ArchitectService {
-  store: any;
-  marketStream: any;
-  botArchitect: any;
-  logger: any;
+  store: ArchitectStore;
+  marketStream: MarketStreamLike;
+  botArchitect: BotArchitectLike;
+  logger: LoggerLike;
   publishIntervalMs: number;
   switchDelta: number;
   requiredConfirmations: number;
   subscriptions: Array<() => void>;
   warmupMs: number;
   mtfEnabled: boolean;
-  mtfContextService: any;
+  mtfContextService: MtfContextServiceLike | null;
   mtfFrames: MtfFrameConfig[];
   mtfInstabilityThreshold: number;
 
-  constructor(deps: {
-    store: any;
-    marketStream: any;
-    botArchitect: any;
-    logger: any;
-    publishIntervalMs?: number;
-    switchDelta?: number;
-    requiredConfirmations?: number;
-    warmupMs?: number;
-    mtfContextService?: any;
-    mtfConfig?: {
-      enabled?: boolean;
-      frames?: MtfFrameConfig[];
-      instabilityThreshold?: number;
-    };
-  }) {
+  constructor(deps: ArchitectServiceDeps) {
     this.store = deps.store;
     this.marketStream = deps.marketStream;
     this.botArchitect = deps.botArchitect;
@@ -102,7 +125,7 @@ class ArchitectService {
     return created;
   }
 
-  prepareObservation(symbol: string, observedAt: number, context: any) {
+  prepareObservation(symbol: string, observedAt: number, context: ContextSnapshot) {
     let publisher = this.ensurePublisherState(symbol);
     if (publisher.warmupStartedAt === null) {
       publisher = {
@@ -119,7 +142,7 @@ class ArchitectService {
     return publisher;
   }
 
-  shouldAssess(context: any, publisher: ArchitectPublisherState, observedAt: number) {
+  shouldAssess(context: ContextSnapshot, publisher: ArchitectPublisherState, observedAt: number) {
     // Architect publish cadence is authoritative here: if the tick cannot possibly result in a publish
     // cycle yet, skip the heavy assessment path and only keep publisher timing metadata fresh.
     if (!context.warmupComplete) {
@@ -288,7 +311,7 @@ class ArchitectService {
     };
   }
 
-  publish(symbol: string, candidate: ArchitectAssessment, observedAt: number, context: any, mtfSnapshot?: MtfSnapshot | null) {
+  publish(symbol: string, candidate: ArchitectAssessment, observedAt: number, context: ContextSnapshot, mtfSnapshot?: MtfSnapshot | null) {
     const currentPublished = this.store.getArchitectPublishedAssessment(symbol);
     const currentPublisher = this.ensurePublisherState(symbol);
 
@@ -454,7 +477,7 @@ class ArchitectService {
     candidate: ArchitectAssessment;
     published: ArchitectAssessment;
     publisher: ArchitectPublisherState;
-    context: any;
+    context: ContextSnapshot;
     previousRegime?: MarketRegime | null;
     via?: string;
     publishOutcome?: string;

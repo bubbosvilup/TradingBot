@@ -56,6 +56,39 @@ This document records the current runtime contracts that future refactors must p
 - Successful closes return `ok:true` with a closed trade and order, clear the open position, and append one closed trade.
 - Missing-position closes return `ok:false` with `code="position_not_found"` and must not append a closed trade or mutate observable state.
 
+### Position / Order Transitions
+
+- Position transition helpers live in `src/domain/stateTransitions.ts`.
+- Runtime persistence shape is unchanged; helpers are pure contract rails and are not deeply wired into runtime mutation paths yet.
+- Current observable position states are:
+  - `flat`
+  - `open_active`
+  - `open_managed_recovery`
+  - `exiting`
+- Allowed observable position transitions:
+  - `flat -> open_active`
+  - `open_active -> open_managed_recovery`
+  - `open_active -> exiting`
+  - `open_active -> flat`
+  - `open_managed_recovery -> exiting`
+  - `open_managed_recovery -> flat`
+  - `exiting -> flat`
+- `flat -> flat` is idempotent; opening from an already open position is invalid.
+- Managed recovery positions must preserve a finite `managedRecoveryStartedAt`.
+- Closing from `flat` and opening from a non-flat state are invalid transition contracts.
+- Current minimal order states are:
+  - `created`
+  - `opened`
+  - `closed`
+  - `rejected`
+- Allowed order transitions:
+  - `created -> opened`
+  - `created -> closed`
+  - `created -> rejected`
+  - `opened -> closed`
+- `closed` and `rejected` orders are terminal for this contract layer.
+- Future wiring target: use these helpers at runtime mutation boundaries after state ownership is narrowed enough to avoid behavior changes.
+
 ### StateStore Read/Update
 
 - Read-like methods must not mutate the observable system snapshot.
