@@ -16,7 +16,7 @@ This document records the current runtime contracts that future refactors must p
 - A `strategy.evaluate(...)` failure is wrapped as a structured `StrategyError`.
 - The tick must produce a safe `hold` decision with `strategy_error` metadata.
 - The failure must not open a position.
-- A repeated `StrategyError` breaker is future work and is not part of the current contract.
+- Consecutive `strategy.evaluate(...)` failures pause the bot with `pausedReason="repeated_strategy_error"`.
 
 ### ExecutionError
 
@@ -74,7 +74,7 @@ This document records the current runtime contracts that future refactors must p
   - `open_managed_recovery -> flat`
   - `exiting -> flat`
 - `flat -> flat` is idempotent; opening from an already open position is invalid.
-- Managed recovery positions must preserve a finite `managedRecoveryStartedAt`.
+- Managed recovery transition contracts require a finite `managedRecoveryStartedAt`; runtime tick handling must degrade safely if restored/live position data is missing or non-finite.
 - Closing from `flat` and opening from a non-flat state are invalid transition contracts.
 - Current minimal order states are:
   - `created`
@@ -87,7 +87,7 @@ This document records the current runtime contracts that future refactors must p
   - `created -> rejected`
   - `opened -> closed`
 - `closed` and `rejected` orders are terminal for this contract layer.
-- Future wiring target: use these helpers at runtime mutation boundaries after state ownership is narrowed enough to avoid behavior changes.
+- These helpers are contract rails. They are not a claim that every runtime mutation path is fully wired through the transition helpers.
 
 ### StateStore Read/Update
 
@@ -118,5 +118,6 @@ This document records the current runtime contracts that future refactors must p
 - `UserStream` normalizes remote and locally published user events before subscribers mutate state.
 - User stream keepalive and websocket failures are degraded connectivity states, not execution failures.
 - WS event payloads are external boundary data and must be parsed defensively.
+- WS message handler failures are logged as `ws_message_handler_failed` and must not escape the socket message loop.
 - Local execution events published through the user stream must preserve the same mutation semantics as remote user events.
 - Disconnect/degraded events must be visible through connection state and logs for operator diagnosis.

@@ -64,12 +64,12 @@ Work top-down unless a task explicitly says otherwise.
   - B: boundaries warning mode: dependency-cruiser, madge, declared temporary exceptions, architect/MTF types-cycle fix, move `Clock` out of `core`
   - C: execution ownership: clarify who mutates position/trade state, reduce `ExecutionEngine`/`UserStream` double ownership, open/close contract tests
   - D: error taxonomy v1: `ConfigError`, `InvariantError`, `ExecutionError`, `StrategyError`, `MarketDataError`, discriminated open/close results
-  - E: config schema v1: Zod for bots/runtime/MTF/recovery, explicit defaults, errors with paths
+  - E: config schema v1: internal schema helpers for selected bots/runtime/MTF/recovery slices, explicit helper defaults, structured errors where converted
   - F: state machine selectors: `PositionState`, `EntryGuardState`, minimal `OrderState`, transition/invariant tests
   - G: contract test suite: main boundary contracts, replace overly fragile tests where useful
   - H: TradingBot segmentation: only after contracts; keep `onMarketTick` as a readable map; split entry/exit/architect/tick-prep by clear criteria
   - I: any reduction: target at least 70%; start with tick-path and boundary events; leave legacy/raw payload surfaces as `unknown` plus narrowing
-  - exit criteria: baseline measured, dependency-cruiser/madge warning mode with declared exceptions, no circular imports between main layers except justified temporary exceptions, contract tests green, open/close ownership clear, state machine selectors tested, config schema for bots/runtime/MTF/recovery, error taxonomy v1 in main paths, `any` reduced by at least 70%, flows documented, and `TradingBot.ts` segmented only after contracts/boundaries are clear
+  - exit criteria: baseline measured, dependency-cruiser/madge enforced, no circular imports between main layers except justified temporary exceptions, contract tests green, open/close ownership clear, state machine selectors tested, config schema-helper coverage for bots/runtime/MTF/recovery slices, error taxonomy helpers in converted main paths, `any` reduced by at least 70%, flows documented, and `TradingBot.ts` segmented only after contracts/boundaries are clear
 
 ## P3
 

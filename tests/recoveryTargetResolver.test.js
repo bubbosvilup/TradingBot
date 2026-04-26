@@ -1,6 +1,6 @@
 "use strict";
 
-const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../src/roles/recoveryTargetResolver.ts");
+const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../src/domain/recoveryTargetResolver.ts");
 const { getManagedRecoveryPolicy } = require("../src/roles/positionLifecycleManager.ts");
 
 function approxEqual(actual, expected, epsilon = 1e-9) {

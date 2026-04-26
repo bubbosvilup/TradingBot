@@ -377,7 +377,16 @@ class WSManager {
       state.totalTicks += 1;
       state.totalLatencyMs += Math.max(0, receivedAt - eventTime);
     }
-    state.handleMessage(data, receivedAt);
+    try {
+      state.handleMessage(data, receivedAt);
+    } catch (error: unknown) {
+      this.logger.error("ws_message_handler_failed", {
+        connectionId: state.connectionId,
+        error: getErrorMessage(error),
+        kind: state.kind,
+        mode: state.mode
+      });
+    }
   }
 
   buildMarketStreamNames(symbols: string[], streamType: string, klineIntervals: string[]) {

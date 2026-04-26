@@ -2,6 +2,7 @@ import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/tr
 import type { Clock } from "../core/clock.ts";
 import type { ExecutionCloseResult, ExecutionOpenResult } from "../types/executionResult.ts";
 import type { ExecutionError } from "../types/errors.ts";
+import type { PositionLifecycleEvent, PositionLifecycleState } from "../types/positionLifecycle.ts";
 
 const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
 const { resolveClock } = require("../core/clock.ts");
@@ -319,8 +320,8 @@ class ExecutionEngine {
   closePosition(params: {
     botId: string;
     expectedExitPrice?: number | null;
-    lifecycleEvent?: any;
-    lifecycleState?: any;
+    lifecycleEvent?: PositionLifecycleEvent | null;
+    lifecycleState?: PositionLifecycleState | null;
     price: number;
     reason: string[];
     timestamp?: number;

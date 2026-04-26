@@ -379,6 +379,23 @@ function runTradingBotTests() {
       throw new Error("bot should continue processing later ticks after a strategy.evaluate failure");
     }
 
+    let repeatedStrategyErrorCalls = 0;
+    const repeatedStrategyErrorHarness = createHarness(() => {
+      repeatedStrategyErrorCalls += 1;
+      throw new Error(`fixture_repeated_strategy_failure_${repeatedStrategyErrorCalls}`);
+    }, {
+      strategy: "emaCross"
+    });
+    repeatedStrategyErrorHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    repeatedStrategyErrorHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock + 1_000 });
+    const repeatedStrategyErrorState = repeatedStrategyErrorHarness.store.getBotState("bot_test");
+    if (repeatedStrategyErrorState?.status !== "paused" || repeatedStrategyErrorState?.pausedReason !== "repeated_strategy_error") {
+      throw new Error(`repeated strategy errors should pause the bot with repeated_strategy_error: ${JSON.stringify(repeatedStrategyErrorState)}`);
+    }
+    if (!repeatedStrategyErrorHarness.botLogs.find((entry) => entry.message === "strategy_repeated_error_pause" && entry.metadata.pausedReason === "repeated_strategy_error")) {
+      throw new Error(`repeated strategy error pause should be logged: ${JSON.stringify(repeatedStrategyErrorHarness.botLogs)}`);
+    }
+
     const normalExitHarness = createHarness(() => ({
       action: "hold",
       confidence: 0.5,
@@ -1613,6 +1630,51 @@ function runTradingBotTests() {
       throw new Error(`managed recovery timeout should remain a recovery-driven exit: ${JSON.stringify(timeoutLog)}`);
     }
 
+    const invalidRecoveryTimestampHarness = createHarness(() => ({
+      action: "hold",
+      confidence: 0.55,
+      reason: ["mean_reversion_not_ready"]
+    }), {
+      allowedStrategies: ["rsiReversion"],
+      publishedArchitect: createPublishedArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategyConfigById: {
+        rsiReversion: {
+          exitPolicyId: "RSI_REVERSION_FAST_TIMEOUT"
+        }
+      }
+    });
+    invalidRecoveryTimestampHarness.store.setPosition("bot_test", {
+      botId: "bot_test",
+      confidence: 0.84,
+      entryPrice: 100,
+      id: "pos-managed-invalid-started-at",
+      lifecycleMode: "managed_recovery",
+      lifecycleState: "MANAGED_RECOVERY",
+      managedRecoveryDeferredReason: "rsi_exit_deferred",
+      managedRecoveryExitFloorNetPnlUsdt: 0.05,
+      managedRecoveryStartedAt: Number.NaN,
+      notes: ["oversold_mean_reversion"],
+      openedAt: clock - 1_000,
+      quantity: 0.5,
+      strategyId: "rsiReversion",
+      symbol: "BTC/USDT"
+    });
+    let invalidRecoveryTimestampError = null;
+    try {
+      invalidRecoveryTimestampHarness.bot.onMarketTick({ price: 100.1, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    } catch (error) {
+      invalidRecoveryTimestampError = error;
+    }
+    if (invalidRecoveryTimestampError) {
+      throw new Error(`invalid managedRecoveryStartedAt should not crash tick processing: ${invalidRecoveryTimestampError.message || invalidRecoveryTimestampError}`);
+    }
+    if (!invalidRecoveryTimestampHarness.botLogs.find((entry) => entry.message === "managed_recovery_started_at_invalid" && entry.metadata.fallbackStartedAt === clock - 1_000)) {
+      throw new Error(`invalid managedRecoveryStartedAt should log degraded fallback metadata: ${JSON.stringify(invalidRecoveryTimestampHarness.botLogs)}`);
+    }
+
     clock += 10_000;
     const mediumLossStreakLimit = new RiskManager().getProfile("medium").maxLossStreak;
     const lossLatchHarness = createHarness(() => ({
@@ -1804,11 +1866,11 @@ function runTradingBotTests() {
     if (latchSwitchBlockedState.activeStrategyId !== "emaCross") {
       throw new Error(`flat bot should still be allowed to switch strategy while post-loss latch is active: ${JSON.stringify(latchSwitchBlockedState)}`);
     }
+    if (latchSwitchBlockedState.entrySignalStreak !== 0) {
+      throw new Error(`published Architect strategy switch should reset entrySignalStreak: ${JSON.stringify(latchSwitchBlockedState)}`);
+    }
     if (latchSwitchHarness.store.getPosition("bot_test")) {
       throw new Error("post-loss latch should block entry even after switching to a different strategy");
-    }
-    if (!latchSwitchHarness.botLogs.find((entry) => entry.message === "entry_gate_blocked" && entry.metadata.blockReason === "post_loss_architect_latch")) {
-      throw new Error(`strategy-switched latch should still report post_loss_architect_latch block: ${JSON.stringify(latchSwitchHarness.botLogs)}`);
     }
     latchSwitchHarness.store.setArchitectPublisherState("BTC/USDT", {
       ...latchSwitchHarness.store.getArchitectPublisherState("BTC/USDT"),
@@ -3513,6 +3575,54 @@ function runTradingBotTests() {
     staleNoEvalHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
     if (staleStrategyEvaluations !== 0) {
       throw new Error(`flat bot should skip strategy.evaluate() entirely when market data is stale: ${staleStrategyEvaluations}`);
+    }
+
+    clock += 10_000;
+    let switchShortCircuitEvaluations = 0;
+    const switchShortCircuitHarness = createHarness(() => {
+      switchShortCircuitEvaluations += 1;
+      return {
+        action: "buy",
+        confidence: 0.93,
+        reason: ["post_switch_entry_signal"]
+      };
+    }, {
+      allowedStrategies: ["rsiReversion", "emaCross"],
+      publishedArchitect: createTrendArchitect({
+        updatedAt: clock
+      }),
+      strategy: "rsiReversion",
+      strategySwitcher: new StrategySwitcher({
+        resolveStrategyFamily: resolveTestStrategyFamily
+      })
+    });
+    switchShortCircuitHarness.store.updateBotState("bot_test", {
+      entrySignalStreak: 1
+    });
+    switchShortCircuitHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock - 1_000,
+      reason: "rest_fallback_active",
+      status: "degraded",
+      updatedAt: clock
+    });
+    switchShortCircuitHarness.bot.onMarketTick({ price: 100, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const switchedShortCircuitState = switchShortCircuitHarness.store.getBotState("bot_test");
+    if (switchedShortCircuitState.activeStrategyId !== "emaCross" || switchedShortCircuitState.entrySignalStreak !== 0) {
+      throw new Error(`strategy switch followed by same-tick market short-circuit should reset streak only on that tick: ${JSON.stringify(switchedShortCircuitState)}`);
+    }
+    if (switchShortCircuitEvaluations !== 0) {
+      throw new Error(`same-tick market short-circuit should not evaluate strategy after switching: ${switchShortCircuitEvaluations}`);
+    }
+    switchShortCircuitHarness.store.setMarketDataFreshness("BTC/USDT", {
+      lastTickTimestamp: clock + 1_000,
+      status: "fresh",
+      updatedAt: clock + 1_000
+    });
+    clock += 1_000;
+    switchShortCircuitHarness.bot.onMarketTick({ price: 100.2, source: "mock", symbol: "BTC/USDT", timestamp: clock });
+    const postLeakState = switchShortCircuitHarness.store.getBotState("bot_test");
+    if (postLeakState.entrySignalStreak !== 1 || switchShortCircuitHarness.store.getPosition("bot_test")) {
+      throw new Error(`strategy switch reset must not leak into the next valid entry tick: ${JSON.stringify(postLeakState)}`);
     }
 
     clock += 10_000;

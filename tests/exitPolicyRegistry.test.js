@@ -1,6 +1,6 @@
 "use strict";
 
-const { resolveExitPolicy } = require("../src/roles/exitPolicyRegistry.ts");
+const { resolveExitPolicy } = require("../src/domain/exitPolicyRegistry.ts");
 
 function runExitPolicyRegistryTests() {
   const rsiReversionPro = resolveExitPolicy({ exitPolicyId: "RSI_REVERSION_PRO" });

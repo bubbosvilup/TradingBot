@@ -807,9 +807,9 @@ Hotspot da trattare con cautela:
     - `MarketDataError`
     - open/close result discriminati
   - v18.2-E config schema v1:
-    - Zod su bots/runtime/MTF/recovery
-    - defaults espliciti
-    - errori con path
+    - schema-helper interni per slices runtime/config selezionati, senza Zod
+    - defaults espliciti nel layer helper senza iniettarli nel JSON caricato
+    - errori strutturati dove i gruppi sono gia stati convertiti
   - v18.2-F state machine selectors:
     - `PositionState`
     - `EntryGuardState`
@@ -833,8 +833,8 @@ Hotspot da trattare con cautela:
     - contract tests verdi
     - ownership open/close chiarita
     - state machine selectors espliciti per position/entry guard/order
-    - config bots/runtime/MTF/recovery validata con schema
-    - error taxonomy v1 usata nei path principali
+    - config bots/runtime/MTF/recovery progressivamente validata con schema-helper interni
+    - error taxonomy helper usati nei path principali gia convertiti
     - `any` ridotti almeno del 70%
     - entry/exit/recovery/architect flow documentati chiaramente
     - `TradingBot.ts` segmentato solo dopo contract tests e boundary chiari

@@ -36,10 +36,10 @@ Important repo facts:
 - `reports/experiments/` still contains historical outputs for the quarantined label.
 - `src/core/architectService.ts` switch-delta publishing now compares challenger score against the true published incumbent score, not the candidate assessment's incumbent-regime score.
 - `src/bots/tradingBot.ts` still contains a large behavior-sensitive exit path, including `shouldExitPosition(...)`, but the close path now takes a defensive position snapshot for planning/lifecycle/telemetry shaping and emits explicit `position_close_rejected` risk telemetry when `closePosition(...)` returns null.
-- `src/roles/exitPolicyRegistry.ts` now carries explicit runtime exit capabilities for RSI reversion policies:
+- `src/domain/exitPolicyRegistry.ts` carries the pure RSI reversion exit capability registry:
   - `qualification.rsiThresholdExit`
   - `recovery.priceTargetExit`
-- `src/roles/exitPolicyRegistry.ts` / `src/roles/recoveryTargetResolver.ts` reject negative `exitPolicy.recovery.targetOffsetPct`; zero and missing/default behavior remain intentional.
+- `src/domain/exitPolicyRegistry.ts` / `src/domain/recoveryTargetResolver.ts` reject negative `exitPolicy.recovery.targetOffsetPct`; zero and missing/default behavior remain intentional.
 - `src/roles/exitDecisionCoordinator.ts` is now the authoritative exit capability gate:
   - disabled RSI-threshold and price-target triggers are hard-blocked instead of falling through to generic exits
   - managed recovery price-target behavior respects `recovery.priceTargetExit`
@@ -82,7 +82,7 @@ Boundary map:
 - `mtfParamResolver`: pure MTF-driven RSI entry hint/cap resolution only; no sizing, cooldown, hold, or gate ownership
 - `entryEconomicsEstimator`: fee-aware edge estimate plus deterministic capture-gap, short-horizon target-distance diagnostics, and resolved cap computation from explicit strategy economics policy
 - `RiskManager`: drawdown gates, loss-streak policy, volatility-aware sizing penalties, and post-close cooldown timing
-- `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, `recoveryTargetResolver`: exit planning and shaping; managed-recovery invalidation grace, target-vs-invalidation precedence, capability gating, and paused-close state coherence live here
+- `exitDecisionCoordinator`, `exitOutcomeCoordinator`, `managedRecoveryExitResolver`, and domain recovery/exit helpers: exit planning and shaping; managed-recovery invalidation grace, target-vs-invalidation precedence, capability gating, and paused-close state coherence live here
 - `postLossArchitectLatch`: post-loss re-entry defense. While active, it blocks entries globally at bot level; stored strategy id is metadata only.
 - `tradingBotTelemetry`: operator-facing metadata shaping, including full/Pulse-facing MTF publish and entry cap-resolution diagnostics
 - `StateStore`: single runtime state container
@@ -93,7 +93,7 @@ Roadmap boundary:
 
 - v18: release candidate / commit safety. Only release-critical regressions should enter before the release commit.
 - v18.1: closed. It completed small config validation, strategy error boundary, explicit kill-switch reset, timebase cleanup, legacy smoke coverage, and operator docs.
-- v18.2: next focus. Repo humanization + boundaries + contracts + types starts with baseline counts for `any`, circular imports, dependency graph, and boundary violations; then adds dependency-cruiser/madge warning mode with declared exceptions, fixes the architect/MTF types cycle, moves `Clock` out of `core`, clarifies execution ownership, adds error taxonomy v1, introduces Zod config schema v1, adds position/entry/order state selectors, builds the contract test suite, and only then segments `TradingBot`. Key rule: do not segment `TradingBot` before contract tests and clear boundaries exist.
+- v18.2: current focus. Repo humanization + boundaries + contracts + types starts with baseline counts for `any`, circular imports, dependency graph, and boundary violations; then enforces dependency-cruiser/madge rules, fixes the architect/MTF types cycle, moves `Clock` out of `core`, clarifies execution ownership, adds error taxonomy helpers, extends internal schema-helper config validation without Zod, adds position/entry/order state selectors, builds the contract test suite, and only then segments `TradingBot`. Key rule: do not segment `TradingBot` before contract tests and clear boundaries exist.
 - v19: modern backtest parity. It must solve data quality, event replay, execution realism, strategic reporting, anti-lookahead, and legacy deprecation.
 - v20: paper futures isolated-margin realism for economically honest shorts.
 - v21: strategy lab and optimization focused on robustness, walk-forward validation, out-of-sample discipline, Monte Carlo stress, and fair benchmarks.

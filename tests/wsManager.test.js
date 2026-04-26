@@ -124,6 +124,66 @@ function runWsManagerTests() {
     throw new Error(`ws publish should log listener failures with channel and error metadata: ${JSON.stringify(logs)}`);
   }
 
+  const handlerFailureSockets = [];
+  const handlerFailureManager = new WSManager({
+    clock: {
+      now: () => wsNow
+    },
+    logger: {
+      info(event, metadata) {
+        logs.push({ event, metadata });
+      },
+      warn(event, metadata) {
+        logs.push({ event, metadata });
+      },
+      error(event, metadata) {
+        logs.push({ event, metadata });
+      }
+    },
+    maxReconnectAttempts: 0,
+    websocketFactory(url) {
+      const socket = new FakeWebSocket(url);
+      handlerFailureSockets.push(socket);
+      return socket;
+    }
+  });
+  const handlerFailureDisconnect = handlerFailureManager.connectBinanceMarketStream({
+    connectionId: "handler-failure-market",
+    onTick() {
+      throw new Error("handler boom");
+    },
+    streamType: "trade",
+    symbols: ["ETH/USDT"],
+    urlBase: "wss://example.test"
+  });
+  const handlerFailureSocket = handlerFailureSockets[0];
+  let handlerFailureEscaped = null;
+  try {
+    handlerFailureSocket.emit("message", {
+      data: JSON.stringify({
+        data: {
+          E: 1711960000000,
+          T: 1711960000001,
+          e: "trade",
+          p: "3500.12",
+          s: "ETHUSDT"
+        },
+        stream: "ethusdt@trade"
+      })
+    });
+  } catch (error) {
+    handlerFailureEscaped = error;
+  }
+  if (handlerFailureEscaped) {
+    throw new Error(`ws message handler failure should be contained: ${handlerFailureEscaped.message || handlerFailureEscaped}`);
+  }
+  const handlerFailureLog = logs.find((entry) => entry.event === "ws_message_handler_failed" && entry.metadata.connectionId === "handler-failure-market");
+  if (!handlerFailureLog || !String(handlerFailureLog.metadata.error || "").includes("handler boom")) {
+    throw new Error(`ws message handler failure should be logged with connection metadata: ${JSON.stringify(logs)}`);
+  }
+  handlerFailureDisconnect();
+  handlerFailureManager.closeAll();
+
   const disconnect = manager.connectBinanceMarketStream({
     connectionId: "test-market",
     klineIntervals: ["1m"],

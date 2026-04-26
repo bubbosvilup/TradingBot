@@ -53,8 +53,8 @@ const {
   POSITION_LIFECYCLE_EVENTS,
   resolveLifecycleEventFromReasons
 } = require("../roles/positionLifecycleManager.ts");
-const { resolveExitPolicy } = require("../roles/exitPolicyRegistry.ts");
-const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../roles/recoveryTargetResolver.ts");
+const { resolveExitPolicy } = require("../domain/exitPolicyRegistry.ts");
+const { resolveRecoveryTarget, resolveRecoveryTargetPolicy } = require("../domain/recoveryTargetResolver.ts");
 const { createStrategyError } = require("../types/errors.ts");
 const {
   calculateDirectionalGrossPnl,
@@ -177,6 +177,7 @@ class TradingBot extends BaseBot {
   telemetry: TradingBotTelemetryInstance;
   postLossArchitectLatch: InstanceType<typeof PostLossArchitectLatch>;
   clock: Clock;
+  resetEntrySignalStreakAfterArchitectSwitch: boolean;
 
   constructor(config: BotConfig, deps: BotDeps) {
     super(config, deps);
@@ -226,6 +227,7 @@ class TradingBot extends BaseBot {
       riskManager: this.deps.riskManager
     });
     this.exitDecisionCoordinator = new ExitDecisionCoordinator();
+    this.resetEntrySignalStreakAfterArchitectSwitch = false;
     this.openAttemptCoordinator = new OpenAttemptCoordinator({
       executionEngine: this.deps.executionEngine,
       riskManager: this.deps.riskManager
@@ -502,6 +504,12 @@ class TradingBot extends BaseBot {
     if (outcome.statePatch) {
       this.deps.store.updateBotState(this.config.id, outcome.statePatch);
     }
+    if (this.resetEntrySignalStreakAfterArchitectSwitch) {
+      this.deps.store.updateBotState(this.config.id, {
+        entrySignalStreak: 0
+      });
+      this.resetEntrySignalStreakAfterArchitectSwitch = false;
+    }
     if (Number.isFinite(Number(outcome.recordExecutionAt))) {
       this.deps.store.recordExecution(this.config.id, this.config.symbol, Number(outcome.recordExecutionAt), {
         skipBotStateWrite: true
@@ -730,6 +738,39 @@ class TradingBot extends BaseBot {
         && Number.isFinite(Number(resolvedTarget.targetPrice))
         && isTargetHit(params.position.side, Number(latestPrice), Number(resolvedTarget.targetPrice))
       )
+    };
+  }
+
+  resolveManagedRecoveryStartedAt(position: PositionRecord) {
+    const startedAt = Number(position?.managedRecoveryStartedAt);
+    if (Number.isFinite(startedAt)) {
+      return startedAt;
+    }
+
+    const openedAt = Number(position?.openedAt);
+    const fallbackStartedAt = Number.isFinite(openedAt) ? openedAt : this.now();
+    this.deps.logger.bot(this.config, "managed_recovery_started_at_invalid", {
+      fallbackStartedAt,
+      managedRecoveryStartedAt: position?.managedRecoveryStartedAt ?? null,
+      positionId: position?.id || null,
+      reason: "invalid_managed_recovery_started_at",
+      strategyId: position?.strategyId || this.strategy.id,
+      symbol: position?.symbol || this.config.symbol
+    });
+    return fallbackStartedAt;
+  }
+
+  sanitizeManagedRecoveryPosition(position: PositionRecord) {
+    if (!isManagedRecoveryPosition(position)) {
+      return position;
+    }
+    const startedAt = this.resolveManagedRecoveryStartedAt(position);
+    if (Number.isFinite(Number(position.managedRecoveryStartedAt))) {
+      return position;
+    }
+    return {
+      ...position,
+      managedRecoveryStartedAt: startedAt
     };
   }
 
@@ -968,6 +1009,10 @@ class TradingBot extends BaseBot {
     }
     if (applyResult.nextStrategy) {
       this.strategy = applyResult.nextStrategy;
+      this.resetEntrySignalStreakAfterArchitectSwitch = true;
+      this.deps.store.updateBotState(this.config.id, {
+        entrySignalStreak: 0
+      });
     }
     if (applyResult.logEvent) {
       this.deps.logger.bot(this.config, applyResult.logEvent.message, applyResult.logEvent.metadata);
@@ -1223,6 +1268,7 @@ class TradingBot extends BaseBot {
       this.config.id,
       this.entryCoordinator.buildArchitectEntryShortCircuitStatePatch(snapshot.architectState?.blockReason)
     );
+    this.resetEntrySignalStreakAfterArchitectSwitch = false;
     this.recordEntryEvaluationCounters("blocked", false);
     this.logArchitectEntryShortCircuit(snapshot.architectState);
   }
@@ -1253,6 +1299,7 @@ class TradingBot extends BaseBot {
         freshness.reason || null
       ].filter(Boolean)
     });
+    this.resetEntrySignalStreakAfterArchitectSwitch = false;
     const blockedState = this.deps.store.getBotState(this.config.id) || snapshot.state;
     this.recordEntryEvaluationCounters("blocked", false);
     this.deps.logger.bot(this.config, "entry_gate_blocked", {
@@ -1285,9 +1332,11 @@ class TradingBot extends BaseBot {
       position: snapshot.position
     });
     let decision;
+    let strategyEvaluateFailed = false;
     try {
       decision = this.strategy.evaluate(context);
     } catch (error) {
+      strategyEvaluateFailed = true;
       const errorMessage = error instanceof Error ? error.message : String(error);
       const strategyError = createStrategyError(
         "strategy_evaluate_failed",
@@ -1316,6 +1365,17 @@ class TradingBot extends BaseBot {
       };
     }
     this.deps.store.recordBotEvaluation(this.config.id, this.config.symbol, this.now());
+    const previousStrategyError = Array.isArray(snapshot.state?.lastDecisionReasons)
+      && snapshot.state.lastDecisionReasons.includes("strategy_error");
+    if (strategyEvaluateFailed && previousStrategyError) {
+      this.pause("repeated_strategy_error");
+      this.deps.logger.bot(this.config, "strategy_repeated_error_pause", {
+        pausedReason: "repeated_strategy_error",
+        reason: "strategy_error",
+        strategyId: this.strategy.id,
+        symbol: this.config.symbol
+      });
+    }
     this.deps.store.updateBotState(this.config.id, {
       lastDecision: decision.action,
       lastDecisionConfidence: decision.confidence,
@@ -1323,7 +1383,9 @@ class TradingBot extends BaseBot {
     });
 
     const postDecisionSnapshot = this.createTickSnapshot(snapshot.tick);
-    const position = postDecisionSnapshot.position;
+    const position = postDecisionSnapshot.position
+      ? this.sanitizeManagedRecoveryPosition(postDecisionSnapshot.position)
+      : null;
     const managedRecoveryTarget = position && isManagedRecoveryPosition(position)
       ? this.resolveManagedRecoveryTarget({ context, position })
       : null;
@@ -1596,7 +1658,7 @@ class TradingBot extends BaseBot {
     if (!snapshot.position) {
       return;
     }
-    const positionSnapshot = this.clonePositionSnapshot(snapshot.position);
+    const positionSnapshot = this.sanitizeManagedRecoveryPosition(this.clonePositionSnapshot(snapshot.position));
     const managedRecoveryTarget = isManagedRecoveryPosition(positionSnapshot)
       ? this.resolveManagedRecoveryTarget({
           context: snapshot.context,

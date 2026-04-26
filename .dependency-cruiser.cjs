@@ -1,6 +1,6 @@
 // v18.2 dependency boundary rules.
 // These rules are error-level now that v18.2-D removed the measured baseline violations.
-// Historical warning findings at introduction:
+// Historical warning findings at introduction, now resolved:
 // - src/core/botManager.ts -> src/bots/tradingBot.ts
 // - src/core/stateStore.ts -> src/core/configLoader.ts
 // - src/strategies/rsiReversion/strategy.ts -> src/roles/exitPolicyRegistry.ts
@@ -18,6 +18,17 @@ module.exports = {
       from: {},
       to: {
         circular: true
+      }
+    },
+    {
+      name: "domain-stays-pure",
+      severity: "error",
+      comment: "src/domain/** contains pure contracts/helpers and must not import runtime or public layers.",
+      from: {
+        path: "^src/domain/"
+      },
+      to: {
+        path: "^(src/(core|roles|streams|bots|engines|infra|public)|public)/"
       }
     },
     {

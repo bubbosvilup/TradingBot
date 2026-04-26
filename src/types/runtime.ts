@@ -3,6 +3,7 @@ import type { BotConfig, BotRuntimeState, RiskOverrides, RiskProfile } from "./b
 import type { ContextSnapshot } from "./context.ts";
 import type { MarketTick } from "./market.ts";
 import type { PerformanceSnapshot } from "./performance.ts";
+import type { PositionLifecycleEvent, PositionLifecycleState } from "./positionLifecycle.ts";
 import type { IndicatorSnapshot, Strategy, StrategyDecision } from "./strategy.ts";
 import type { ClosedTradeRecord, PositionRecord, TradeDirection } from "./trade.ts";
 import type { Clock } from "./clock.ts";
@@ -88,6 +89,7 @@ export interface RuntimeTuningConfig {
   postLossLatchMaxMs?: number;
   postLossLatchMinFreshPublications?: number;
   symbolStateRetentionMs?: number;
+  userStreamRequestTimeoutMs?: number;
 }
 
 export interface TradeConstraints {
@@ -120,8 +122,8 @@ export interface ExecutionOpenPositionParams extends ExecutionOpenParams {
 export interface ExecutionCloseParams {
   botId: string;
   expectedExitPrice?: number | null;
-  lifecycleEvent?: unknown;
-  lifecycleState?: unknown;
+  lifecycleEvent?: PositionLifecycleEvent | null;
+  lifecycleState?: PositionLifecycleState | null;
   price: number;
   reason: string[];
   timestamp?: number;

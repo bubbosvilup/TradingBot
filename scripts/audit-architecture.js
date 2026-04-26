@@ -96,6 +96,22 @@ function boundaryLabel(from, target) {
   }
 
   if (
+    from.startsWith("src/domain/")
+    && (
+      target.startsWith("src/core/")
+      || target.startsWith("src/roles/")
+      || target.startsWith("src/streams/")
+      || target.startsWith("src/bots/")
+      || target.startsWith("src/engines/")
+      || target.startsWith("src/infra/")
+      || target.startsWith("src/public/")
+      || target.startsWith("public/")
+    )
+  ) {
+    return "src/domain importing runtime/public layer";
+  }
+
+  if (
     from.startsWith("src/strategies/")
     && (
       target.startsWith("src/roles/")
@@ -223,3 +239,10 @@ console.log("ExecutionEngine/UserStream shared mutation ownership note:");
 console.log("- src/engines/executionEngine.ts publishes opened/closed order updates through UserStream.");
 console.log("- src/streams/userStream.ts normalizes remote and local user events and republishes to subscribers.");
 console.log("- src/core/orchestrator.ts wires UserStream subscriber mutations back into StateStore.");
+
+if (boundaryViolations.some((finding) =>
+  finding.label === "src/domain importing runtime/public layer"
+  && finding.target.startsWith("public/")
+)) {
+  process.exitCode = 1;
+}
