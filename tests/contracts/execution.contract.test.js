@@ -70,6 +70,16 @@ function runExecutionContractTests() {
 
   {
     const { engine, store } = createEngine();
+    store.registerBot({
+      enabled: true,
+      id: "bot_contract_rejected",
+      initialBalanceUsdt: 1000,
+      riskProfile: "medium",
+      strategy: "emaCross",
+      symbol: "BTC/USDT"
+    });
+    const beforeSnapshot = JSON.stringify(store.getSystemSnapshot());
+    const beforeBalance = store.getBotState("bot_contract_rejected")?.availableBalanceUsdt;
     const rejected = engine.openLong({
       botId: "bot_contract_rejected",
       confidence: 0.8,
@@ -83,8 +93,12 @@ function runExecutionContractTests() {
     if (rejected.ok !== false || rejected.error?.kind !== "execution" || rejected.error?.code !== "quantity_below_minimum") {
       throw new Error(`rejected open should return structured execution error: ${JSON.stringify(rejected)}`);
     }
+    const afterBalance = store.getBotState("bot_contract_rejected")?.availableBalanceUsdt;
     if (store.getPosition("bot_contract_rejected") !== null || store.getClosedTrades("bot_contract_rejected").length !== 0) {
       throw new Error("rejected open should not mutate position or closed-trade state");
+    }
+    if (afterBalance !== beforeBalance || JSON.stringify(store.getSystemSnapshot()) !== beforeSnapshot) {
+      throw new Error("rejected open should not change balance or observable StateStore snapshot");
     }
   }
 

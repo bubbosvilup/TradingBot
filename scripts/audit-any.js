@@ -7,6 +7,9 @@ const ts = require("typescript");
 const ROOT = process.cwd();
 const TARGET_DIRS = ["src", "tests", "scripts"];
 const SUPPORTED_EXTENSIONS = new Set([".ts", ".js"]);
+const HOTSPOT_THRESHOLD = 20;
+const WATCHLIST_THRESHOLD = 10;
+const TOP_FILE_LIMIT = 10;
 
 function walk(dir) {
   if (!fs.existsSync(dir)) {
@@ -87,6 +90,30 @@ function lineText(source, lineNumber) {
   return source.split(/\r?\n/)[lineNumber - 1] || "";
 }
 
+function countLines(source) {
+  if (source.length === 0) {
+    return 0;
+  }
+  return source.split(/\r?\n/).length;
+}
+
+function riskLabel(count) {
+  if (count > HOTSPOT_THRESHOLD) {
+    return "hotspot";
+  }
+  if (count >= WATCHLIST_THRESHOLD) {
+    return "watchlist";
+  }
+  return "low";
+}
+
+function formatDensity(count, lineCount) {
+  if (!lineCount) {
+    return "n/a";
+  }
+  return ((count / lineCount) * 100).toFixed(2);
+}
+
 function collectAnyUsages(filePath) {
   const source = fs.readFileSync(filePath, "utf8");
   const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true);
@@ -132,6 +159,7 @@ for (const file of files) {
     file: relativePath,
     count: usages.length,
     categories: Object.fromEntries([...categories.entries()].sort()),
+    lineCount: countLines(fs.readFileSync(file, "utf8")),
     lines: usages.map((usage) => usage.line)
   });
 }
@@ -139,8 +167,17 @@ for (const file of files) {
 byFile.sort((left, right) => right.count - left.count || left.file.localeCompare(right.file));
 
 const total = byFile.reduce((sum, entry) => sum + entry.count, 0);
+const byDensity = [...byFile].sort((left, right) => {
+  const leftDensity = left.lineCount ? left.count / left.lineCount : -1;
+  const rightDensity = right.lineCount ? right.count / right.lineCount : -1;
+  return rightDensity - leftDensity || right.count - left.count || left.file.localeCompare(right.file);
+});
+const hotspots = byFile.filter((entry) => entry.count > HOTSPOT_THRESHOLD);
 
 console.log(`Explicit any total: ${total}`);
+console.log("");
+console.log(`Hotspot threshold: >${HOTSPOT_THRESHOLD} explicit any in one file`);
+console.log(`Risk labels: hotspot >${HOTSPOT_THRESHOLD}, watchlist ${WATCHLIST_THRESHOLD}-${HOTSPOT_THRESHOLD}, low <${WATCHLIST_THRESHOLD}`);
 console.log("");
 console.log("By category:");
 for (const [category, count] of [...byCategory.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))) {
@@ -148,10 +185,38 @@ for (const [category, count] of [...byCategory.entries()].sort((left, right) => 
 }
 
 console.log("");
-console.log("By file:");
+console.log(`Top files by any count (top ${Math.min(TOP_FILE_LIMIT, byFile.length)}):`);
+for (const entry of byFile.slice(0, TOP_FILE_LIMIT)) {
+  console.log(`- ${entry.file}: ${entry.count} any, ${entry.lineCount} lines, density ${formatDensity(entry.count, entry.lineCount)} any/100 lines, risk=${riskLabel(entry.count)}`);
+}
+
+console.log("");
+console.log(`Top files by any density (top ${Math.min(TOP_FILE_LIMIT, byDensity.length)}):`);
+for (const entry of byDensity.slice(0, TOP_FILE_LIMIT)) {
+  console.log(`- ${entry.file}: density ${formatDensity(entry.count, entry.lineCount)} any/100 lines, ${entry.count} any, ${entry.lineCount} lines, risk=${riskLabel(entry.count)}`);
+}
+
+console.log("");
+console.log(`Files above hotspot threshold (> ${HOTSPOT_THRESHOLD} any):`);
+if (hotspots.length === 0) {
+  console.log("- none");
+} else {
+  for (const entry of hotspots) {
+    console.log(`- ${entry.file}: ${entry.count} any, density ${formatDensity(entry.count, entry.lineCount)} any/100 lines`);
+  }
+}
+
+console.log("");
+console.log("Current top offenders:");
+for (const entry of byFile.slice(0, 5)) {
+  console.log(`- ${entry.file}: ${entry.count} any, risk=${riskLabel(entry.count)}`);
+}
+
+console.log("");
+console.log("All files by any count:");
 for (const entry of byFile) {
   const categories = Object.entries(entry.categories)
     .map(([category, count]) => `${category}=${count}`)
     .join(", ");
-  console.log(`- ${entry.file}: ${entry.count} (${categories})`);
+  console.log(`- ${entry.file}: ${entry.count} any, ${entry.lineCount} lines, density ${formatDensity(entry.count, entry.lineCount)} any/100 lines, risk=${riskLabel(entry.count)} (${categories})`);
 }

@@ -110,6 +110,11 @@ function runStateSelectorsTests() {
     now: 1_000
   }), "market_data_block", "stale market data should block entry");
   expectEqual(deriveEntryGuardState({
+    botState: createBotState(),
+    marketDataFreshness: { status: "degraded" },
+    now: 1_000
+  }), "market_data_block", "degraded market data should block entry");
+  expectEqual(deriveEntryGuardState({
     botState: createBotState({ pausedReason: "max_drawdown_reached", status: "paused" }),
     now: 1_000
   }), "drawdown_block", "max drawdown pause should block entry");
