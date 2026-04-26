@@ -1,11 +1,13 @@
-import type { BotConfig } from "../types/bot.ts";
-import type { ArchitectAssessment } from "../types/architect.ts";
+import type { BotConfig, BotRuntimeState } from "../types/bot.ts";
+import type { ArchitectAssessment, ArchitectPublisherState } from "../types/architect.ts";
+import type { ContextSnapshot } from "../types/context.ts";
 import type { MarketTick } from "../types/market.ts";
-import type { EntryEconomicsEstimate, MarketContext, Strategy } from "../types/strategy.ts";
-import type { PositionRecord } from "../types/trade.ts";
+import type { PerformanceSnapshot } from "../types/performance.ts";
+import type { EntryEconomicsEstimate, MarketContext, Strategy, StrategyDecision } from "../types/strategy.ts";
+import type { ClosedTradeRecord, PositionRecord } from "../types/trade.ts";
 import type { ExitPolicy, InvalidationMode } from "../types/exitPolicy.ts";
-import type { PositionExitMechanism } from "../types/positionLifecycle.ts";
-import type { BotDeps, MarketDataFreshnessState } from "../types/runtime.ts";
+import type { PositionExitMechanism, PositionLifecycleEvent } from "../types/positionLifecycle.ts";
+import type { BotDeps, MarketDataFreshnessState, RiskProfileSettings } from "../types/runtime.ts";
 import type { Clock } from "../core/clock.ts";
 import type { BaseBotClass } from "./baseBot.ts";
 import type {
@@ -33,14 +35,14 @@ import type {
   OpenAttemptCoordinatorInstance,
   OpenAttemptCoordinatorParams
 } from "../roles/openAttemptCoordinator.ts";
-import type { PostLossArchitectLatchTransition } from "../roles/postLossArchitectLatch.ts";
+import type { PostLossArchitectLatchState, PostLossArchitectLatchTransition } from "../roles/postLossArchitectLatch.ts";
 import type {
   CompactLogDescriptor,
   PostLossArchitectLatchTelemetryState,
   TradingBotTelemetryInstance,
   TradingBotTelemetryParams
 } from "../roles/tradingBotTelemetry.ts";
-import type { ExitPlan } from "../roles/exitDecisionCoordinator.ts";
+import type { ExitDecisionCoordinatorInstance, ExitPlan } from "../roles/exitDecisionCoordinator.ts";
 
 const { BaseBot } = require("./baseBot.ts") as { BaseBot: BaseBotClass<BotDeps> };
 const { resolveLogType } = require("../utils/logger.ts");
@@ -61,7 +63,7 @@ const {
   normalizeTradeSide
 } = require("../utils/tradeSide.ts");
 const { ExitDecisionCoordinator } = require("../roles/exitDecisionCoordinator.ts") as {
-  ExitDecisionCoordinator: new () => { resolve: (params: any) => ExitPlan; };
+  ExitDecisionCoordinator: new () => ExitDecisionCoordinatorInstance;
 };
 const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
 const { estimateEntryEconomics: estimateStrategyEntryEconomics } = require("../roles/entryEconomicsEstimator.ts");
@@ -91,22 +93,32 @@ const { PostLossArchitectLatch } = require("../roles/postLossArchitectLatch.ts")
     store: BotDeps["store"];
     symbol: string;
   }) => {
-    activateOnLoss(params: { closedAt: number; netPnl: number; startedAt?: number | null; strategyId: string }): { state: any; transition?: PostLossArchitectLatchTransition };
-    getState(activeStrategyId: string, runtimeState?: any): any;
-    refresh(): { state: any; transition?: PostLossArchitectLatchTransition };
+    activateOnLoss(params: { closedAt: number; netPnl: number; startedAt?: number | null; strategyId: string }): { state: BotRuntimeState | null; transition?: PostLossArchitectLatchTransition };
+    getState(activeStrategyId: string, runtimeState?: BotRuntimeState | null): PostLossArchitectLatchState;
+    refresh(): { state: BotRuntimeState | null; transition?: PostLossArchitectLatchTransition };
   };
 };
 const { resolveClock } = require("../core/clock.ts");
 
+type ManagedRecoveryTarget = {
+  hit?: boolean;
+  source?: string | null;
+  targetPrice?: number | null;
+};
+
+type BlockedOpportunityDiagnosticsStore = BotDeps["store"] & {
+  recordBlockedOpportunityEdgeDiagnostics?: (params: Record<string, unknown>) => void;
+};
+
 type TradingTickSnapshot = Readonly<{
   tick: MarketTick;
-  state: any;
+  state: BotRuntimeState;
   position: PositionRecord | null;
-  performance: any;
-  contextSnapshot: any;
+  performance: PerformanceSnapshot;
+  contextSnapshot: ContextSnapshot | null;
   currentFamily: ArchitectUsabilityState["currentFamily"];
   publishedArchitect: ArchitectAssessment | null;
-  publisherState: any;
+  publisherState: ArchitectPublisherState | null;
 }>;
 
 type TradingTickArchitectContext = Readonly<TradingTickSnapshot & {
@@ -114,15 +126,31 @@ type TradingTickArchitectContext = Readonly<TradingTickSnapshot & {
 }>;
 
 type TradingTickDecisionContext = Readonly<TradingTickArchitectContext & {
-  context: any;
-  decision: any;
-  managedRecoveryTarget: any;
-  profile: any;
-  signalState: any;
+  context: MarketContext;
+  decision: StrategyDecision;
+  managedRecoveryTarget: ManagedRecoveryTarget | null;
+  profile: RiskProfileSettings;
+  signalState: BotRuntimeState;
 }>;
 
 type FinalEntryGateEvaluationResult = EntryGateResult & {
   economics: EntryEconomicsEstimate;
+};
+
+type EntryDiagnosticsInput = {
+  architectState: ArchitectUsabilityState;
+  context?: Partial<MarketContext> | null;
+  contextSnapshot: ContextSnapshot | null;
+  decision?: StrategyDecision | null;
+  economics: EntryEconomicsEstimate;
+  profile?: Pick<RiskProfileSettings, "entryDebounceTicks"> | null;
+  quantity: number | null;
+  riskGate?: { allowed?: boolean; reason?: string | null } | null;
+  signalEvaluated?: boolean;
+  signalState?: BotRuntimeState | null;
+  state?: BotRuntimeState | null;
+  strategyId: string;
+  tick: MarketTick;
 };
 
 class TradingBot extends BaseBot {
@@ -248,9 +276,9 @@ class TradingBot extends BaseBot {
   }
 
   buildContext(tick: MarketTick, params: {
-    performance?: any;
+    performance?: PerformanceSnapshot | null;
     position?: PositionRecord | null;
-  } = {}) {
+  } = {}): MarketContext {
     const priceSeries = this.deps.store.getRecentPrices(this.config.symbol, 120);
     const indicators = this.deps.indicatorEngine.createSnapshot(priceSeries);
     const position = params.position !== undefined
@@ -327,7 +355,7 @@ class TradingBot extends BaseBot {
     };
   }
 
-  logArchitectEntryShortCircuit(architectState: any) {
+  logArchitectEntryShortCircuit(architectState: ArchitectUsabilityState | null) {
     const blockKey = `architect_not_usable_for_entry:${architectState?.blockReason || "unknown"}`;
     if (this.lastNonCooldownBlockReason === blockKey) {
       return;
@@ -385,7 +413,7 @@ class TradingBot extends BaseBot {
     const state = this.deps.store.getBotState(this.config.id);
     if (!state) return;
 
-    const patch: any = {
+    const patch: Partial<BotRuntimeState> = {
       entryEvaluationsCount: (state.entryEvaluationsCount || 0) + 1
     };
     if (logged) {
@@ -425,7 +453,7 @@ class TradingBot extends BaseBot {
 
   resolveExpectedExitPrice(params: {
     exitPlan: ExitPlan;
-    managedRecoveryTarget?: any;
+    managedRecoveryTarget?: ManagedRecoveryTarget | null;
     tick: MarketTick;
   }) {
     if (Number.isFinite(Number(params.exitPlan.estimatedExitEconomics?.exitPrice))) {
@@ -441,7 +469,7 @@ class TradingBot extends BaseBot {
     if (outcome.entryEvaluated.outcome !== "blocked") {
       return;
     }
-    const recorder = (this.deps.store as any).recordBlockedOpportunityEdgeDiagnostics;
+    const recorder = (this.deps.store as BlockedOpportunityDiagnosticsStore).recordBlockedOpportunityEdgeDiagnostics;
     if (typeof recorder !== "function") {
       return;
     }
@@ -467,7 +495,7 @@ class TradingBot extends BaseBot {
     }
     if (outcome.entryBlockedReason) {
       this.logEntryBlocked(
-        (outcome.entryEvaluated.signalState || outcome.entryEvaluated.state) as any,
+        (outcome.entryEvaluated.signalState || outcome.entryEvaluated.state) as BotRuntimeState,
         outcome.entryBlockedReason
       );
     }
@@ -557,7 +585,7 @@ class TradingBot extends BaseBot {
     return state;
   }
 
-  classifyClosedTrade(closedTrade: any, exitPlan?: Pick<ExitPlan, "lifecycleEvent"> | null) {
+  classifyClosedTrade(closedTrade: ClosedTradeRecord, exitPlan?: Pick<ExitPlan, "lifecycleEvent"> | null) {
     const exitReasons = Array.isArray(closedTrade?.exitReason)
       ? closedTrade.exitReason
       : Array.isArray(closedTrade?.reason)
@@ -595,15 +623,15 @@ class TradingBot extends BaseBot {
   }
 
   buildExitTelemetry(params: {
-    architectState?: any;
-    closedTrade?: any;
+    architectState?: ArchitectUsabilityState | null;
+    closedTrade?: ClosedTradeRecord | null;
     exitMechanism?: PositionExitMechanism | null;
     executionTimestamp?: number | null;
     exitReasons: string[];
     invalidationMode?: InvalidationMode | null;
-    lifecycleEvent?: any;
+    lifecycleEvent?: PositionLifecycleEvent | null;
     invalidationLevel?: string | null;
-    managedRecoveryTarget?: any;
+    managedRecoveryTarget?: ManagedRecoveryTarget | null;
     position: PositionRecord;
     protectionMode?: string | null;
     signalTimestamp: number;
@@ -682,7 +710,7 @@ class TradingBot extends BaseBot {
     return resolveExitPolicy(this.strategy?.config);
   }
 
-  resolveManagedRecoveryTarget(params: { context: any; position: PositionRecord }) {
+  resolveManagedRecoveryTarget(params: { context: MarketContext; position: PositionRecord }): ManagedRecoveryTarget {
     const policy = this.getExitPolicy();
     const recoveryTargetPolicy = resolveRecoveryTargetPolicy(policy);
     const priceTargetExitEnabled = Boolean(policy?.recovery?.priceTargetExit);
@@ -720,7 +748,7 @@ class TradingBot extends BaseBot {
   }
 
   handleDeferredManagedRecoveryExit(params: {
-    architectState: any;
+    architectState: ArchitectUsabilityState | null;
     exitPlan: ExitPlan;
     positionSnapshot: PositionRecord;
     snapshot: TradingTickDecisionContext;
@@ -762,9 +790,9 @@ class TradingBot extends BaseBot {
   }
 
   handlePendingManagedRecoveryExit(params: {
-    architectState: any;
+    architectState: ArchitectUsabilityState | null;
     exitPlan: ExitPlan;
-    managedRecoveryTarget: any;
+    managedRecoveryTarget: ManagedRecoveryTarget | null;
     positionSnapshot: PositionRecord;
     snapshot: TradingTickDecisionContext;
   }) {
@@ -800,11 +828,11 @@ class TradingBot extends BaseBot {
   }
 
   shouldExitPosition(params: {
-    architectState?: any;
-    decision: any;
-    managedRecoveryTarget?: any;
+    architectState?: ArchitectUsabilityState | null;
+    decision: StrategyDecision;
+    managedRecoveryTarget?: ManagedRecoveryTarget | null;
     position: PositionRecord;
-    signalState: any;
+    signalState: BotRuntimeState;
     tick: MarketTick;
   }): ExitPlan {
     const profile = this.deps.riskManager.getProfile(this.config.riskProfile, this.config.riskOverrides || null);
@@ -818,7 +846,7 @@ class TradingBot extends BaseBot {
       managedRecoveryTarget: params.managedRecoveryTarget,
       minHoldMs: profile.minHoldMs,
       position: params.position,
-      resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) =>
+      resolveInvalidationLevel: (architectState: ArchitectUsabilityState | null, mode: InvalidationMode) =>
         this.telemetry.resolveInvalidationLevel(architectState, mode),
       runtimeTimestamp: this.now(),
       signalState: params.signalState,
@@ -826,7 +854,7 @@ class TradingBot extends BaseBot {
     });
   }
 
-  logEntryBlocked(state: any, reason: string) {
+  logEntryBlocked(state: BotRuntimeState, reason: string) {
     if (reason === "loss_cooldown" || reason === "post_exit_reentry_guard" || reason === "cooldown_active") {
       const cooldownUntil = state.cooldownUntil || null;
       if (cooldownUntil && this.cooldownWindowLoggedUntil !== cooldownUntil) {
@@ -863,9 +891,9 @@ class TradingBot extends BaseBot {
 
   evaluateArchitectUsability(params: {
     architect?: ArchitectAssessment | null;
-    contextSnapshot?: any;
+    contextSnapshot?: ContextSnapshot | null;
     currentFamily?: ArchitectUsabilityState["currentFamily"];
-    publisher?: any;
+    publisher?: ArchitectPublisherState | null;
     timestamp?: number;
   } = {}): ArchitectUsabilityState {
     return this.architectCoordinator.evaluateUsability({
@@ -894,10 +922,10 @@ class TradingBot extends BaseBot {
 
   updateArchitectSyncState(position: PositionRecord | null, timestamp?: number, params: {
     architectState?: ArchitectUsabilityState | null;
-    contextSnapshot?: any;
+    contextSnapshot?: ContextSnapshot | null;
     currentFamily?: ArchitectUsabilityState["currentFamily"];
-    publisher?: any;
-    state?: any;
+    publisher?: ArchitectPublisherState | null;
+    state?: BotRuntimeState | null;
   } = {}) {
     const syncUpdate = this.applyArchitectSyncUpdate(this.architectCoordinator.updateSyncState(position, {
       activeStrategyId: this.strategy.id,
@@ -919,10 +947,10 @@ class TradingBot extends BaseBot {
 
   maybeApplyPublishedArchitect(position: PositionRecord | null, timestamp?: number, params: {
     architectState?: ArchitectUsabilityState | null;
-    contextSnapshot?: any;
+    contextSnapshot?: ContextSnapshot | null;
     currentFamily?: ArchitectUsabilityState["currentFamily"];
-    publisher?: any;
-    state?: any;
+    publisher?: ArchitectPublisherState | null;
+    state?: BotRuntimeState | null;
   } = {}) {
     const applyResult = this.architectCoordinator.applyPublishedState(position, {
       activeStrategyId: this.strategy.id,
@@ -977,25 +1005,11 @@ class TradingBot extends BaseBot {
       quantity: params.quantity,
       side: params.side,
       strategy: this.resolveEntryEconomicsStrategy(params.context),
-      mtfDiagnostics: params.mtfDiagnostics || ((params.context?.metadata as any)?.architectMtf as ArchitectAssessment["mtf"] | null | undefined) || null
+      mtfDiagnostics: params.mtfDiagnostics || (params.context?.metadata?.architectMtf as ArchitectAssessment["mtf"] | null | undefined) || null
     });
   }
 
-  buildEntryDiagnostics(params: {
-    architectState: ArchitectUsabilityState;
-    context?: any;
-    contextSnapshot: any;
-    decision?: any;
-    economics: any;
-    profile?: any;
-    quantity: number | null;
-    riskGate?: any;
-    signalEvaluated?: boolean;
-    signalState?: any;
-    state?: any;
-    strategyId: string;
-    tick: MarketTick;
-  }) {
+  buildEntryDiagnostics(params: EntryDiagnosticsInput) {
     return this.telemetry.buildEntryDiagnostics({
       architectState: params.architectState,
       context: params.context,
@@ -1016,7 +1030,7 @@ class TradingBot extends BaseBot {
     });
   }
 
-  resolvePostLossArchitectLatchBlockReason(state?: any) {
+  resolvePostLossArchitectLatchBlockReason(state?: BotRuntimeState | null) {
     const latchState = this.postLossArchitectLatch.getState(this.strategy.id, state);
     if (!latchState.blocking) {
       return null;
@@ -1043,19 +1057,19 @@ class TradingBot extends BaseBot {
       lastDecisionConfidence: 0,
       lastDecisionReasons: ["post_loss_latch_timeout_requires_operator"],
       postLossArchitectLatchTimedOutAt: observedAt
-    } as any);
+    });
     return "post_loss_latch_timeout_requires_operator";
   }
 
   evaluateFinalEntryGate(params: {
     architectState?: ArchitectUsabilityState | null;
-    context: any;
-    contextSnapshot?: any;
+    context: MarketContext;
+    contextSnapshot?: ContextSnapshot | null;
     currentFamily?: ArchitectUsabilityState["currentFamily"];
-    decision: any;
-    profile?: any;
+    decision: StrategyDecision;
+    profile?: RiskProfileSettings;
     quantity: number;
-    state?: any;
+    state?: BotRuntimeState | null;
     tick: MarketTick;
   }): FinalEntryGateEvaluationResult {
     const entrySide = normalizeEntrySide(params.decision?.side, params.decision?.action);

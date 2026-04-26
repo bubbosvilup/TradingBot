@@ -1,7 +1,8 @@
 import type { ExitPolicy, InvalidationMode, ProtectionStopMode } from "../types/exitPolicy.ts";
 import type { MarketTick } from "../types/market.ts";
 import type { PositionRecord } from "../types/trade.ts";
-import type { PositionExitMechanism } from "../types/positionLifecycle.ts";
+import type { PositionExitMechanism, PositionLifecycleEvent } from "../types/positionLifecycle.ts";
+import type { StrategyDecision } from "../types/strategy.ts";
 
 const {
   getManagedRecoveryPolicy,
@@ -14,35 +15,68 @@ const {
   isExitActionForSide
 } = require("../utils/tradeSide.ts");
 
-export type ExitPlan = {
-  estimatedExitEconomics?: any;
+export type ExitEconomicsEstimate = {
+  exitPrice?: number | null;
+  netPnl: number;
+};
+
+export type ExitArchitectState = {
+  blockReason?: string | null;
+  familyMatch?: boolean | null;
+  publisher?: {
+    challengerCount?: number | null;
+    challengerRequired?: number | null;
+    publishIntervalMs?: number | null;
+  } | null;
+  usable?: boolean | null;
+};
+
+export type ManagedRecoveryDecisionContext = {
+  hit?: boolean | null;
+};
+
+export type ExitSignalState = {
+  exitSignalStreak: number;
+  managedRecoveryConsecutiveCount?: number | null;
+};
+
+export type ExitPolicyEvaluation = {
   exitMechanism?: PositionExitMechanism | null;
-  exitNow: boolean;
   invalidationLevel?: string | null;
   invalidationMode?: InvalidationMode | null;
-  lifecycleEvent?: any;
-  nextPosition?: PositionRecord | null;
-  protectionMode?: string | null;
+  lifecycleEvent?: PositionLifecycleEvent | null;
+  protectionMode?: ProtectionStopMode | string | null;
   reason: string[];
+};
+
+export type ExitPlan = ExitPolicyEvaluation & {
+  estimatedExitEconomics?: ExitEconomicsEstimate;
+  exitMechanism?: PositionExitMechanism | null;
+  exitNow: boolean;
+  nextPosition?: PositionRecord | null;
   transition?: "managed_recovery";
 };
 
+export type ExitDecisionInput = {
+  architectState?: ExitArchitectState | null;
+  decision: StrategyDecision;
+  emergencyStopPct: number;
+  estimateExitEconomics: (position: PositionRecord, price: number) => ExitEconomicsEstimate;
+  exitConfirmationTicks: number;
+  exitPolicy: ExitPolicy | null;
+  managedRecoveryTarget?: ManagedRecoveryDecisionContext | null;
+  minHoldMs: number;
+  position: PositionRecord;
+  resolveInvalidationLevel: (architectState: ExitArchitectState, mode: InvalidationMode) => string | null;
+  signalState: ExitSignalState;
+  tick: MarketTick;
+  runtimeTimestamp?: number;
+};
+
+export type ExitDecisionResult = ExitPlan;
+
 export interface ExitDecisionCoordinatorInstance {
-  resolve(params: {
-    architectState?: any;
-    decision: any;
-    emergencyStopPct: number;
-    estimateExitEconomics: (position: PositionRecord, price: number) => any;
-    exitConfirmationTicks: number;
-    exitPolicy: ExitPolicy | null;
-    managedRecoveryTarget?: any;
-    minHoldMs: number;
-    position: PositionRecord;
-    resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) => string | null;
-    signalState: any;
-    tick: MarketTick;
-    runtimeTimestamp?: number;
-  }): ExitPlan;
+  resolve(params: ExitDecisionInput): ExitDecisionResult;
 }
 
 function buildExitReason(decisionReasons: string[], primaryReason: string, confirmationTicks?: number | null) {
@@ -60,7 +94,7 @@ function buildExitReason(decisionReasons: string[], primaryReason: string, confi
   return nextReasons;
 }
 
-function getDecisionReasons(decision: any) {
+function getDecisionReasons(decision: StrategyDecision) {
   return Array.isArray(decision?.reason) ? decision.reason : [];
 }
 
@@ -111,7 +145,7 @@ function usesPriceTargetExitPolicy(exitPolicy: ExitPolicy | null | undefined) {
   return Boolean(exitPolicy?.recovery?.priceTargetExit);
 }
 
-function matchesInvalidationMode(architectState: any, mode: InvalidationMode) {
+function matchesInvalidationMode(architectState: ExitArchitectState, mode: InvalidationMode) {
   const blockReason = architectState?.blockReason || null;
   if (mode === "family_mismatch") {
     return architectState?.familyMatch === false;
@@ -143,7 +177,7 @@ function matchesInvalidationMode(architectState: any, mode: InvalidationMode) {
   return false;
 }
 
-function resolveMinRegimeInvalidationHoldMs(architectState: any) {
+function resolveMinRegimeInvalidationHoldMs(architectState: ExitArchitectState) {
   const publishIntervalMs = Number(architectState?.publisher?.publishIntervalMs);
   return Math.max(
     Number.isFinite(publishIntervalMs) ? publishIntervalMs * 2 : 60_000,
@@ -159,7 +193,7 @@ function invalidationRequiresGrace(mode: InvalidationMode) {
 }
 
 function hasFamilyMismatchConfirmation(params: {
-  architectState: any;
+  architectState: ExitArchitectState;
   position: PositionRecord;
   tickTimestamp: number;
   runtimeTimestamp?: number;
@@ -183,14 +217,14 @@ function hasFamilyMismatchConfirmation(params: {
 }
 
 function resolveManagedRecoveryInvalidation(params: {
-  architectState: any;
+  architectState: ExitArchitectState;
   decisionReasons: string[];
   exitPolicy: ExitPolicy | null;
   position: PositionRecord;
-  resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) => string | null;
+  resolveInvalidationLevel: (architectState: ExitArchitectState, mode: InvalidationMode) => string | null;
   tickTimestamp: number;
   runtimeTimestamp?: number;
-}) {
+}): ExitPolicyEvaluation | null {
   const modes = Array.isArray(params.exitPolicy?.invalidation?.modes)
     ? params.exitPolicy.invalidation.modes
     : [];
@@ -259,21 +293,7 @@ function resolveManagedRecoveryBreaker(decisionReasons: string[], confirmationTi
 }
 
 class ExitDecisionCoordinator implements ExitDecisionCoordinatorInstance {
-  resolve(params: {
-    architectState?: any;
-    decision: any;
-    emergencyStopPct: number;
-    estimateExitEconomics: (position: PositionRecord, price: number) => any;
-    exitConfirmationTicks: number;
-    exitPolicy: ExitPolicy | null;
-    managedRecoveryTarget?: any;
-    minHoldMs: number;
-    position: PositionRecord;
-    resolveInvalidationLevel: (architectState: any, mode: InvalidationMode) => string | null;
-    signalState: any;
-    tick: MarketTick;
-    runtimeTimestamp?: number;
-  }): ExitPlan {
+  resolve(params: ExitDecisionInput): ExitDecisionResult {
     const runtimeTimestamp = Number.isFinite(Number(params.runtimeTimestamp))
       ? Number(params.runtimeTimestamp)
       : params.tick.timestamp;
