@@ -10,6 +10,14 @@ const DEFAULT_REST_FALLBACK_INTERVAL_MS = 5_000;
 const HIGH_LATENCY_WARN_MS = 1_000;
 const LATENCY_LOG_INTERVAL_MS = 30_000;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 class MarketStream {
   wsManager: any;
   store: any;
@@ -136,7 +144,7 @@ class MarketStream {
   }
 
   startLive() {
-    this.unsubscribeWsStatus = this.wsManager.subscribe("ws:status:market-stream", (status: any) => {
+    this.unsubscribeWsStatus = this.wsManager.subscribe("ws:status:market-stream", (status: unknown) => {
       this.handleWsStatus(status);
     });
     this.disconnectLiveFeed = this.wsManager.connectBinanceMarketStream({
@@ -159,18 +167,19 @@ class MarketStream {
     }
   }
 
-  handleWsStatus(status: any) {
-    const observedAt = Number.isFinite(Number(status?.timestamp)) ? Number(status.timestamp) : this.now();
+  handleWsStatus(status: unknown) {
+    const statusPayload = isRecord(status) ? status : {};
+    const observedAt = Number.isFinite(Number(statusPayload.timestamp)) ? Number(statusPayload.timestamp) : this.now();
     this.store.updateWsConnection("market-stream", {
       connectionId: "market-stream",
       fallbackActive: Boolean(this.fallbackTimer),
-      lastConnectedAt: status.status === "connected" ? observedAt : undefined,
-      lastDisconnectedAt: status.status === "disconnected" ? observedAt : undefined,
-      lastMessageAt: status.lastMessageAt || undefined,
-      lastReason: status.reason || null,
+      lastConnectedAt: statusPayload.status === "connected" ? observedAt : undefined,
+      lastDisconnectedAt: statusPayload.status === "disconnected" ? observedAt : undefined,
+      lastMessageAt: statusPayload.lastMessageAt || undefined,
+      lastReason: statusPayload.reason || null,
       mode: this.mode,
-      reconnectAttempt: status.reconnectAttempt || 0,
-      status: status.status || "unknown"
+      reconnectAttempt: statusPayload.reconnectAttempt || 0,
+      status: statusPayload.status || "unknown"
     });
 
     if (this.stopping) {
@@ -178,11 +187,11 @@ class MarketStream {
       return;
     }
 
-    if (status.status === "connected") {
+    if (statusPayload.status === "connected") {
       this.markMarketDataStaleIfExpired(observedAt);
       this.stopRestFallback();
-    } else if (status.status === "disconnected" || status.status === "reconnecting" || status.status === "error") {
-      this.markSymbolsDegraded(`ws_${status.status}`, observedAt);
+    } else if (statusPayload.status === "disconnected" || statusPayload.status === "reconnecting" || statusPayload.status === "error") {
+      this.markSymbolsDegraded(`ws_${statusPayload.status}`, observedAt);
       this.startRestFallback(observedAt);
     }
   }
@@ -351,8 +360,9 @@ class MarketStream {
     });
   }
 
-  normalizeFallbackTick(symbol: string, ticker: any, receivedAt: number, restRoundtripMs?: number | null) {
-    const price = Number(ticker?.last || ticker?.close || 0);
+  normalizeFallbackTick(symbol: string, ticker: unknown, receivedAt: number, restRoundtripMs?: number | null) {
+    const tickerPayload = isRecord(ticker) ? ticker : {};
+    const price = Number(tickerPayload.last || tickerPayload.close || 0);
     if (!(price > 0)) {
       return null;
     }
@@ -362,7 +372,7 @@ class MarketStream {
       restRoundtripMs: Number.isFinite(Number(restRoundtripMs)) ? Math.max(0, Number(restRoundtripMs)) : undefined,
       source: "rest" as const,
       symbol,
-      timestamp: Number(ticker?.timestamp || receivedAt)
+      timestamp: Number(tickerPayload.timestamp || receivedAt)
     };
   }
 
@@ -445,14 +455,15 @@ class MarketStream {
         skippedFreshSymbols: Math.max(this.symbols.length - targetSymbols.length, 0),
         tickCount: ticks.length
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       this.logger.warn("market_rest_snapshot_failed", {
-        error: error?.message || String(error),
+        error: message,
         requestedSymbols: targetSymbols.join(","),
         totalSymbols: this.symbols.length
       });
       return {
-        error: error?.message || String(error),
+        error: message,
         method: "failed",
         requestedSymbols: targetSymbols,
         skippedFreshSymbols: Math.max(this.symbols.length - targetSymbols.length, 0),
@@ -474,7 +485,7 @@ class MarketStream {
     return this.fallbackExchange;
   }
 
-  normalizeHistoricalKline(symbol: string, interval: string, row: any, receivedAt: number): MarketKline | null {
+  normalizeHistoricalKline(symbol: string, interval: string, row: unknown, receivedAt: number): MarketKline | null {
     if (!Array.isArray(row) || row.length < 6) {
       return null;
     }
@@ -551,7 +562,7 @@ class MarketStream {
       try {
         const rows = await exchange.fetchOHLCV(symbol, interval, since, limit);
         const klines = (Array.isArray(rows) ? rows : [])
-          .map((row: any) => this.normalizeHistoricalKline(symbol, interval, row, observedAt))
+          .map((row: unknown) => this.normalizeHistoricalKline(symbol, interval, row, observedAt))
           .filter(Boolean)
           .sort((a: MarketKline, b: MarketKline) => Number(a.openedAt) - Number(b.openedAt)) as MarketKline[];
         klinesBySymbol[symbol] = klines;
@@ -560,10 +571,10 @@ class MarketStream {
           klineCount: klines.length,
           symbol
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         klinesBySymbol[symbol] = [];
         symbolResults.push({
-          error: error?.message || String(error),
+          error: getErrorMessage(error),
           klineCount: 0,
           symbol
         });

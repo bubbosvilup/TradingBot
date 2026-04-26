@@ -29,6 +29,82 @@ interface WsConnectionSnapshotLike {
   [key: string]: unknown;
 }
 
+interface HttpRequestLike {
+  headers: {
+    host?: string;
+    [key: string]: unknown;
+  };
+  method?: string;
+  url?: string;
+  on?(event: string, handler: () => void): unknown;
+}
+
+interface HttpResponseLike {
+  end(payload?: unknown): void;
+  flushHeaders?(): void;
+  on?(event: string, handler: () => void): unknown;
+  setHeader?(key: string, value: string): void;
+  write?(chunk: string): unknown;
+  writeHead(statusCode: number, headers: Record<string, string>): void;
+}
+
+interface HttpServerLike {
+  close(): void;
+  listen(port: number, host: string, callback: () => void): void;
+}
+
+interface SystemPayload {
+  [key: string]: unknown;
+  botsRunning?: number;
+  botsTotal?: number;
+  executionMode?: string;
+  feedMode?: string;
+  latency?: Record<string, unknown> | null;
+  openPositions?: number;
+  portfolioKillSwitch?: PortfolioKillSwitchState | null;
+  wsConnection?: WsConnectionSnapshotLike | null;
+  wsConnections?: WsConnectionSnapshotLike[];
+}
+
+interface BotPayload {
+  [key: string]: unknown;
+  activeStrategyId?: string | null;
+  architect?: Record<string, unknown> | null;
+  architectPublished?: Record<string, unknown> | null;
+  botId: string;
+  cooldownReason?: string | null;
+  cooldownRemainingMs?: number;
+  manualResumeRequired?: boolean;
+  openPosition?: Record<string, unknown> | null;
+  pausedReason?: string | null;
+  postLossArchitectLatchActive?: boolean;
+  status?: string;
+  symbol: string;
+  syncStatus?: string;
+}
+
+interface PositionPayload {
+  [key: string]: unknown;
+  botId: string;
+  symbol: string;
+  unrealizedPnl: number;
+}
+
+interface TradePayload {
+  [key: string]: unknown;
+  botId: string;
+  exitTime: number;
+  tradeId: string;
+}
+
+interface ChartMarkerPayload {
+  color: string;
+  position: "aboveBar" | "belowBar";
+  shape: "arrowUp" | "arrowDown";
+  text: string;
+  time: number;
+}
+
 interface SystemSnapshotLike {
   botStates: BotRuntimeState[];
   events: SystemEvent[];
@@ -115,6 +191,10 @@ function readPortfolioKillSwitchState(
   return store.getPortfolioKillSwitchState.call(store, options);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function normalizeCompactUiRoute(route?: string | null) {
   const value = String(route || "/").trim();
   if (!value || !/^\/[A-Za-z0-9/_-]*$/.test(value)) {
@@ -131,7 +211,7 @@ class SystemServer {
   port: number;
   publicDir: string;
   startedAt: number;
-  server: any;
+  server: HttpServerLike | null;
   autoOpenCompactUi: boolean;
   compactUiRoute: string;
   feedMode: string;
@@ -198,7 +278,7 @@ class SystemServer {
 
   start() {
     if (this.server) return;
-    this.server = http.createServer((request: any, response: any) => {
+    this.server = http.createServer((request: HttpRequestLike, response: HttpResponseLike) => {
       this.handleRequest(request, response);
     });
     this.server.listen(this.port, this.host, () => {
@@ -217,7 +297,7 @@ class SystemServer {
     this.server = null;
   }
 
-  json(response: any, payload: unknown, statusCode: number = 200) {
+  json(response: HttpResponseLike, payload: unknown, statusCode: number = 200) {
     response.writeHead(statusCode, {
       "Cache-Control": "no-store",
       "Content-Type": "application/json; charset=utf-8"
@@ -225,11 +305,11 @@ class SystemServer {
     response.end(JSON.stringify(payload));
   }
 
-  notFound(response: any) {
+  notFound(response: HttpResponseLike) {
     this.json(response, { error: "Not found" }, 404);
   }
 
-  serveFile(response: any, filePath: string) {
+  serveFile(response: HttpResponseLike, filePath: string) {
     if (!fs.existsSync(filePath)) {
       this.notFound(response);
       return;
@@ -271,7 +351,7 @@ class SystemServer {
     }
   }
 
-  getArchitectContextFeatures(context: any) {
+  getArchitectContextFeatures(context: ContextSnapshot | null | undefined) {
     const features = context?.features || null;
     if (!features) return null;
     const architectContextRsi = Number.isFinite(Number(features.contextRsi))
@@ -296,7 +376,7 @@ class SystemServer {
     };
   }
 
-  getArchitectWarmupRemainingMs(context: any) {
+  getArchitectWarmupRemainingMs(context: ContextSnapshot | null | undefined) {
     if (context?.warmupComplete || !context?.windowSpanMs) return 0;
     return Math.max(0, this.architectWarmupMs - context.windowSpanMs);
   }
@@ -324,7 +404,7 @@ class SystemServer {
       : {};
   }
 
-  handleManualResumeRequest(botId: string, response: any) {
+  handleManualResumeRequest(botId: string, response: HttpResponseLike) {
     const state = this.store.getBotState(botId);
     if (!state) {
       this.json(response, {
@@ -388,7 +468,7 @@ class SystemServer {
         ));
   }
 
-  handlePostLossLatchResetRequest(botId: string, response: any) {
+  handlePostLossLatchResetRequest(botId: string, response: HttpResponseLike) {
     const state = this.store.getBotState(botId);
     if (!state) {
       this.json(response, {
@@ -439,7 +519,7 @@ class SystemServer {
     });
   }
 
-  handlePortfolioKillSwitchResetRequest(response: any) {
+  handlePortfolioKillSwitchResetRequest(response: HttpResponseLike) {
     const currentState = readPortfolioKillSwitchState(this.store, { feeRate: this.feeRate });
     if (!currentState.triggered && !currentState.blockingEntries) {
       this.json(response, {
@@ -474,7 +554,12 @@ class SystemServer {
     });
   }
 
-  decorateArchitectAssessment(assessment: any, publisher: any, context: any, source: "published" | "observed") {
+  decorateArchitectAssessment(
+    assessment: ArchitectAssessment,
+    publisher: ArchitectPublisherState | null,
+    context: ContextSnapshot | null,
+    source: "published" | "observed"
+  ) {
     const contextFeatures = this.getArchitectContextFeatures(context);
     return {
       ...assessment,
@@ -500,7 +585,11 @@ class SystemServer {
     };
   }
 
-  buildSyntheticArchitect(params: { config: any; context: any; publisher: any }) {
+  buildSyntheticArchitect(params: {
+    config: BotConfig;
+    context: ContextSnapshot | null;
+    publisher: ArchitectPublisherState | null;
+  }) {
     const contextFeatures = this.getArchitectContextFeatures(params.context);
     if (!params.publisher && !params.context) return null;
     return {
@@ -556,13 +645,13 @@ class SystemServer {
     const snapshot = this.store.getSystemSnapshot();
     const portfolioKillSwitch = readPortfolioKillSwitchState(this.store, { feeRate: this.feeRate });
     const symbolState = this.store.getSymbolStateSnapshot({ now: Date.now() });
-    const running = snapshot.botStates.filter((bot: any) => bot.status === "running").length;
-    const paused = snapshot.botStates.filter((bot: any) => bot.status === "paused");
-    const manualResumeRequiredBots = paused.filter((bot: any) => this.isManualResumeRequired(bot)).length;
-    const marketConnection = this.store.getWsConnections().find((connection: any) => connection.connectionId === "market-stream") || null;
+    const running = snapshot.botStates.filter((bot) => bot.status === "running").length;
+    const paused = snapshot.botStates.filter((bot) => bot.status === "paused");
+    const manualResumeRequiredBots = paused.filter((bot) => this.isManualResumeRequired(bot)).length;
+    const marketConnection = this.store.getWsConnections().find((connection) => connection.connectionId === "market-stream") || null;
     const latestLatency = this.store.getAllPipelineSnapshots()
-      .filter((item: any) => item.lastStateUpdatedAt)
-      .sort((left: any, right: any) => (right.lastStateUpdatedAt || 0) - (left.lastStateUpdatedAt || 0))[0] || null;
+      .filter((item) => item.lastStateUpdatedAt)
+      .sort((left, right) => (right.lastStateUpdatedAt || 0) - (left.lastStateUpdatedAt || 0))[0] || null;
     return {
       botsManualResumeRequired: manualResumeRequiredBots,
       botsPaused: paused.length,
@@ -587,7 +676,7 @@ class SystemServer {
   buildBotsPayload() {
     const now = Date.now();
     const portfolioKillSwitch = readPortfolioKillSwitchState(this.store, { feeRate: this.feeRate, now });
-    return Array.from(this.store.botConfigs.values()).map((config: any) => {
+    return Array.from(this.store.botConfigs.values()).map((config) => {
       const state = this.store.getBotState(config.id);
       const performance = this.store.getPerformance(config.id);
       const position = this.store.getPosition(config.id);
@@ -681,9 +770,9 @@ class SystemServer {
     return String(value || "n/a").replace(/_/g, "-");
   }
 
-  getPulseMarketStreamStatus(system: any) {
-    const marketConnection = (system?.wsConnections || []).find((connection: any) => connection.connectionId === "market-stream")
-      || system?.wsConnection
+  getPulseMarketStreamStatus(system: SystemPayload) {
+    const marketConnection = (system.wsConnections || []).find((connection) => connection.connectionId === "market-stream")
+      || system.wsConnection
       || null;
     const status = String(marketConnection?.status || "disconnected").toLowerCase();
     if (status.includes("reconnect") || status.includes("connecting")) return "reconnecting";
@@ -691,16 +780,16 @@ class SystemServer {
     return status === "connected" ? "connected" : "disconnected";
   }
 
-  getPulseLastTickAgeMs(system: any, bots: any[], now: number) {
+  getPulseLastTickAgeMs(system: SystemPayload, bots: BotPayload[], now: number) {
     const latestPrices = this.store.getSystemSnapshot().latestPrices || [];
-    const latestPriceAt = latestPrices.reduce((max: number, price: any) => Math.max(max, Number(price?.updatedAt) || 0), 0);
-    const latestBotTickAt = bots.reduce((max: number, bot: any) => Math.max(max, Number(bot?.lastTickAt) || 0), 0);
-    const marketConnection = (system?.wsConnections || []).find((connection: any) => connection.connectionId === "market-stream")
-      || system?.wsConnection
+    const latestPriceAt = latestPrices.reduce((max, price) => Math.max(max, Number(price?.updatedAt) || 0), 0);
+    const latestBotTickAt = bots.reduce((max, bot) => Math.max(max, Number(bot?.lastTickAt) || 0), 0);
+    const marketConnection = (system.wsConnections || []).find((connection) => connection.connectionId === "market-stream")
+      || system.wsConnection
       || null;
     const latestWsAt = Math.max(
-      Number(system?.latency?.lastWsReceivedAt) || 0,
-      Number(system?.latency?.lastStateUpdatedAt) || 0,
+      Number(system.latency?.lastWsReceivedAt) || 0,
+      Number(system.latency?.lastStateUpdatedAt) || 0,
       Number(marketConnection?.lastWsReceivedAt) || 0,
       Number(marketConnection?.updatedAt) || 0
     );
@@ -708,17 +797,19 @@ class SystemServer {
     return latestAt > 0 ? Math.max(0, now - latestAt) : null;
   }
 
-  getPulseNetPnlUsdt(system: any, bots: any[]) {
-    const portfolio = system?.portfolioKillSwitch || {};
+  getPulseNetPnlUsdt(system: SystemPayload, bots: BotPayload[]) {
+    const portfolio = (system.portfolioKillSwitch || {}) as Partial<PortfolioKillSwitchState>;
     if (Number.isFinite(Number(portfolio.realizedPnl)) || Number.isFinite(Number(portfolio.unrealizedPnl))) {
       return (Number(portfolio.realizedPnl) || 0) + (Number(portfolio.unrealizedPnl) || 0);
     }
-    return bots.reduce((sum: number, bot: any) => {
-      return sum + (Number(bot?.performance?.pnl) || 0) + (Number(bot?.openPosition?.unrealizedPnl) || 0);
+    return bots.reduce((sum, bot) => {
+      const performance = isRecord(bot.performance) ? bot.performance : {};
+      const openPosition = isRecord(bot.openPosition) ? bot.openPosition : {};
+      return sum + (Number(performance.pnl) || 0) + (Number(openPosition.unrealizedPnl) || 0);
     }, 0);
   }
 
-  buildPulseKillSwitch(portfolio: any) {
+  buildPulseKillSwitch(portfolio: Partial<PortfolioKillSwitchState>) {
     if (portfolio?.triggered) {
       return {
         reason: portfolio.reason || null,
@@ -747,16 +838,16 @@ class SystemServer {
     };
   }
 
-  getPulseArchitect(bot: any) {
+  getPulseArchitect(bot: BotPayload) {
     return bot?.architectPublished || bot?.architect || null;
   }
 
-  getPulseRegime(bot: any) {
+  getPulseRegime(bot: BotPayload) {
     const architect = this.getPulseArchitect(bot);
     return architect?.marketRegime || "warming_up";
   }
 
-  getPulseSyncStatus(bot: any) {
+  getPulseSyncStatus(bot: BotPayload) {
     const architect = this.getPulseArchitect(bot);
     if (!architect?.marketRegime) return "warming_up";
     const syncStatus = String(bot?.syncStatus || "pending");
@@ -765,8 +856,8 @@ class SystemServer {
     return syncStatus;
   }
 
-  buildPulsePosition(bot: any) {
-    const position = bot?.openPosition || null;
+  buildPulsePosition(bot: BotPayload) {
+    const position = isRecord(bot?.openPosition) ? bot.openPosition : null;
     if (!position) {
       return {
         label: "FLAT",
@@ -783,7 +874,7 @@ class SystemServer {
     };
   }
 
-  buildPulseAlert(bot: any) {
+  buildPulseAlert(bot: BotPayload) {
     if (bot?.manualResumeRequired) {
       return {
         message: "Manual resume required",
@@ -829,7 +920,7 @@ class SystemServer {
     return null;
   }
 
-  buildPulseArchitectSummary(bot: any) {
+  buildPulseArchitectSummary(bot: BotPayload) {
     const architect = this.getPulseArchitect(bot);
     if (!architect?.marketRegime) {
       return {
@@ -852,7 +943,7 @@ class SystemServer {
     };
   }
 
-  buildPulseActions(bot: any, portfolio: any) {
+  buildPulseActions(bot: BotPayload, portfolio: Partial<PortfolioKillSwitchState>) {
     const resumeVisible = bot?.pausedReason === "max_drawdown_reached" || bot?.manualResumeRequired === true;
     const killSwitchBlocks = Boolean(portfolio?.triggered || portfolio?.blockingEntries);
     return {
@@ -873,22 +964,22 @@ class SystemServer {
     };
   }
 
-  selectPulseFocusBot(bots: any[], requestedBotId?: string | null) {
-    return bots.find((bot: any) => bot.botId === requestedBotId)
-      || bots.find((bot: any) => bot.openPosition)
-      || bots.find((bot: any) => bot.status === "running")
+  selectPulseFocusBot(bots: BotPayload[], requestedBotId?: string | null) {
+    return bots.find((bot) => bot.botId === requestedBotId)
+      || bots.find((bot) => bot.openPosition)
+      || bots.find((bot) => bot.status === "running")
       || bots[0]
       || null;
   }
 
   buildPulsePayload(options: { botId?: string | null } = {}) {
     const now = Date.now();
-    const system: any = this.buildSystemPayload();
-    const bots = this.buildBotsPayload();
+    const system = this.buildSystemPayload() as SystemPayload;
+    const bots = this.buildBotsPayload() as BotPayload[];
     const portfolio = system.portfolioKillSwitch || {};
     const focusBot = this.selectPulseFocusBot(bots, options.botId || null);
     return {
-      botCards: bots.map((bot: any) => ({
+      botCards: bots.map((bot) => ({
         alert: this.buildPulseAlert(bot),
         botId: bot.botId,
         position: this.buildPulsePosition(bot),
@@ -930,13 +1021,13 @@ class SystemServer {
 
   buildPricesPayload() {
     return this.store.getSystemSnapshot().latestPrices
-      .sort((left: any, right: any) => left.symbol.localeCompare(right.symbol));
+      .sort((left, right) => left.symbol.localeCompare(right.symbol));
   }
 
   buildPositionsPayload() {
     const now = Date.now();
     return Array.from(this.store.botConfigs.values())
-      .map((config: any) => {
+      .map((config): PositionPayload | null => {
         const position = this.store.getPosition(config.id);
         if (!position) return null;
         const latestPrice = this.store.getLatestPrice(position.symbol) || position.entryPrice;
@@ -969,9 +1060,9 @@ class SystemServer {
     return this.store.getRecentEvents(hasFilter ? 500 : 60)
       .slice()
       .reverse()
-      .filter((event: any) => {
+      .filter((event) => {
         if (!options.botId) return true;
-        if (event?.botId === options.botId) return true;
+        if ((event as SystemEvent & { botId?: string })?.botId === options.botId) return true;
         if (event?.metadata?.botId === options.botId) return true;
         return false;
       })
@@ -983,8 +1074,8 @@ class SystemServer {
     const hasFilter = Boolean(options.botId) || hasExplicitLimit;
     const limit = hasFilter ? Math.min(Math.max(Number(options.limit) || 100, 1), 500) : null;
     const trades = this.store.getAllClosedTrades()
-      .filter((trade: any) => !options.botId || trade.botId === options.botId)
-      .map((trade: any) => {
+      .filter((trade) => !options.botId || trade.botId === options.botId)
+      .map((trade): TradePayload => {
         const config = this.store.botConfigs.get(trade.botId);
         return {
           ...this.getShortAccountingMetadata(trade.side),
@@ -1008,7 +1099,7 @@ class SystemServer {
           tradeId: trade.id
         };
       })
-      .sort((left: any, right: any) => Number(right.exitTime || 0) - Number(left.exitTime || 0));
+      .sort((left, right) => Number(right.exitTime || 0) - Number(left.exitTime || 0));
     return limit ? trades.slice(0, limit) : trades;
   }
 
@@ -1029,7 +1120,7 @@ class SystemServer {
     const closedTrades = this.store.getClosedTradesForSymbol(resolvedSymbol).slice(-100);
     const openPosition = Array.from(this.store.positions.values()).find((position) => position?.symbol === resolvedSymbol) || null;
     const latestPrice = priceSnapshot?.latestPrice || null;
-    const lineData = (priceSnapshot?.history || []).map((tick: any) => ({
+    const lineData = (priceSnapshot?.history || []).map((tick) => ({
       time: Math.floor(Number(tick.timestamp) / 1000),
       value: Number(tick.price)
     }));
@@ -1077,11 +1168,17 @@ class SystemServer {
       }
     }
     const markers = Array.from(markerMap.values())
-      .filter((marker: any) => Number.isFinite(Number(marker.time)) && Number(marker.time) > 0)
-      .sort((left: any, right: any) => Number(left.time) - Number(right.time));
-    const candles = {};
+      .filter((marker) => Number.isFinite(Number(marker.time)) && Number(marker.time) > 0)
+      .sort((left, right) => Number(left.time) - Number(right.time));
+    const candles: Record<string, Array<{
+      close: number;
+      high: number;
+      low: number;
+      open: number;
+      time: number;
+    }>> = {};
     for (const interval of ["1m", "5m", "1h"]) {
-      candles[interval] = this.store.getKlines(resolvedSymbol, interval, 200).map((kline: any) => ({
+      candles[interval] = this.store.getKlines(resolvedSymbol, interval, 200).map((kline) => ({
         close: Number(kline.close),
         high: Number(kline.high),
         low: Number(kline.low),
@@ -1109,7 +1206,7 @@ class SystemServer {
   }
 
   buildAnalyticsPayload() {
-    const comparison = Array.from(this.store.botConfigs.values()).map((config: any) => {
+    const comparison = Array.from(this.store.botConfigs.values()).map((config) => {
       const performance = this.store.getPerformance(config.id);
       return {
         botId: config.id,
@@ -1123,12 +1220,12 @@ class SystemServer {
       };
     });
 
-    const botSeries = comparison.map((item: any) => ({
+    const botSeries = comparison.map((item) => ({
       botId: item.botId,
-      drawdownSeries: this.store.getPerformanceHistory(item.botId, 120).map((point: any) => [point.time, point.drawdown]),
-      pnlSeries: this.store.getPerformanceHistory(item.botId, 120).map((point: any) => [point.time, point.pnl]),
-      profitFactorSeries: this.store.getPerformanceHistory(item.botId, 120).map((point: any) => [point.time, point.profitFactor]),
-      winRateSeries: this.store.getPerformanceHistory(item.botId, 120).map((point: any) => [point.time, point.winRate])
+      drawdownSeries: this.store.getPerformanceHistory(item.botId, 120).map((point) => [point.time, point.drawdown]),
+      pnlSeries: this.store.getPerformanceHistory(item.botId, 120).map((point) => [point.time, point.pnl]),
+      profitFactorSeries: this.store.getPerformanceHistory(item.botId, 120).map((point) => [point.time, point.profitFactor]),
+      winRateSeries: this.store.getPerformanceHistory(item.botId, 120).map((point) => [point.time, point.winRate])
     }));
 
     return {
@@ -1137,7 +1234,7 @@ class SystemServer {
     };
   }
 
-  streamPulsePayload(request: any, response: any) {
+  streamPulsePayload(request: HttpRequestLike, response: HttpResponseLike) {
     const headers = {
       "Cache-Control": "no-cache",
       "Connection": "keep-alive",
@@ -1179,7 +1276,7 @@ class SystemServer {
     response.on?.("close", cleanup);
   }
 
-  handleRequest(request: any, response: any) {
+  handleRequest(request: HttpRequestLike, response: HttpResponseLike) {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${this.host}:${this.port}`}`);
     const pathname = url.pathname;
     const method = String(request.method || "GET").toUpperCase();

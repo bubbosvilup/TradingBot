@@ -5,6 +5,14 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { ConfigLoader } = require("../src/core/configLoader.ts");
+const {
+  DEFAULT_PORTFOLIO_KILL_SWITCH_CONFIG,
+  DEFAULT_RUNTIME_TIMING_CONFIG,
+  DEFAULT_RUNTIME_MODES,
+  parsePortfolioKillSwitchConfig,
+  parseRuntimeTimingConfig,
+  parseRuntimeModeConfig
+} = require("../src/types/configSchema.ts");
 
 function createTempConfigRoot(botsConfig) {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "tradingbot-configloader-"));
@@ -146,7 +154,21 @@ function runConfigLoaderTests() {
     ]
   }, "unsupported executionMode \"live\"", "unsupported_execution_mode");
 
-  expectConfigError({
+  expectStructuredConfigError({
+    executionMode: "simulated",
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_execution_mode",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid executionMode \"simulated\"", "invalid_execution_mode");
+
+  expectStructuredConfigError({
     marketMode: "mock",
     bots: [
       {
@@ -158,7 +180,235 @@ function runConfigLoaderTests() {
         symbol: "BTC/USDT"
       }
     ]
-  }, "unsupported marketMode");
+  }, "unsupported marketMode", "unsupported_market_mode");
+
+  {
+    const parsedDefaults = parseRuntimeModeConfig({});
+    if (DEFAULT_RUNTIME_MODES.executionMode !== "paper" || DEFAULT_RUNTIME_MODES.marketMode !== "live") {
+      throw new Error(`runtime mode schema defaults should stay explicit and compatible: ${JSON.stringify(DEFAULT_RUNTIME_MODES)}`);
+    }
+    if (parsedDefaults.executionMode !== "paper" || parsedDefaults.marketMode !== "live") {
+      throw new Error(`runtime mode schema should parse omitted modes to previous runtime defaults: ${JSON.stringify(parsedDefaults)}`);
+    }
+
+    const parsedConfiguredModes = parseRuntimeModeConfig({
+      executionMode: " PAPER ",
+      marketMode: " LIVE "
+    });
+    if (parsedConfiguredModes.executionMode !== "paper" || parsedConfiguredModes.marketMode !== "live") {
+      throw new Error(`runtime mode schema should normalize configured modes without changing semantics: ${JSON.stringify(parsedConfiguredModes)}`);
+    }
+  }
+
+  {
+    const noKillSwitchRootDir = createTempConfigRoot({
+      bots: [
+        {
+          allowedStrategies: ["emaCross"],
+          enabled: true,
+          id: "bot_no_kill_switch",
+          riskProfile: "medium",
+          strategy: "emaCross",
+          symbol: "BTC/USDT"
+        }
+      ]
+    });
+    try {
+      const loaded = new ConfigLoader(noKillSwitchRootDir).loadBotsConfig();
+      if (loaded.portfolioKillSwitch !== undefined) {
+        throw new Error(`missing portfolioKillSwitch should preserve config shape: ${JSON.stringify(loaded.portfolioKillSwitch)}`);
+      }
+    } finally {
+      fs.rmSync(noKillSwitchRootDir, { force: true, recursive: true });
+    }
+
+    const parsedMissingKillSwitch = parsePortfolioKillSwitchConfig(undefined);
+    if (DEFAULT_PORTFOLIO_KILL_SWITCH_CONFIG.enabled !== false
+      || DEFAULT_PORTFOLIO_KILL_SWITCH_CONFIG.maxDrawdownPct !== 0
+      || DEFAULT_PORTFOLIO_KILL_SWITCH_CONFIG.mode !== "block_entries_only") {
+      throw new Error(`portfolio kill-switch schema defaults should stay explicit and compatible: ${JSON.stringify(DEFAULT_PORTFOLIO_KILL_SWITCH_CONFIG)}`);
+    }
+    if (parsedMissingKillSwitch.enabled !== false
+      || parsedMissingKillSwitch.maxDrawdownPct !== 0
+      || parsedMissingKillSwitch.mode !== "block_entries_only") {
+      throw new Error(`portfolio kill-switch schema should parse omitted config to current defaults: ${JSON.stringify(parsedMissingKillSwitch)}`);
+    }
+
+    const parsedValidKillSwitch = parsePortfolioKillSwitchConfig({
+      enabled: true,
+      maxDrawdownPct: 8,
+      mode: "block_entries_only"
+    });
+    if (parsedValidKillSwitch.enabled !== true
+      || parsedValidKillSwitch.maxDrawdownPct !== 8
+      || parsedValidKillSwitch.mode !== "block_entries_only") {
+      throw new Error(`portfolio kill-switch schema should preserve valid configured values: ${JSON.stringify(parsedValidKillSwitch)}`);
+    }
+  }
+
+  expectStructuredConfigError({
+    portfolioKillSwitch: {
+      enabled: "yes",
+      maxDrawdownPct: 8,
+      mode: "block_entries_only"
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_kill_switch_enabled",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid portfolioKillSwitch.enabled", "invalid_portfolio_kill_switch_enabled");
+
+  expectStructuredConfigError({
+    portfolioKillSwitch: {
+      enabled: true,
+      maxDrawdownPct: 0,
+      mode: "block_entries_only"
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_kill_switch_drawdown",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid portfolioKillSwitch.maxDrawdownPct", "invalid_portfolio_kill_switch_max_drawdown");
+
+  expectStructuredConfigError({
+    portfolioKillSwitch: {
+      enabled: true,
+      maxDrawdownPct: 8,
+      mode: "panic_liquidate"
+    },
+    bots: [
+      {
+        allowedStrategies: ["emaCross"],
+        enabled: true,
+        id: "bot_invalid_kill_switch_mode",
+        riskProfile: "medium",
+        strategy: "emaCross",
+        symbol: "BTC/USDT"
+      }
+    ]
+  }, "invalid portfolioKillSwitch.mode", "invalid_portfolio_kill_switch_mode");
+
+  {
+    const noRuntimeTimingRootDir = createTempConfigRoot({
+      bots: [
+        {
+          allowedStrategies: ["emaCross"],
+          enabled: true,
+          id: "bot_no_runtime_timing",
+          riskProfile: "medium",
+          strategy: "emaCross",
+          symbol: "BTC/USDT"
+        }
+      ]
+    });
+    try {
+      const loaded = new ConfigLoader(noRuntimeTimingRootDir).loadBotsConfig();
+      if (loaded.architectWarmupMs !== undefined
+        || loaded.architectPublishIntervalMs !== undefined
+        || loaded.postLossLatchMaxMs !== undefined
+        || loaded.postLossLatchMinFreshPublications !== undefined
+        || loaded.symbolStateRetentionMs !== undefined
+        || loaded.userStreamRequestTimeoutMs !== undefined) {
+        throw new Error(`missing runtime timing values should preserve config shape: ${JSON.stringify(loaded)}`);
+      }
+    } finally {
+      fs.rmSync(noRuntimeTimingRootDir, { force: true, recursive: true });
+    }
+
+    const parsedMissingTiming = parseRuntimeTimingConfig({});
+    if (DEFAULT_RUNTIME_TIMING_CONFIG.architectWarmupMs !== 30_000
+      || DEFAULT_RUNTIME_TIMING_CONFIG.architectPublishIntervalMs !== 30_000
+      || DEFAULT_RUNTIME_TIMING_CONFIG.postLossLatchMaxMs !== null
+      || DEFAULT_RUNTIME_TIMING_CONFIG.postLossLatchMinFreshPublications !== 2
+      || DEFAULT_RUNTIME_TIMING_CONFIG.symbolStateRetentionMs !== 30 * 60 * 1000
+      || DEFAULT_RUNTIME_TIMING_CONFIG.userStreamRequestTimeoutMs !== 10_000) {
+      throw new Error(`runtime timing schema defaults should stay explicit and compatible: ${JSON.stringify(DEFAULT_RUNTIME_TIMING_CONFIG)}`);
+    }
+    if (parsedMissingTiming.architectWarmupMs !== 30_000
+      || parsedMissingTiming.architectPublishIntervalMs !== 30_000
+      || parsedMissingTiming.postLossLatchMaxMs !== null
+      || parsedMissingTiming.postLossLatchMinFreshPublications !== 2
+      || parsedMissingTiming.symbolStateRetentionMs !== 30 * 60 * 1000
+      || parsedMissingTiming.userStreamRequestTimeoutMs !== 10_000) {
+      throw new Error(`runtime timing schema should parse omitted config to current runtime defaults: ${JSON.stringify(parsedMissingTiming)}`);
+    }
+
+    const parsedValidTiming = parseRuntimeTimingConfig({
+      architectPublishIntervalMs: 15_000,
+      architectWarmupMs: 20_000,
+      postLossLatchMaxMs: 120_000,
+      postLossLatchMinFreshPublications: 1,
+      symbolStateRetentionMs: 1_800_000,
+      userStreamRequestTimeoutMs: 5_000
+    });
+    if (parsedValidTiming.architectPublishIntervalMs !== 15_000
+      || parsedValidTiming.architectWarmupMs !== 20_000
+      || parsedValidTiming.postLossLatchMaxMs !== 120_000
+      || parsedValidTiming.postLossLatchMinFreshPublications !== 1
+      || parsedValidTiming.symbolStateRetentionMs !== 1_800_000
+      || parsedValidTiming.userStreamRequestTimeoutMs !== 5_000) {
+      throw new Error(`runtime timing schema should preserve valid configured values: ${JSON.stringify(parsedValidTiming)}`);
+    }
+  }
+
+  for (const testCase of [
+    {
+      code: "invalid_architect_warmup_ms",
+      config: { architectWarmupMs: 4_999 },
+      message: "invalid architectWarmupMs"
+    },
+    {
+      code: "invalid_architect_publish_interval_ms",
+      config: { architectPublishIntervalMs: 0 },
+      message: "invalid architectPublishIntervalMs"
+    },
+    {
+      code: "invalid_post_loss_latch_max_ms",
+      config: { postLossLatchMaxMs: -1 },
+      message: "invalid postLossLatchMaxMs"
+    },
+    {
+      code: "invalid_post_loss_latch_min_fresh_publications",
+      config: { postLossLatchMinFreshPublications: 0 },
+      message: "invalid postLossLatchMinFreshPublications"
+    },
+    {
+      code: "invalid_symbol_state_retention_ms",
+      config: { symbolStateRetentionMs: 59_999 },
+      message: "invalid symbolStateRetentionMs"
+    },
+    {
+      code: "invalid_user_stream_request_timeout_ms",
+      config: { userStreamRequestTimeoutMs: Number.NaN },
+      message: "invalid userStreamRequestTimeoutMs"
+    }
+  ]) {
+    expectStructuredConfigError({
+      ...testCase.config,
+      bots: [
+        {
+          allowedStrategies: ["emaCross"],
+          enabled: true,
+          id: `bot_${testCase.code}`,
+          riskProfile: "medium",
+          strategy: "emaCross",
+          symbol: "BTC/USDT"
+        }
+      ]
+    }, testCase.message, testCase.code);
+  }
 
   expectConfigError({
     market: "binance",

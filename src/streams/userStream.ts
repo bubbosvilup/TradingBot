@@ -31,8 +31,20 @@ function normalizeRequestTimeoutMs(value: unknown) {
     : DEFAULT_USER_STREAM_REQUEST_TIMEOUT_MS;
 }
 
-function isTimeoutError(error: any) {
-  return error?.name === "TimeoutError";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" ? value : null;
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTimeoutError(error: unknown) {
+  return isRecord(error) && error.name === "TimeoutError";
 }
 
 function normalizePositionLifecycle(payload: OrderUpdatePayload, fallbackTimestamp: number): NormalizedUserEvent | null {
@@ -140,23 +152,24 @@ class UserStream {
     }
 
     this.listenKey = listenKey;
-    this.unsubscribeWsStatus = this.wsManager.subscribe("ws:status:user-stream", (status: any) => {
+    this.unsubscribeWsStatus = this.wsManager.subscribe("ws:status:user-stream", (status: unknown) => {
+      const statusPayload = isRecord(status) ? status : {};
       this.store.updateWsConnection("user-stream", {
         connectionId: "user-stream",
         fallbackActive: false,
-        lastConnectedAt: status.status === "connected" ? (status.timestamp || this.now()) : undefined,
-        lastDisconnectedAt: status.status === "disconnected" ? (status.timestamp || this.now()) : undefined,
-        lastMessageAt: status.lastMessageAt || undefined,
-        lastReason: status.reason || null,
+        lastConnectedAt: statusPayload.status === "connected" ? (statusPayload.timestamp || this.now()) : undefined,
+        lastDisconnectedAt: statusPayload.status === "disconnected" ? (statusPayload.timestamp || this.now()) : undefined,
+        lastMessageAt: statusPayload.lastMessageAt || undefined,
+        lastReason: statusPayload.reason || null,
         mode: "live",
-        reconnectAttempt: status.reconnectAttempt || 0,
-        status: status.status || "unknown"
+        reconnectAttempt: statusPayload.reconnectAttempt || 0,
+        status: statusPayload.status || "unknown"
       });
     });
     this.disconnectRemote = this.wsManager.connectBinanceUserStream({
       connectionId: "user-stream",
       listenKey,
-      onUserEvent: (event: any) => {
+      onUserEvent: (event: unknown) => {
         this.handleRemoteUserEvent(event);
       },
       urlBase: this.wsBaseUrl
@@ -247,16 +260,17 @@ class UserStream {
     }
   }
 
-  subscribe(handler: (...args: any[]) => void) {
+  subscribe(handler: (...args: unknown[]) => void) {
     return this.wsManager.subscribe("user:events", handler);
   }
 
-  handleRemoteUserEvent(event: any) {
+  handleRemoteUserEvent(event: unknown) {
     if (!event) return;
-    this.emitNormalized(event);
+    const eventPayload = isRecord(event) ? event : {};
+    this.emitNormalized(event as NormalizedUserEvent);
     this.logger.info("user_stream_event_processed", {
-      symbol: event.symbol || "n/a",
-      type: event.type
+      symbol: eventPayload.symbol || "n/a",
+      type: eventPayload.type
     });
   }
 
@@ -281,22 +295,23 @@ class UserStream {
         return null;
       }
 
-      const payload = await response.json();
-      const listenKey = payload?.listenKey || null;
+      const payload: unknown = await response.json();
+      const listenKey = isRecord(payload) ? readString(payload.listenKey) : null;
       this.store.updateWsConnection("user-stream", {
         mode: "live",
         status: "connecting"
       });
       return listenKey;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const timedOut = isTimeoutError(error);
+      const message = getErrorMessage(error);
       this.store.updateWsConnection("user-stream", {
-        lastReason: timedOut ? "listen_key_timeout" : (error?.message || "listen_key_error"),
+        lastReason: timedOut ? "listen_key_timeout" : (message || "listen_key_error"),
         mode: "live",
         status: "disconnected"
       });
       this.logger.warn("user_stream_listen_key_failed", {
-        error: timedOut ? undefined : (error?.message || String(error)),
+        error: timedOut ? undefined : message,
         operation: "create_listen_key",
         reason: timedOut ? "timeout" : "fetch_error",
         timeoutMs: timedOut ? this.requestTimeoutMs : undefined
@@ -311,10 +326,10 @@ class UserStream {
       clearInterval(this.keepAliveTimer);
     }
     this.keepAliveTimer = setInterval(() => {
-      this.keepAliveListenKey(this.listenKey).catch((error: any) => {
+      this.keepAliveListenKey(this.listenKey).catch((error: unknown) => {
         this.logger.warn("user_stream_keepalive_failed", {
           action: "manual_attention_needed",
-          error: error?.message || String(error),
+          error: getErrorMessage(error),
           operation: "keepalive_listen_key",
           reason: "unexpected_error"
         });
@@ -340,12 +355,13 @@ class UserStream {
           status: response.status
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const timedOut = isTimeoutError(error);
-      this.handleKeepAliveFailure(timedOut ? "keepalive_timeout" : (error?.message || "keepalive_error"));
+      const message = getErrorMessage(error);
+      this.handleKeepAliveFailure(timedOut ? "keepalive_timeout" : (message || "keepalive_error"));
       this.logger.warn("user_stream_keepalive_failed", {
         action: "manual_attention_needed",
-        error: timedOut ? undefined : (error?.message || String(error)),
+        error: timedOut ? undefined : message,
         operation: "keepalive_listen_key",
         reason: timedOut ? "timeout" : "fetch_error",
         timeoutMs: timedOut ? this.requestTimeoutMs : undefined
@@ -362,9 +378,9 @@ class UserStream {
         },
         method: "DELETE"
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.warn("user_stream_delete_listen_key_failed", {
-        error: isTimeoutError(error) ? undefined : (error?.message || String(error)),
+        error: isTimeoutError(error) ? undefined : getErrorMessage(error),
         operation: "delete_listen_key",
         reason: isTimeoutError(error) ? "timeout" : "fetch_error",
         timeoutMs: isTimeoutError(error) ? this.requestTimeoutMs : undefined
@@ -389,8 +405,8 @@ class UserStream {
         ...init,
         signal: controller.signal
       });
-    } catch (error: any) {
-      if (timedOut || error?.name === "AbortError") {
+    } catch (error: unknown) {
+      if (timedOut || (isRecord(error) && error.name === "AbortError")) {
         const timeoutError = new Error(`${operation}_timeout`);
         timeoutError.name = "TimeoutError";
         throw timeoutError;

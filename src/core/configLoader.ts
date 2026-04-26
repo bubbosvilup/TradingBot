@@ -6,7 +6,7 @@ import type { PortfolioKillSwitchConfig, RuntimeTuningConfig } from "../types/ru
 const fs = require("node:fs");
 const path = require("node:path");
 const { createConfigError } = require("../types/errors.ts");
-const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("../types/portfolioKillSwitch.ts");
+const { parsePortfolioKillSwitchConfig, parseRuntimeModeConfig, parseRuntimeTimingConfig } = require("../types/configSchema.ts");
 
 const VALID_RISK_PROFILES = new Set(["low", "medium", "high"]);
 const VALID_MARKET_PROVIDERS = new Set(["binance"]);
@@ -222,34 +222,7 @@ class ConfigLoader {
     mtf?: MtfRuntimeConfig | unknown;
     postLossLatchMinFreshPublications?: number;
   }) {
-    if (config.executionMode !== undefined) {
-      const executionMode = String(config.executionMode || "").trim().toLowerCase();
-      if (executionMode === "live") {
-        throw this.createConfigValidationError(
-          "unsupported_execution_mode",
-          "bots.config.json has unsupported executionMode \"live\"; active runtime is paper-only",
-          { field: "executionMode", value: config.executionMode }
-        );
-      }
-      if (executionMode !== "paper") {
-        throw this.createConfigValidationError(
-          "invalid_execution_mode",
-          `bots.config.json has invalid executionMode "${String(config.executionMode || "")}"`,
-          { field: "executionMode", value: config.executionMode }
-        );
-      }
-    }
-
-    if (config.marketMode !== undefined) {
-      const marketMode = String(config.marketMode || "").trim().toLowerCase();
-      if (marketMode !== "live") {
-        throw this.createConfigValidationError(
-          "unsupported_market_mode",
-          `bots.config.json has unsupported marketMode "${String(config.marketMode || "")}"; active runtime requires live market data`,
-          { field: "marketMode", value: config.marketMode }
-        );
-      }
-    }
+    parseRuntimeModeConfig(config);
 
     if (config.market !== undefined) {
       const market = requirePlainObject(config.market, "bots.config.json has invalid market; expected an object") as MarketStreamConfig;
@@ -275,14 +248,7 @@ class ConfigLoader {
 
     this.validateHistoricalPreloadConfig(config.historicalPreload);
 
-    if (config.portfolioKillSwitch !== undefined) {
-      const portfolioKillSwitch = requirePlainObject(config.portfolioKillSwitch, "bots.config.json has invalid portfolioKillSwitch; expected an object");
-      assertOptionalBooleanField(portfolioKillSwitch, "enabled", "bots.config.json has invalid portfolioKillSwitch.enabled");
-      assertOptionalNumberField(portfolioKillSwitch, "maxDrawdownPct", "bots.config.json has invalid portfolioKillSwitch.maxDrawdownPct", { minExclusive: 0 });
-      if (portfolioKillSwitch.mode !== undefined && !VALID_PORTFOLIO_KILL_SWITCH_MODES.has(String(portfolioKillSwitch.mode || "").trim())) {
-        throw new Error(`bots.config.json has invalid portfolioKillSwitch.mode "${String(portfolioKillSwitch.mode || "")}"`);
-      }
-    }
+    parsePortfolioKillSwitchConfig(config.portfolioKillSwitch);
 
     this.validateMtfConfig(config.mtf);
 
@@ -346,17 +312,10 @@ class ConfigLoader {
   }
 
   validateRuntimeTuningConfig(config: RuntimeTuningConfig) {
-    const runtimeConfig = config as Record<string, unknown>;
-    assertOptionalNumberField(runtimeConfig, "architectWarmupMs", "bots.config.json has invalid architectWarmupMs", { min: 5_000 });
-    assertOptionalNumberField(runtimeConfig, "architectPublishIntervalMs", "bots.config.json has invalid architectPublishIntervalMs", { min: 5_000 });
-    assertOptionalNumberField(runtimeConfig, "postLossLatchMaxMs", "bots.config.json has invalid postLossLatchMaxMs", { min: 1 });
-    assertOptionalNumberField(runtimeConfig, "postLossLatchMinFreshPublications", "bots.config.json has invalid postLossLatchMinFreshPublications", { min: 1 });
-    assertOptionalNumberField(runtimeConfig, "symbolStateRetentionMs", "bots.config.json has invalid symbolStateRetentionMs", { min: 60_000 });
-    assertOptionalNumberField(runtimeConfig, "userStreamRequestTimeoutMs", "bots.config.json has invalid userStreamRequestTimeoutMs", { min: 1 });
+    parseRuntimeTimingConfig(config as Record<string, unknown>);
   }
 }
 
 module.exports = {
-  ConfigLoader,
-  VALID_PORTFOLIO_KILL_SWITCH_MODES
+  ConfigLoader
 };

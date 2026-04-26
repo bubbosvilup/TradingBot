@@ -31,6 +31,18 @@ function fromBinanceSymbol(exchangeSymbol: string) {
   return normalized;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getField(source: unknown, field: string) {
+  return isRecord(source) ? source[field] : undefined;
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function attachSocketHandler(socket: any, eventName: string, handler: (...args: any[]) => void) {
   if (typeof socket.addEventListener === "function") {
     socket.addEventListener(eventName, handler);
@@ -103,10 +115,10 @@ class WSManager {
     for (const listener of this.emitter.listeners(channel)) {
       try {
         listener.call(this.emitter, payload);
-      } catch (error: any) {
+      } catch (error: unknown) {
         this.logger.error("ws_publish_listener_failed", {
           channel,
-          error: error?.message || String(error),
+          error: getErrorMessage(error),
           source: "ws_publish_listener_failed"
         });
       }
@@ -143,7 +155,7 @@ class WSManager {
         streams: this.buildMarketStreamNames(symbols, params.streamType || "trade", params.klineIntervals || []).join(","),
         symbols: symbols.join(",")
       }),
-      handleMessage: (data: any, receivedAt: number) => {
+      handleMessage: (data: unknown, receivedAt: number) => {
         const normalizedTick = this.normalizeTick(data, receivedAt);
         if (normalizedTick && typeof params.onTick === "function") {
           params.onTick(normalizedTick);
@@ -164,7 +176,7 @@ class WSManager {
   connectBinanceUserStream(params: {
     connectionId?: string;
     listenKey: string;
-    onUserEvent?: ((event: any) => void) | null;
+    onUserEvent?: ((event: unknown) => void) | null;
     urlBase?: string;
   }) {
     if (!params.listenKey) {
@@ -183,7 +195,7 @@ class WSManager {
         listenKey: params.listenKey,
         streamCount: 1
       }),
-      handleMessage: (data: any, receivedAt: number) => {
+      handleMessage: (data: unknown, receivedAt: number) => {
         const normalized = this.normalizeUserEvent(data, receivedAt);
         if (normalized && typeof params.onUserEvent === "function") {
           params.onUserEvent(normalized);
@@ -202,7 +214,7 @@ class WSManager {
     mode: "live";
     buildUrl: () => string;
     describe: () => Record<string, unknown>;
-    handleMessage: (data: any, receivedAt: number) => void;
+    handleMessage: (data: unknown, receivedAt: number) => void;
   }) {
     return {
       ...definition,
@@ -257,10 +269,10 @@ class WSManager {
     let socket;
     try {
       socket = this.websocketFactory(url);
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.error("ws_constructor_failed", {
         connectionId: state.connectionId,
-        error: error?.message || String(error)
+        error: getErrorMessage(error)
       });
       this.scheduleReconnect(state, "constructor_failed");
       return;
@@ -288,11 +300,11 @@ class WSManager {
       this.startHealthTimer(state);
     });
 
-    attachSocketHandler(socket, "message", (event: any) => {
-      this.onSocketMessage(state, event?.data ?? event);
+    attachSocketHandler(socket, "message", (event: unknown) => {
+      this.onSocketMessage(state, getField(event, "data") ?? event);
     });
 
-    attachSocketHandler(socket, "error", (event: any) => {
+    attachSocketHandler(socket, "error", (event: unknown) => {
       this.publish(`ws:status:${state.connectionId}`, {
         connectionId: state.connectionId,
         mode: state.mode,
@@ -302,20 +314,20 @@ class WSManager {
       });
       this.logger.warn("ws_error", {
         connectionId: state.connectionId,
-        message: event?.message || "socket_error"
+        message: getField(event, "message") || "socket_error"
       });
     });
 
-    attachSocketHandler(socket, "close", (event: any) => {
+    attachSocketHandler(socket, "close", (event: unknown) => {
       this.stopStatsTimer(state);
       this.stopHealthTimer(state);
       state.socket = null;
       const disconnectedAt = this.now();
       this.publish(`ws:status:${state.connectionId}`, {
-        code: event?.code || 0,
+        code: getField(event, "code") || 0,
         connectionId: state.connectionId,
         mode: state.mode,
-        reason: event?.reason || "",
+        reason: getField(event, "reason") || "",
         reconnectAttempt: state.reconnectAttempt,
         status: "disconnected",
         timestamp: disconnectedAt
@@ -326,28 +338,29 @@ class WSManager {
       }
 
       this.logger.warn("ws_closed", {
-        code: event?.code || 0,
+        code: getField(event, "code") || 0,
         connectionId: state.connectionId,
-        reason: event?.reason || "closed"
+        reason: getField(event, "reason") || "closed"
       });
-      this.scheduleReconnect(state, event?.reason || `code_${event?.code || 0}`);
+      this.scheduleReconnect(state, String(getField(event, "reason") || `code_${getField(event, "code") || 0}`));
     });
   }
 
-  onSocketMessage(state: any, rawPayload: any) {
-    let payload;
+  onSocketMessage(state: any, rawPayload: unknown) {
+    let payload: unknown;
     try {
       payload = JSON.parse(String(rawPayload));
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.warn("ws_message_parse_failed", {
         connectionId: state.connectionId,
-        error: error?.message || String(error)
+        error: getErrorMessage(error)
       });
       return;
     }
 
     const receivedAt = this.now();
-    const data = payload?.data || payload;
+    const wrappedData = getField(payload, "data");
+    const data = wrappedData || payload;
     state.messageCount += 1;
     state.lastMessageAt = receivedAt;
     this.publish(`ws:status:${state.connectionId}`, {
@@ -388,39 +401,40 @@ class WSManager {
     return `${normalizedBase}/ws/${listenKey}`;
   }
 
-  normalizeTick(data: any, receivedAt: number): MarketTick | null {
-    if (!data || !data.s || !data.p) return null;
+  normalizeTick(data: unknown, receivedAt: number): MarketTick | null {
+    if (!isRecord(data) || !data.s || !data.p) return null;
     if (data.e !== "trade" && data.e !== "aggTrade") return null;
     return {
       price: Number(data.p),
       receivedAt,
       source: "ws",
-      symbol: fromBinanceSymbol(data.s),
+      symbol: fromBinanceSymbol(String(data.s || "")),
       timestamp: Number(data.T || data.E || receivedAt)
     };
   }
 
-  normalizeKline(data: any, receivedAt: number): MarketKline | null {
-    if (!data || data.e !== "kline" || !data.k) return null;
+  normalizeKline(data: unknown, receivedAt: number): MarketKline | null {
+    if (!isRecord(data) || data.e !== "kline" || !isRecord(data.k)) return null;
+    const kline = data.k;
     return {
-      close: Number(data.k.c),
-      closedAt: Number(data.k.T),
-      high: Number(data.k.h),
-      interval: String(data.k.i),
-      isClosed: Boolean(data.k.x),
-      low: Number(data.k.l),
-      open: Number(data.k.o),
-      openedAt: Number(data.k.t),
+      close: Number(kline.c),
+      closedAt: Number(kline.T),
+      high: Number(kline.h),
+      interval: String(kline.i),
+      isClosed: Boolean(kline.x),
+      low: Number(kline.l),
+      open: Number(kline.o),
+      openedAt: Number(kline.t),
       receivedAt,
       source: "ws",
-      symbol: fromBinanceSymbol(data.k.s || data.s),
-      timestamp: Number(data.E || data.k.T || receivedAt),
-      volume: Number(data.k.v)
+      symbol: fromBinanceSymbol(String(kline.s || data.s || "")),
+      timestamp: Number(data.E || kline.T || receivedAt),
+      volume: Number(kline.v)
     };
   }
 
-  normalizeUserEvent(data: any, receivedAt: number) {
-    if (!data || !data.e) return null;
+  normalizeUserEvent(data: unknown, receivedAt: number) {
+    if (!isRecord(data) || !data.e) return null;
 
     if (data.e === "executionReport") {
       return {
@@ -433,11 +447,11 @@ class WSManager {
           orderStatus: data.X || "UNKNOWN",
           orderType: data.o || "UNKNOWN",
           side: String(data.S || "").toLowerCase(),
-          symbol: fromBinanceSymbol(data.s),
+          symbol: fromBinanceSymbol(String(data.s || "")),
           timeInForce: data.f || null
         },
         receivedAt,
-        symbol: fromBinanceSymbol(data.s),
+        symbol: fromBinanceSymbol(String(data.s || "")),
         timestamp: Number(data.E || data.T || receivedAt),
         type: "order_update"
       };
@@ -448,10 +462,10 @@ class WSManager {
         data: data.e === "outboundAccountPosition"
           ? {
             balances: Array.isArray(data.B)
-              ? data.B.map((balance: any) => ({
-                asset: balance.a,
-                free: Number(balance.f || 0),
-                locked: Number(balance.l || 0)
+              ? data.B.map((balance: unknown) => ({
+                asset: getField(balance, "a"),
+                free: Number(getField(balance, "f") || 0),
+                locked: Number(getField(balance, "l") || 0)
               }))
               : []
           }
@@ -470,9 +484,9 @@ class WSManager {
     return null;
   }
 
-  extractEventTime(data: any) {
-    if (!data) return null;
-    if (data.e === "kline" && data.k) {
+  extractEventTime(data: unknown) {
+    if (!isRecord(data)) return null;
+    if (data.e === "kline" && isRecord(data.k)) {
       return Number(data.E || data.k.T || 0) || null;
     }
     return Number(data.T || data.E || 0) || null;
