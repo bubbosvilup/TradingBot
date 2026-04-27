@@ -1,5 +1,20 @@
 # TradingBot
 
+##TODO: 18.3
+1. StateMutationApplier / ownership rewrite
+2. Wire transition contracts into applier
+3. Fix hidden type erosion from require(...) + weak imports
+4. Complete config contract for runtime-used keys
+5. Complete error taxonomy propagation
+6. Encapsulate StateStore reads
+7. Align docs to reality
+8. Decide remote UserStream/live path role
+9. Clarify MTF operational status
+
+Ad oggi (18.2 out) la repo presenta diversi problemi strutturali (di cui sopra) che verranno sistemato nella 18.l3
+la tripla ownership il primo. da giudicare anche strict: false per TS: Molti moduli chiamano con require e gira (la repo) ancora con module: comonJs impedendo la propagazione muro di tipo. 
+(ex. Orchestrator: importa ConfigLoader via require(...) , chiama loadBotsConfig() , poi usa botConfig.experimentMetrics e botConfig.loggingMode , proprietà che non compaiono nella signature esplicita di loadBotsConfig())
+
 Runtime multi-bot per paper trading, osservabilita realtime e refactor progressivo del motore decisionale.
 
 Il progetto mantiene nel repository alcune fondamenta per lavori futuri come live readiness, backtest moderno e short support, ma il runtime attivo resta intenzionalmente limitato e difensivo.
