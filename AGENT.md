@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This repository must stay understandable, safe, and verifiable.
+This is the active agent constitution for TradingBot.
 
-The bot has five jobs:
+The repo must stay understandable, safe, and verifiable. The bot has five jobs:
 
 1. read the market;
 2. build reliable state;
@@ -14,9 +14,9 @@ The bot has five jobs:
 
 Every change must support those jobs without making the repo more abstract, more magical, or harder to review.
 
----
+Do not create new active AI guidance files, rules folders, playbooks, skill docs, handoff files, or parallel agent instructions without explicit user approval.
 
-## Core Doctrine
+## Doctrine
 
 Preserve behavior unless the task explicitly asks for a semantic change.
 
@@ -29,32 +29,22 @@ Truth matters more than elegance:
 - Config must be explicit and validated.
 - Tests must prove behavior, not implementation decoration.
 
-Do not use `any`, `as any`, broad casts, or non-null assertions to bypass the compiler.
+Do not use `any`, `as any`, broad casts, `unknown as SomeType`, or non-null assertions to bypass the compiler.
 
 When unsure, stop and ask.
 
----
+## Architecture Rules
 
-## Architecture Spirit
-
-The core architecture is:
+The core runtime shape is:
 
 - Context informs.
-- Architect decides regime / family / usability.
-- TradingBot orchestrates within that perimeter.
+- Architect decides regime, family, and usability.
+- `TradingBot` orchestrates within that perimeter.
 - Focused roles own focused operational flows.
 - Execution happens only through risk-gated execution paths.
-- StateStore is the runtime source of truth.
+- `StateStore` is the runtime source of truth.
 
-`TradingBot` should orchestrate.
-
-`TradingBot` must not become the owner of every policy, exception, or side concern.
-
----
-
-## Keep Out of TradingBot
-
-Do not move these back into `TradingBot` unless explicitly requested:
+Keep out of `TradingBot` unless explicitly requested:
 
 - strategy-specific formulas
 - Architect interpretation
@@ -69,12 +59,6 @@ Do not move these back into `TradingBot` unless explicitly requested:
 - startup history preload
 - launcher/debug-capture policy
 - MTF interpretation or raw timeframe mapping
-
-If logic can live in an existing role, domain helper, config validator, stream boundary, or test, do not add it to `TradingBot`.
-
----
-
-## Non-Negotiable Rules
 
 Do not:
 
@@ -91,25 +75,11 @@ Do not:
 - silently change thresholds, timing, lifecycle semantics, risk behavior, or telemetry contracts
 - mutate important state from read-like `get*` or `read*` methods
 
----
+## Runtime And Risk Rules
 
-## State and Runtime Rules
+The active runtime is paper-only. Live execution must not become easier to enter.
 
-`StateStore` is the runtime truth source.
-
-Important state must have one owner:
-
-- bot lifecycle state
-- positions
-- orders
-- closed trades
-- performance
-- market freshness
-- risk-relevant runtime state
-
-State writes must not allow cross-bot ownership mismatch.
-
-Runtime must remain paper-only unless explicitly changed by a dedicated safety-reviewed task.
+`StateStore` owns authoritative runtime state for bot lifecycle, positions, orders, closed trades, performance, market freshness, and risk-relevant runtime state. State writes must not allow cross-bot ownership mismatch.
 
 Paused state must remain coherent:
 
@@ -117,13 +87,7 @@ Paused state must remain coherent:
 - open positions may still close safely;
 - paused state must have a real pause reason.
 
----
-
-## Risk Rules
-
-Risk behavior must not become more permissive by accident.
-
-Do not silently:
+Risk behavior must not become more permissive by accident. Do not silently:
 
 - allow more entries
 - delay or suppress exits
@@ -131,34 +95,17 @@ Do not silently:
 - make sizing more aggressive
 - alter fee assumptions, thresholds, hold times, or publish cadence
 
-A telemetry warning is not a guardrail.
+Telemetry warnings are not guardrails. Real safety controls must live in runtime/risk logic, not UI labels or logs.
 
-Real safety controls must live in runtime/risk logic, not in UI labels or logs.
-
----
+Experiments remain quarantined unless explicitly promoted. `allow_small_loss_floor05` is not baseline behavior.
 
 ## Code Rules
 
 Prefer small explicit code over broad abstraction.
 
-Use precise verbs when they fit:
+Use precise verbs when they fit: `parse`, `coerce`, `sanitize`, `clamp`, `enforce`, `ingest`, `mark`, `expire`.
 
-- `parse`
-- `coerce`
-- `sanitize`
-- `clamp`
-- `enforce`
-- `ingest`
-- `mark`
-- `expire`
-
-Avoid vague names when a narrower verb is true:
-
-- `normalize`
-- `process`
-- `handle`
-- `manage`
-- `coordinate`
+Avoid vague names when a narrower verb is true: `normalize`, `process`, `handle`, `manage`, `coordinate`.
 
 Rules:
 
@@ -168,8 +115,6 @@ Rules:
 - do not create wrappers, adapters, or capability objects unless they protect a real boundary or add testable behavior
 - do not hide type problems with casts
 - do not hide runtime behavior behind nicer names
-
----
 
 ## Test Rules
 
@@ -191,3 +136,37 @@ Minimum checks for code patches:
 ```text
 npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false
 npm test
+```
+
+Documentation-only patches do not require the runtime test suite unless they change executable files or generated artifacts.
+
+## Minimal Workflow
+
+Before a code patch, state:
+
+- goal
+- priority: P0 / P1 / P2 / P3
+- patch type
+- touched files
+- invariants protected
+- trading behavior impact
+- state ownership impact, if any
+- config/runtime impact, if any
+- telemetry/API impact, if any
+- tests to run
+
+For audits, report proven findings only. Include the files/functions involved, why the issue is proven, the behavior or boundary at risk, the owner of the violated responsibility, the smallest behavior-preserving patch, required tests, and what not to change.
+
+For validation, confirm whether the patch changed entry, exit, recovery, risk, sizing, cooldown, execution, config defaults, startup behavior, telemetry/API/log contracts, `TradingBot`, `StateStore`, runtime boundaries, experiment logic, type truth, wrappers/coordinators, or tests.
+
+## Stop Conditions
+
+Stop and ask if:
+
+- docs and code disagree in a way that affects the patch
+- ownership is unclear
+- trading behavior impact is unknown
+- a fix would require broad casts or type lies
+- the patch risks changing entry, exit, recovery, risk, or execution behavior silently
+- the change would touch too many unrelated files
+- a requested documentation change would create competing active guidance

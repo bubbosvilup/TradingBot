@@ -85,8 +85,8 @@ Required work:
 Do not:
 
 * rely on discipline
-* hide this with casts
-* create a second state path
+*  DO NOT hide this with casts
+* DO NOT create a second state path
 
 ---
 
