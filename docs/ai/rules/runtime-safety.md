@@ -1,58 +1,152 @@
 # Runtime Safety
 
-Current runtime posture:
+Goal:
+Keep runtime behavior safe, predictable, and verifiable.
 
-- market data path is currently hard-wired toward live input in `src/core/orchestrator.ts`
-- execution is still paper-only and must remain so
-- `StateStore` is the runtime truth source
-- startup historical preload, when enabled, seeds `StateStore` before live observation starts and remains bootstrap-only
-- the dashboard reads server/store state; it should not become a side channel for business logic
-- the Pulse UI is served as a static observability surface; it must stay separate from trading decisions
-- managed-recovery invalidation is now intentionally stricter than a single early `family_mismatch`
-- MTF context is optional and behind `mtf.enabled`; current default config enables it, and `MTF_ENABLED=false` disables it at runtime
-- historical preload is optional by default in config; required mode must abort startup on preload failure before market stream/context/Architect/bots start
-- `TradingBot` stays passive for MTF and may only pass published diagnostics through generic context/economics paths
-- `TradingBot` exit handling uses a defensive position snapshot for planning/lifecycle/telemetry, while execution still closes through `ExecutionEngine` and `StateStore`
-- exit semantics for RSI-threshold and recovery price-target behavior are now explicitly capability-driven through exit policy; disabled semantics must not still close via fallback paths
-- shared entry economics uses explicit strategy policy for RSI economics, MTF cap opt-in, and capture-gap cap configuration; the baseline capture-gap cap remains `0.03`
-- `RiskManager` owns volatility-aware sizing and post-win cooldown controls; volatility sizing cannot increase size and loss cooldown behavior must remain unchanged
-- manual resume for bot-level max-drawdown pauses is explicit through `POST /api/bots/:botId/resume` and must not bypass an active portfolio kill switch
-- paused state is runtime-authoritative for new entries regardless of pause reason, but open positions may still close while paused
-- runtime state must never persist `status === "paused"` with a null/empty `pausedReason`
-- `IndicatorEngine` RSI is still simple-window, not Wilder-smoothed; thresholds are calibrated to the current implementation
-- short balance/equity accounting remains a paper-only full-notional simplification, not realistic margin accounting
+The runtime must not become more complex, more implicit, or more permissive.
 
-Safe-change rules:
+---
 
-- isolate runtime mode changes from strategy logic changes
-- keep real safety controls separate from metadata warnings; a telemetry field is not a guardrail
-- isolate dashboard fixes from risk and execution changes
-- keep config changes explicit; avoid hidden fallback behavior
-- keep historical preload out of `TradingBot`, downstream strategy roles, and per-tick paths
-- seed preload data through existing store update paths where possible; do not create shadow histories
-- preserve startup failures that prevent unsupported live execution
-- preserve protective-stop priority when changing invalidation or recovery ordering
-- preserve entry blocking during Architect challenger hysteresis
-- preserve baseline-identical RSI entry behavior when MTF diagnostics are absent or disabled
-- preserve policy-authoritative exit behavior when exit capabilities are disabled
-- keep MTF raw timeframe mapping in frame config / aggregation plumbing, not in `TradingBot` or downstream strategy logic
-- preserve baseline capture-gap cap behavior when `captureGapCapPct` is absent or invalid
-- preserve baseline sizing when volatility sizing is disabled or `volatilityRisk` is missing/invalid
-- preserve stronger post-loss cooldown semantics when adding post-win cooldown nuance
-- do not widen manual-resume API behavior unless explicitly requested; fix paused-state coherence at the state write site first
+## Current Runtime Facts
 
-P0-specific guidance:
+- execution is paper-only → must remain so
+- market data comes from live streams
+- `StateStore` is the single source of truth
+- historical preload is bootstrap-only
+- Pulse UI is observability only (no trading decisions)
 
-- If removing or segregating live-path assumptions, keep the result obvious in config and startup behavior.
-- If changing historical preload, preserve the source boundary: same exchange/data source as `MarketStream`, bounded coverage, explicit degraded/fatal diagnostics.
-- If changing managed recovery, define exact precedence versus target-hit, invalidation, timeout, and protective stop flows.
-- Current managed-recovery precedence is: protective stop, timeout, confirmed target, invalidation.
-- Current non-protective regime invalidation must respect the post-entry grace/confirmation policy.
-- If fixing the dashboard, confirm API payload compatibility before changing server-side structures.
-- If changing Pulse UI, keep it operator-focused and API-facing; do not add trading-side decisions.
+If any of these change → it is a P0 decision
 
-Before touching runtime plumbing:
+---
 
-- identify the failure mode being prevented
-- identify the operator-visible signal for that failure mode
-- identify the tests that should fail if the safety boundary regresses
+## Core Safety Rules
+
+Do not:
+
+- enable or reintroduce live execution
+- bypass `StateStore` as the source of truth
+- introduce alternative state paths or shadow histories
+- let UI, telemetry, or debug systems influence trading decisions
+- mix startup/bootstrap logic with per-tick runtime logic
+- hide failures that should stop or degrade the system
+
+---
+
+## State Safety
+
+- every important state has one owner
+- state must not be mutated from multiple uncontrolled paths
+- paused state must always have a valid reason
+- paused state blocks entry but must still allow safe exits
+
+If state ownership becomes unclear → stop
+
+---
+
+## Startup Safety
+
+- invalid or incomplete config must fail fast
+- required preload must block startup if it fails
+- startup must not silently degrade into unsafe mode
+- runtime mode must be explicit (paper-only, no hidden live paths)
+
+---
+
+## Risk & Execution Safety
+
+Do not:
+
+- weaken protective exits
+- change recovery vs invalidation precedence silently
+- bypass Architect gating (`architect_challenger_pending`)
+- change entry/exit behavior through runtime plumbing
+- make execution paths implicit or harder to trace
+
+Execution must always go through:
+
+- `ExecutionEngine`
+- `StateStore`
+
+No side paths allowed
+
+---
+
+## Managed Recovery Safety
+
+Current precedence must remain:
+
+1. protective stop
+2. timeout
+3. confirmed target
+4. invalidation
+
+Do not:
+
+- reorder this silently
+- make invalidation easier than entry
+- remove grace/confirmation for regime invalidation
+
+---
+
+## MTF Safety
+
+MTF is optional.
+
+If disabled or unclear → behavior must match baseline exactly.
+
+Do not:
+
+- leak MTF logic into `TradingBot`
+- interpret raw timeframe labels outside MTF config/aggregation
+- widen behavior outside defined policy
+
+---
+
+## Economics & Sizing Safety
+
+- baseline capture-gap cap remains `0.03`
+- volatility-aware sizing must never increase size
+- missing or invalid data must fall back to baseline behavior
+
+Do not:
+
+- make sizing more aggressive
+- introduce hidden tuning via runtime logic
+
+---
+
+## Config Safety
+
+- config must be explicit and validated
+- no hidden defaults that change behavior silently
+- no fallback behavior that makes the system more permissive
+
+---
+
+## Observability Safety
+
+- telemetry must not act as a guardrail
+- UI must not affect trading decisions
+- logs must reflect real behavior, not hide it
+
+---
+
+## P0 Change Rules
+
+Before changing runtime:
+
+1. What failure are we preventing?
+2. What signal shows this failure to the operator?
+3. What test proves this boundary holds?
+
+If one of these is missing → stop
+
+---
+
+## Hard Rules
+
+- do not mix runtime changes with strategy changes
+- do not mix UI fixes with execution/risk logic
+- do not introduce hidden behavior through refactors
+- do not make the system “smarter” at the cost of clarity
+- when unsure → stop and ask

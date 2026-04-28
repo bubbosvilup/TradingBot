@@ -1,61 +1,135 @@
 # AI Workflow Scaffold
 
-`AGENT.md` remains the top-level constitution for this repository.
+`AGENT.md` is the top-level constitution for this repository.
 
-Use this folder for repo-specific execution guidance when planning audits, safe refactors, and small patch sets in the active paper-trading runtime.
+This folder contains repo-specific workflow rules for audits, patch planning, runtime safety, testing, and experiment review.
 
-Start here:
+These files extend `AGENT.md`.
+They do not replace it.
 
-1. Read `AGENT.md`.
-2. Read `docs/ai/project-map.md`.
-3. Read `docs/ai/priorities.md`.
-4. Read the relevant files under `docs/ai/rules/`.
-5. Follow the matching playbook under `docs/ai/playbooks/`.
+---
 
-All coding agents must apply the human-readable coding rules in `AGENT.md`. Do not copy the full rule block into every local instruction file; reference `AGENT.md` unless a task needs a narrower local constraint.
+## Goal
 
-Default operating assumptions:
+Help coding agents work safely on TradingBot.
 
-- Preserve current runtime behavior unless the task explicitly requests a semantic change.
-- Treat `src/core/stateStore.ts` as the in-memory source of truth.
-- Treat startup historical preload as bootstrap/store/history plumbing only: it seeds `StateStore` before observation, uses the same market source as `MarketStream`, and must not enter the hot tick path.
-- Keep `TradingBot` as orchestrator, not a dumping ground for extracted logic.
-- For v18.2, do not segment `TradingBot` before contract tests and clear boundaries exist.
-- Do not reintroduce strategy-name branching into `src/bots/tradingBot.ts`.
-- Keep exit semantics policy-driven:
-  - use exit-policy capabilities instead of strategy-id coupling
-  - disabled exit semantics must not still fire through a fallback path
-- Do not move `architectCoordinator`, latch logic, telemetry shaping, or outcome shaping back into `TradingBot`.
-- Keep paper-trading safety intact. The current runtime already rejects live execution.
-- Keep Pulse UI work in `SystemServer` / `public/`; it is observability/control-surface presentation, not trading decision logic.
-- Keep paused state coherent and runtime-authoritative:
-  - paused bots must not reopen while paused
-  - open positions may still close while paused
-  - no persisted `paused` state without a non-empty `pausedReason`
-- Keep launcher preparation in startup/UI/config plumbing; `Normal` / `Debug` selection and debug-capture field selection must not leak into trading decisions.
-- Keep future debug `jsonl` capture deliberate:
-  - append-only events for high-cardinality timelines
-  - rolling latest-value snapshots/counters for numeric state that would otherwise explode log volume
-- Preserve the current Architect/entry/exit consistency guards:
-  - entry blocks on pending challenger hysteresis
-  - managed-recovery invalidation has post-entry grace/confirmation
-  - confirmed recovery target beats invalidation
-  - RSI entry economics can resolve the target-distance cap, but `entryCoordinator` owns the final target-distance gate
-  - MTF-disabled or absent diagnostics keep RSI behavior baseline-identical
-- Preserve deterministic teardown for runtime/stream tests; do not hide late logs by global suppression when a stop/cleanup path should own the fix.
+Every change must keep the repo:
 
-Primary use cases:
+- understandable
+- safe
+- verifiable
 
-- architecture audit
-- patch planning before touching behavior-sensitive paths
-- runtime safety review
-- UI/dashboard fixes that avoid collateral damage in core trading paths
-- Pulse UI changes that preserve the existing static frontend model
-- launcher/debug-capture planning that preserves runtime safety and keeps output schemas intentional
-- roadmap planning:
-  - v18 is release candidate / commit safety
-  - v18.1 is closed after technical microfixes
-  - v18.2 is the next focus for repo humanization, boundaries, contracts, and types
-  - v19 owns modern replay/backtest parity
-  - v20 owns futures/margin realism
-  - v21 owns strategy lab and optimization discipline
+The bot should stay simple:
+
+1. read the market;
+2. build reliable state;
+3. decide enter / exit / hold;
+4. execute only through risk gates;
+5. record what happened and why.
+
+---
+
+## Start Here
+
+Before planning or editing:
+
+1. read `AGENT.md`
+2. read `docs/ai/project-map.md`
+3. read `docs/ai/priorities.md`
+4. read the relevant file in `docs/ai/rules/`
+5. follow the matching playbook in `docs/ai/playbooks/`
+
+If the documents conflict, `AGENT.md` wins.
+
+If the repo/code conflicts with docs, stop and report the mismatch.
+
+---
+
+## Default Operating Rules
+
+- preserve behavior unless a semantic change is explicitly requested
+- keep `TradingBot` orchestration-focused
+- keep `StateStore` as the runtime source of truth
+- keep Pulse UI separate from trading decisions
+- keep debug/launcher/reporting concerns separate from trading decisions
+- keep experiments quarantined unless explicitly promoted
+- keep paper-only runtime safety intact
+- do not start future roadmap work unless explicitly ordered
+
+---
+
+## Never Do
+
+Do not:
+
+- make the repo more abstract
+- invent internal frameworks
+- add coordinators where a function is enough
+- use `any`, `as any`, broad casts, or `!` to bypass TypeScript
+- change trading behavior silently
+- perform cosmetic refactors while touching trading logic
+- move policy logic back into `TradingBot`
+- let UI, telemetry, launcher, or debug capture influence trading decisions
+- hide legacy behavior behind cleaner names
+
+When uncertain, stop and ask.
+
+---
+
+## Rule Files
+
+Use the specific rule file for the work being planned:
+
+- `architecture-rules.md`
+  - ownership, module boundaries, TradingBot scope
+
+- `runtime-safety.md`
+  - startup, paper-only runtime, StateStore, execution safety
+
+- `risk-guardrails.md`
+  - entry/exit/recovery/risk behavior protection
+
+- `testing-rules.md`
+  - required checks and behavior-proof testing
+
+- `experiment-review.md`
+  - quarantined experiments and baseline leakage
+
+---
+
+## Playbooks
+
+Use playbooks for task execution flow:
+
+- audit flow
+- patch flow
+- experiment review
+- other focused workflows
+
+A playbook tells the agent how to proceed.
+A rule file tells the agent what must not be violated.
+
+---
+
+## Current Scope
+
+Current work is v18.3 doctrine, Type Truth, ownership, boundaries, contracts, and documentation alignment.
+
+Deferred work:
+
+- v19 modern replay/backtest parity
+- v20 futures/margin realism
+- v21 strategy lab / optimization
+
+Do not pull deferred work into v18.3 unless explicitly ordered.
+
+---
+
+## Archive Rule
+
+Stale or historical documentation belongs in:
+
+`docs/archive_NOUSE`
+
+Archived docs are history.
+They must not guide current agent behavior.

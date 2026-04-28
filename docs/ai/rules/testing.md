@@ -1,65 +1,133 @@
 # Testing Rules
 
-Minimum check set for guidance-driven patches:
+Goal:
+Tests must prove behavior.
+Tests must prevent silent trading changes.
+
+---
+
+## Minimum Checks
+
+Before any patch:
 
 - `npx -p typescript@5.6.3 tsc -p tsconfig.json --pretty false`
 - `npm test`
 
-Test quality rules:
+If either fails → stop
 
-- Prove behavior through observable state, events, return values, or logs.
-- Do not treat self-reported capability strings as sufficient proof.
-- When a wrapper or adapter is necessary, test the boundary behavior it protects.
+---
 
-Test expectations by change type:
+## Core Rules
 
-- role extraction: add or update focused tests near the extracted role
-- `TradingBot` exit or entry changes: update `tests/tradingBot.test.js` and any dedicated coordinator tests
-- `StateStore` changes: update `tests/stateStore.test.js`
-- dashboard/API changes: update `tests/systemServer.test.js` when behavior is observable through the server surface
-- runtime/bootstrap changes: update `tests/orchestrator.test.js`, `tests/runtime.test.js`, or stream/server tests as needed
-- historical preload changes: update `tests/historicalBootstrapService.test.js`, `tests/orchestrator.test.js`, and stream/store/MTF readiness tests when behavior is observable
-- market stream teardown/fallback changes: update `tests/marketStream.test.js` and verify `npm test` exits without late runtime logs after `PASS all`
-- MTF parameter resolution: update `tests/mtfParamResolver.test.js`, `tests/entryEconomicsEstimator.test.js`, and tick-path coverage only when runtime behavior is observable
-- Strategy economics policy changes: update `tests/entryEconomicsEstimator.test.js`; include baseline-missing-config, explicit-config, invalid-config fallback, and unrelated-strategy cases
-- Risk sizing/cooldown policy changes: update `tests/riskManager.test.js`; include disabled/missing baseline cases and tests proving loss cooldown behavior is unchanged
-- telemetry-only MTF changes: update `tests/tradingBotTelemetry.test.js` and `tests/systemServer.test.js` before broad runtime tests
-- launcher/debug capture changes: update `tests/systemServer.test.js` and any focused launcher/config serialization tests; cover startup-mode selection, capture-field validation, and output-shape stability when behavior is observable
+Tests must prove:
 
-Behavior-sensitive areas needing lock coverage:
-
-- managed recovery transitions and breakers
-- managed recovery invalidation grace and target-vs-invalidation precedence
-- architect publish/apply timing
-- architect challenger hysteresis entry blocking
-- post-loss latch semantics
-- entry gating and open attempt outcomes
-- short-horizon target-distance gating and RSI edge-floor behavior
-- capture-gap cap baseline and explicit policy/config override behavior
-- conservative volatility-aware sizing and win-specific reentry cooldown behavior
-- MTF publish diagnostics and RSI MTF target-distance cap resolution diagnostics
-- historical preload disabled/success/optional-degraded/required-fatal startup behavior
-- market stream REST fallback lifecycle and teardown idempotency
-- exit reason shaping and lifecycle reporting
-- operator-facing telemetry fields consumed by dashboard/API
-- launcher mode selection and debug-capture field/schema stability once implemented
-
-Current tests that should move with these behaviors:
-
-- `tests/architectCoordinator.test.js`: `architect_challenger_pending`
-- `tests/entryCoordinator.test.js`: `target_distance_exceeds_short_horizon`
-- `tests/entryEconomicsEstimator.test.js`: RSI MTF cap resolution into economics without moving gate ownership
-- `tests/exitDecisionCoordinator.test.js`: post-entry invalidation grace and `rsi_exit_floor_failed`
-- `tests/managedRecoveryExitResolver.test.js`: confirmed target beats invalidation
-- `tests/mtfParamResolver.test.js`: pure RSI MTF resolution and baseline fallback policy
-- `tests/mtfContextAggregator.test.js`: dominant internal MTF frame aggregation
-- `tests/mtfContextService.test.js`: optional MTF frame snapshot construction
-- `tests/tradingBotTelemetry.test.js`: operator-facing telemetry field shape, including MTF entry diagnostics
-- `tests/tradingBot.test.js`: full tick-path coverage for the same runtime behaviors
-- `tests/systemServer.test.js`: Pulse UI/API payload behavior and published Architect diagnostics pass-through
+- state changes
+- decisions (enter / exit / hold)
+- risk gating
+- execution outcomes
+- observable telemetry
 
 Do not:
 
-- rely on manual clicking as the only validation for dashboard work
-- remove assertions just to make a refactor pass
-- treat existing tests as incidental when they encode runtime semantics
+- trust internal flags or capability strings
+- test implementation details instead of behavior
+- accept tests that pass while behavior changed
+
+---
+
+## Required Test Mindset
+
+Every patch must answer:
+
+- What behavior is being fixed or protected?
+- What must stay identical?
+- What would break if this regresses?
+
+If this is unclear → stop
+
+---
+
+## When Tests Are Required
+
+Add or update tests when touching:
+
+- entry logic
+- exit logic
+- recovery behavior
+- risk/sizing/cooldown
+- state ownership or mutation
+- runtime/bootstrap behavior
+- config validation
+- stream ingestion or freshness
+- telemetry that operators rely on
+
+---
+
+## Boundary Testing
+
+If a wrapper or adapter exists:
+
+- test the boundary it protects
+- test invalid input handling
+- test fallback behavior
+
+Do not test the wrapper itself if it adds no behavior.
+
+---
+
+## Behavior-Critical Areas
+
+These must always be covered:
+
+- managed recovery transitions and precedence
+- entry gating and open attempt outcomes
+- Architect publish/apply timing
+- Architect challenger hysteresis blocking
+- post-loss latch behavior
+- target-distance gating and RSI edge behavior
+- capture-gap cap baseline vs override
+- volatility sizing (must not increase size)
+- cooldown behavior (must not weaken post-loss protection)
+- MTF influence vs baseline fallback
+- startup behavior (success / degraded / fail-fast)
+- stream fallback and teardown correctness
+- exit classification and lifecycle reporting
+- API/telemetry fields consumed by UI
+
+---
+
+## Mapping Changes → Tests
+
+- Trading logic → `tests/tradingBot.test.js` + related role tests
+- State changes → `tests/stateStore.test.js`
+- Risk logic → `tests/riskManager.test.js`
+- Entry/exit coordination → dedicated coordinator tests
+- Runtime/bootstrap → `tests/orchestrator.test.js`
+- Streams → `tests/marketStream.test.js`
+- API/UI → `tests/systemServer.test.js`
+
+If unsure → add a focused test near the changed module
+
+---
+
+## Do Not
+
+- rely on manual UI testing
+- remove assertions to make tests pass
+- ignore failing tests during refactor
+- treat tests as optional or secondary
+- change behavior without updating tests
+- keep tests that no longer reflect real behavior
+
+---
+
+## Hard Rule
+
+If a patch changes behavior:
+
+- tests must change with it
+- the change must be explicit
+
+If tests do not change:
+
+- behavior must not change

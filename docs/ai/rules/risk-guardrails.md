@@ -1,46 +1,136 @@
 # Risk Guardrails
 
-This is a paper-trading runtime, but runtime safety still matters.
+This is a paper-trading runtime.
 
-Guardrails:
+Even in paper mode, risk behavior must stay stable, visible, and controlled.
 
-- Preserve the current rejection of live order routing.
-- Treat `allow_small_loss_floor05` as quarantined experiment scope, not default behavior.
-- Do not weaken managed recovery exits, protective exits, or invalidation paths without explicit approval.
-- Do not reintroduce single-mismatch managed-recovery invalidation for `family_mismatch`.
-- Do not remove the post-entry grace/confirmation requirement for non-protective regime invalidation.
-- Do not make invalidation outrank a confirmed recovery target unless the task explicitly changes recovery precedence.
-- Do not remove `architect_challenger_pending` entry blocking without replacing it with an equivalent instability guard.
-- Do not silently change entry/exit thresholds, hold times, publish cadence, cooldowns, or fee assumptions.
-- Do not lower the `rsiReversion` edge floor or target-distance cap without test updates and explicit rationale.
-- Do not widen the `rsiReversion` target-distance cap outside the MTF-enabled, coherent range-context path.
-- Do not widen the shared capture-gap cap by default. The baseline remains `0.03`; any higher cap must be explicit strategy/economics policy or config.
-- Do not use hardcoded symbol checks for capture-gap or economics tuning. Symbol-specific tuning must come from config/policy.
-- Do not let volatility-aware sizing increase position size. It may only reduce or preserve the baseline sizing result.
-- Do not weaken post-loss cooldown behavior when adding win-specific cooldown controls.
-- Coherent MTF RSI cap widening requires enabled MTF, sufficient ready frames, `mtfMetaRegime === "range"`, present internal dominant frame, `mtfInstability <= 0.25`, and `mtfAgreement >= 0.75`.
-- The only allowed MTF cap policy today is `short` = baseline, `medium` = `1.5x`, `long` = `2.0x`; disabled, unclear, unstable, insufficient, non-range, or missing-dominant context must remain baseline.
-- Do not hide risk changes inside UI or telemetry patches.
-- Do not use naming cleanup or wrapper extraction to hide legacy risk behavior. If behavior remains legacy, name and test it honestly.
+Goal:
+No patch may silently make the bot more aggressive, less safe, or harder to understand.
 
-Required review questions for risk-sensitive patches:
+---
 
-- Does this expand trading eligibility?
-- Does this delay or suppress an exit?
-- Does this bypass Architect usability or latch protection?
-- Does this alter economics or net-PnL qualification?
-- Does this bypass Architect challenger hysteresis at entry?
-- Does this make recovery/invalidation ordering easier to trigger than entry?
-- Does this change the target-distance gate or the resolved target-distance cap?
-- Does this change the capture-gap cap default or make economics more permissive without explicit config?
-- Does this let volatility or cooldown logic make entries more aggressive after losses?
-- Does this change MTF coherence thresholds or the RSI resolved cap policy?
-- Does this create a path that can look paper-safe but behave more aggressively?
+## Core Rules
 
-Escalate patch review if any answer is yes.
+Do not change trading behavior unless explicitly requested.
 
-Explicit warnings:
+Do not make the bot more permissive by accident.
 
-- Do not reintroduce ad hoc strategy-name conditionals to special-case risk.
-- Do not push managed recovery coordination back into `TradingBot`.
-- Do not merge experiment behavior into baseline config without quarantine language and tests.
+Do not hide risk changes behind refactors, UI changes, or naming cleanup.
+
+---
+
+## Non-Negotiable Guardrails
+
+Do not:
+
+- enable or reintroduce live order routing
+- promote experiments to baseline behavior without explicit approval
+- weaken exit logic (protective exits, invalidation, managed recovery)
+- change recovery vs invalidation precedence silently
+- remove or weaken entry blocking from Architect instability (`architect_challenger_pending`)
+- silently change:
+  - entry thresholds
+  - exit thresholds
+  - hold timing
+  - cooldowns
+  - fee assumptions
+  - publish cadence
+- make sizing more aggressive
+  - volatility logic may only reduce or preserve size
+- weaken post-loss protections (cooldowns, latches, gating)
+- move risk logic into UI, telemetry, or naming changes
+- hide legacy risk behavior behind cleaner names
+
+---
+
+## Experiments
+
+Experiments (e.g. `allow_small_loss_floor05`) are:
+
+- quarantined
+- not baseline
+- must remain visible
+- must remain removable
+
+Do not:
+- make them default
+- mix their telemetry with baseline
+- blur their effect inside shared logic
+
+---
+
+## MTF Guardrails
+
+MTF must never silently widen risk.
+
+MTF widening is allowed only if ALL conditions are true:
+
+- MTF is enabled
+- frames are ready
+- regime is `"range"`
+- dominant frame exists
+- instability ≤ 0.25
+- agreement ≥ 0.75
+
+Allowed policy only:
+
+- short → baseline
+- medium → 1.5x
+- long → 2.0x
+
+Any other condition → baseline
+
+Do not:
+- interpret raw timeframe labels inside runtime logic
+- widen caps outside this path
+- make MTF more permissive without explicit config + tests
+
+---
+
+## Economics Guardrails
+
+Do not:
+
+- lower edge thresholds silently
+- increase capture-gap caps by default
+- introduce symbol-specific tuning via hardcoded logic
+
+All tuning must be explicit in config or policy.
+
+---
+
+## Managed Recovery Guardrails
+
+Do not:
+
+- make invalidation easier than entry
+- make invalidation outrank confirmed recovery targets
+- remove grace/confirmation for regime-sensitive invalidation
+- reintroduce single-step `family_mismatch` invalidation
+
+Recovery logic must remain harder to trigger than entry.
+
+---
+
+## Required Review Questions
+
+For any patch, answer:
+
+- Does this allow more trades?
+- Does this delay or suppress exits?
+- Does this bypass risk or Architect protection?
+- Does this change economics or net PnL qualification?
+- Does this weaken cooldown or post-loss protection?
+- Does this widen target distance or caps?
+- Does this change MTF behavior or thresholds?
+- Does this make behavior look safe but act more aggressive?
+
+If any answer is YES → escalate review.
+
+---
+
+## Hard Warnings
+
+- Do not use strategy-name branching for risk behavior
+- Do not move recovery or risk logic into `TradingBot`
+- Do not merge experiment logic into baseline silently
