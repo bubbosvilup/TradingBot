@@ -4,16 +4,61 @@ import type { PositionRecord } from "../types/trade.ts";
 import type { PositionExitMechanism, PositionLifecycleEvent } from "../types/positionLifecycle.ts";
 import type { StrategyDecision } from "../types/strategy.ts";
 
+type ManagedRecoveryPolicy = {
+  maxConsecutiveEntries: number;
+  timeoutMs: number;
+};
+
+type PositionLifecycleEvents = {
+  MANAGED_RECOVERY_BREAKER_HIT: PositionLifecycleEvent;
+  PRICE_TARGET_HIT: PositionLifecycleEvent;
+  PROTECTIVE_STOP_HIT: PositionLifecycleEvent;
+  REGIME_INVALIDATION: PositionLifecycleEvent;
+  RSI_EXIT_HIT: PositionLifecycleEvent;
+};
+
+type PositionLifecycleManagerModule = {
+  getManagedRecoveryPolicy: (exitPolicy: ExitPolicy | null | undefined) => ManagedRecoveryPolicy;
+  isManagedRecoveryPosition: (position: PositionRecord | null | undefined) => boolean;
+  POSITION_LIFECYCLE_EVENTS: PositionLifecycleEvents;
+};
+
+type ManagedRecoveryExitResolverModule = {
+  resolveManagedRecoveryExit: (params: {
+    buildExitReason: (decisionReasons: string[], primaryReason: string, confirmationTicks?: number | null) => string[];
+    decisionReasons: string[];
+    exitConfirmationTicks: number;
+    exitSignalStreak: number;
+    invalidationExit?: ExitPolicyEvaluation | null;
+    managedRecoveryStartedAt: number;
+    priceTargetHit: boolean;
+    protectiveExit?: ExitPolicyEvaluation | null;
+    rsiExitThresholdHit: boolean;
+    tickTimestamp: number;
+    runtimeTimestamp?: number;
+    timeoutMs: number;
+  }) => ExitDecisionResult;
+};
+
+type TradeSideModule = {
+  calculateAdverseMovePct: (params: {
+    entryPrice: number;
+    markPrice: number;
+    side?: unknown;
+  }) => number;
+  isExitActionForSide: (side: unknown, action: unknown) => boolean;
+};
+
 const {
   getManagedRecoveryPolicy,
   isManagedRecoveryPosition,
   POSITION_LIFECYCLE_EVENTS
-} = require("./positionLifecycleManager.ts");
-const { resolveManagedRecoveryExit } = require("./managedRecoveryExitResolver.ts");
+} = require("./positionLifecycleManager.ts") as PositionLifecycleManagerModule;
+const { resolveManagedRecoveryExit } = require("./managedRecoveryExitResolver.ts") as ManagedRecoveryExitResolverModule;
 const {
   calculateAdverseMovePct,
   isExitActionForSide
-} = require("../utils/tradeSide.ts");
+} = require("../utils/tradeSide.ts") as TradeSideModule;
 
 export type ExitEconomicsEstimate = {
   exitPrice?: number | null;

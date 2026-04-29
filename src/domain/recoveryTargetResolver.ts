@@ -1,10 +1,19 @@
 import type { MarketContext } from "../types/strategy.ts";
-import type { PositionRecord } from "../types/trade.ts";
+import type { PositionRecord, TradeDirection } from "../types/trade.ts";
 import type { ExitPolicy } from "../types/exitPolicy.ts";
 import type { IndicatorSnapshot } from "../types/strategy.ts";
 
-const { mean } = require("../utils/math.ts");
-const { applyDirectionalOffset, normalizeTradeSide } = require("../utils/tradeSide.ts");
+type MathModule = {
+  mean: (values: number[]) => number;
+};
+
+type TradeSideModule = {
+  applyDirectionalOffset: (basePrice: number, offsetPct: number, side?: unknown) => number;
+  normalizeTradeSide: (side: unknown) => TradeDirection;
+};
+
+const { mean } = require("../utils/math.ts") as MathModule;
+const { applyDirectionalOffset, normalizeTradeSide } = require("../utils/tradeSide.ts") as TradeSideModule;
 
 const DEFAULT_RECOVERY_TARGET_SOURCE = "emaSlow";
 const DEFAULT_RECOVERY_TARGET_OFFSET_PCT = 0.015;

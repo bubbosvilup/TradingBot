@@ -5,7 +5,12 @@ import type { PositionLifecycleEvent, PositionLifecycleState } from "../types/po
 const DEFAULT_MANAGED_RECOVERY_EXIT_FLOOR_NET_PNL_USDT = 0.05;
 const DEFAULT_MANAGED_RECOVERY_MAX_CONSECUTIVE_ENTRIES = 2;
 const DEFAULT_MANAGED_RECOVERY_TIMEOUT_MS = 120_000;
-const { normalizeRecoveryTargetOffsetPct } = require("../domain/recoveryTargetResolver.ts");
+
+type RecoveryTargetResolverModule = {
+  normalizeRecoveryTargetOffsetPct: (value: unknown, fallback?: number) => number;
+};
+
+const { normalizeRecoveryTargetOffsetPct } = require("../domain/recoveryTargetResolver.ts") as RecoveryTargetResolverModule;
 const POSITION_LIFECYCLE_STATES = {
   ACTIVE: "ACTIVE" as const,
   CLOSED: "CLOSED" as const,

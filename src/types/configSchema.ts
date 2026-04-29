@@ -1,5 +1,16 @@
-const { createConfigError } = require("./errors.ts");
-const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("./portfolioKillSwitch.ts");
+import type { ConfigError } from "./errors.ts";
+type ErrorsModule = {
+  createConfigError: (code: string, message: string, context?: Record<string, unknown>, cause?: unknown) => ConfigError & Error;
+};
+
+type PortfolioKillSwitchModule = {
+  VALID_PORTFOLIO_KILL_SWITCH_MODES: {
+    has(value: string): boolean;
+  };
+};
+
+const { createConfigError } = require("./errors.ts") as ErrorsModule;
+const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("./portfolioKillSwitch.ts") as PortfolioKillSwitchModule;
 
 const DEFAULT_RUNTIME_MODES = {
   executionMode: "paper",

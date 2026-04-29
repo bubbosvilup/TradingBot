@@ -6,10 +6,30 @@ import type { MarketTick } from "../types/market.ts";
 import type { PositionExitMechanism, PositionLifecycleEvent, PositionLifecycleState } from "../types/positionLifecycle.ts";
 import type { RiskProfileSettings, TradeConstraints } from "../types/runtime.ts";
 import type { EntryEconomicsEstimate, MarketContext, StrategyDecision } from "../types/strategy.ts";
-import type { ClosedTradeRecord, PositionRecord } from "../types/trade.ts";
+import type { ClosedTradeRecord, PositionRecord, TradeDirection } from "../types/trade.ts";
 
-const { getPositionLifecycleState, isManagedRecoveryPosition, POSITION_LIFECYCLE_EVENTS, resolveLifecycleEventFromReasons } = require("./positionLifecycleManager.ts");
-const { applyDirectionalOffset, isEntryAction, normalizeTradeSide } = require("../utils/tradeSide.ts");
+type PositionLifecycleManagerModule = {
+  getPositionLifecycleState: (position: PositionRecord | null | undefined) => PositionLifecycleState | null;
+  isManagedRecoveryPosition: (position: PositionRecord | null | undefined) => boolean;
+  POSITION_LIFECYCLE_EVENTS: {
+    FAILED_RSI_EXIT: "FAILED_RSI_EXIT";
+    PRICE_TARGET_HIT: "PRICE_TARGET_HIT";
+    PROTECTIVE_STOP_HIT: "PROTECTIVE_STOP_HIT";
+    RECOVERY_TIMEOUT: "RECOVERY_TIMEOUT";
+    REGIME_INVALIDATION: "REGIME_INVALIDATION";
+    RSI_EXIT_HIT: "RSI_EXIT_HIT";
+  };
+  resolveLifecycleEventFromReasons: (reasons: string[], closeClassification?: string | null) => PositionLifecycleEvent | null;
+};
+
+type TradeSideModule = {
+  applyDirectionalOffset: (basePrice: number, offsetPct: number, side?: unknown) => number;
+  isEntryAction: (action: unknown) => boolean;
+  normalizeTradeSide: (side: unknown) => TradeDirection;
+};
+
+const { getPositionLifecycleState, isManagedRecoveryPosition, POSITION_LIFECYCLE_EVENTS, resolveLifecycleEventFromReasons } = require("./positionLifecycleManager.ts") as PositionLifecycleManagerModule;
+const { applyDirectionalOffset, isEntryAction, normalizeTradeSide } = require("../utils/tradeSide.ts") as TradeSideModule;
 
 export interface CompactLogDescriptor {
   dedupeKey?: string;

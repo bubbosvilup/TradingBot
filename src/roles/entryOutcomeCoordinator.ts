@@ -3,9 +3,14 @@ import type { BotRuntimeState } from "../types/bot.ts";
 import type { MarketTick } from "../types/market.ts";
 import type { RiskProfileSettings } from "../types/runtime.ts";
 import type { EntryEconomicsEstimate, MarketContext, StrategyDecision } from "../types/strategy.ts";
+import type { TradeDirection } from "../types/trade.ts";
 import type { ArchitectUsabilityState } from "./architectCoordinator.ts";
 
-const { normalizeEntrySide } = require("../utils/tradeSide.ts");
+type TradeSideModule = {
+  normalizeEntrySide: (side: unknown, action?: unknown) => TradeDirection;
+};
+
+const { normalizeEntrySide } = require("../utils/tradeSide.ts") as TradeSideModule;
 
 export interface EntryOutcomeCoordinatorParams {
   symbol: string;

@@ -5,8 +5,17 @@ import type { EntryEconomicsEstimate } from "../types/strategy.ts";
 import type { PositionRecord } from "../types/trade.ts";
 import type { ArchitectUsabilityState } from "./architectCoordinator.ts";
 
-const { isManagedRecoveryPosition } = require("./positionLifecycleManager.ts");
-const { isEntryAction, isExitActionForSide } = require("../utils/tradeSide.ts");
+type PositionLifecycleManagerModule = {
+  isManagedRecoveryPosition: (position: PositionRecord | null | undefined) => boolean;
+};
+
+type TradeSideModule = {
+  isEntryAction: (action: unknown) => boolean;
+  isExitActionForSide: (side: unknown, action: unknown) => boolean;
+};
+
+const { isManagedRecoveryPosition } = require("./positionLifecycleManager.ts") as PositionLifecycleManagerModule;
+const { isEntryAction, isExitActionForSide } = require("../utils/tradeSide.ts") as TradeSideModule;
 
 export interface EntryCoordinatorParams {
   botId: string;

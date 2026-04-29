@@ -4,8 +4,17 @@ import type { MarketTick } from "../types/market.ts";
 import type { MtfFrameConfig, MtfPublishDiagnostics, MtfSnapshot } from "../types/mtf.ts";
 import type { BotStateStoreLike, LoggerLike, MarketStreamLike } from "../types/runtime.ts";
 
-const { aggregateMtfSnapshots } = require("../roles/mtfContextAggregator.ts");
-const { elapsedMs, startTimer } = require("../utils/timing.ts");
+type MtfContextAggregatorModule = {
+  aggregateMtfSnapshots: (snapshots: MtfSnapshot[], observedAt: number) => MtfSnapshot;
+};
+
+type TimingModule = {
+  elapsedMs: (startedAt: bigint) => number;
+  startTimer: () => bigint;
+};
+
+const { aggregateMtfSnapshots } = require("../roles/mtfContextAggregator.ts") as MtfContextAggregatorModule;
+const { elapsedMs, startTimer } = require("../utils/timing.ts") as TimingModule;
 
 const DEFAULT_MTF_FRAMES: MtfFrameConfig[] = [
   { id: "1m", horizonFrame: "short", windowMs: 60_000 },

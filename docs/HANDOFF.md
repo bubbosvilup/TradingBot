@@ -248,3 +248,49 @@ Do not:
 - perform cosmetic refactors while touching trading logic
 - hide type problems with `any`, `as any`, broad casts, or `!`
 - recreate active AI guidance folders, skill files, playbooks, or extra handoffs
+
+Patching 18.3 in 7 waves, current state of the first wave:
+
+## Current Progress: CJS Type-Visibility Hardening
+
+Documentation consolidation is complete.
+
+Wave 0 completed:
+- Baseline `src/` CommonJS inventory:
+  - `require(...)`: 117
+  - `module.exports`: 58
+  - `exports.*`: 0
+- Runtime remains CommonJS.
+- Do not replace `require()` / `module.exports` until the module-system migration is planned as a dedicated branch.
+
+Wave 1A completed:
+- Added narrow local CJS type contracts in selected pure/helper modules.
+- No `require()` or `module.exports` changed.
+- `npm test`: PASS
+- `tsc -p tsconfig.json --pretty false`: PASS
+
+Wave 1B completed:
+- Added narrow local CJS type contracts in selected core/services/roles modules.
+- No `require()` or `module.exports` changed.
+- `npm test`: PASS
+- `tsc -p tsconfig.json --pretty false`: PASS
+
+Current result:
+- Baseline `require(...)` count remains 117.
+- Type-blind internal `require(...)` calls were reduced across 19 files.
+- Runtime behavior unchanged.
+
+Next:
+- Wave 1C targets remaining type-blind require calls outside the three high-risk files:
+  - `src/engines/executionEngine.ts`
+  - `src/core/configLoader.ts`
+  - `src/core/systemServer.ts`, internal non-builtin require only
+  - `src/strategies/rsiReversion/strategy.ts`
+
+Deferred high-risk files:
+- `src/core/orchestrator.ts`
+- `src/bots/tradingBot.ts`
+- `src/streams/marketStream.ts`
+
+These require a dedicated pre-audit before patching.
+

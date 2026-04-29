@@ -1,11 +1,21 @@
 import type { PositionRecord } from "../types/trade.ts";
+import type { InvariantError } from "../types/errors.ts";
 import type { PositionState } from "./stateSelectors.ts";
 
-const { createInvariantError } = require("../types/errors.ts");
+type ErrorsModule = {
+  createInvariantError: (code: string, message: string, context?: Record<string, unknown>, cause?: unknown) => InvariantError & Error;
+};
+
+type StateSelectorsModule = {
+  assertValidPositionState: (position: PositionRecord | null | undefined) => PositionState;
+  derivePositionState: (position: PositionRecord | null | undefined) => PositionState;
+};
+
+const { createInvariantError } = require("../types/errors.ts") as ErrorsModule;
 const {
   assertValidPositionState,
   derivePositionState
-} = require("./stateSelectors.ts");
+} = require("./stateSelectors.ts") as StateSelectorsModule;
 
 export type PositionTransitionInput = PositionState | PositionRecord | null | undefined;
 export type OrderState = "created" | "opened" | "closed" | "rejected";

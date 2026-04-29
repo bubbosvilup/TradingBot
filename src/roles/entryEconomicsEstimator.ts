@@ -1,13 +1,28 @@
 import type { EntryEconomicsEstimate, IndicatorSnapshot, MarketContext, Strategy, StrategyEntryEdgeInputs } from "../types/strategy.ts";
 import type { MtfPublishDiagnostics } from "../types/mtf.ts";
 import type { TradeDirection } from "../types/trade.ts";
+import type { ResolveRsiReversionMtfParamsInput, RsiReversionMtfResolvedParams } from "./mtfParamResolver.ts";
+
+type TradeSideModule = {
+  applyDirectionalOffset: (basePrice: number, offsetPct: number, side?: unknown) => number;
+  calculateTargetDistancePct: (params: {
+    latestPrice: number;
+    targetPrice: number;
+    side?: unknown;
+  }) => number;
+  normalizeTradeSide: (side: unknown) => TradeDirection;
+};
+
+type MtfParamResolverModule = {
+  resolveRsiReversionMtfParams: (params: ResolveRsiReversionMtfParamsInput) => RsiReversionMtfResolvedParams;
+};
 
 const {
   applyDirectionalOffset,
   calculateTargetDistancePct,
   normalizeTradeSide
-} = require("../utils/tradeSide.ts");
-const { resolveRsiReversionMtfParams } = require("./mtfParamResolver.ts");
+} = require("../utils/tradeSide.ts") as TradeSideModule;
+const { resolveRsiReversionMtfParams } = require("./mtfParamResolver.ts") as MtfParamResolverModule;
 
 const DEFAULT_CAPTURE_GAP_CAP_PCT = 0.03;
 

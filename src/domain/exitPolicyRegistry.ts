@@ -1,5 +1,10 @@
 import type { ExitPolicy, InvalidationMode } from "../types/exitPolicy.ts";
-const { normalizeRecoveryTargetOffsetPct } = require("./recoveryTargetResolver.ts");
+
+type RecoveryTargetResolverModule = {
+  normalizeRecoveryTargetOffsetPct: (value: unknown, fallback?: number) => number;
+};
+
+const { normalizeRecoveryTargetOffsetPct } = require("./recoveryTargetResolver.ts") as RecoveryTargetResolverModule;
 
 const RSI_REVERSION_PRO: ExitPolicy = {
   id: "RSI_REVERSION_PRO",

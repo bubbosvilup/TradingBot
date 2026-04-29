@@ -1,4 +1,10 @@
-const { systemClock } = require("../types/clock.ts");
+import type { Clock } from "../types/clock.ts";
+
+type ClockModule = {
+  systemClock: Clock;
+};
+
+const { systemClock } = require("../types/clock.ts") as ClockModule;
 
 function now(): number {
   return systemClock.now();

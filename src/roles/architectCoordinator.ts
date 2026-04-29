@@ -5,7 +5,11 @@ import type { BotStateStoreLike, StrategyRegistryLike, StrategySwitchPlan, Strat
 import type { Strategy } from "../types/strategy.ts";
 import type { PositionRecord } from "../types/trade.ts";
 
-const { now } = require("../utils/time.ts");
+type TimeModule = {
+  now: () => number;
+};
+
+const { now } = require("../utils/time.ts") as TimeModule;
 
 export interface ArchitectTimingMetadata {
   architectDecisionAgeMs: number | null;

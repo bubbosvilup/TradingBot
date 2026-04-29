@@ -5,7 +5,7 @@ import type { ContextSnapshot } from "../types/context.ts";
 import type { SystemEvent } from "../types/event.ts";
 import type { MarketKline, MarketTick, PriceSnapshot } from "../types/market.ts";
 import type { PerformanceSnapshot } from "../types/performance.ts";
-import type { ClosedTradeRecord, OrderRecord, PositionRecord } from "../types/trade.ts";
+import type { ClosedTradeRecord, OrderRecord, PositionRecord, TradeDirection } from "../types/trade.ts";
 import type {
   MarketDataFreshnessState,
   PortfolioKillSwitchMode,
@@ -14,9 +14,32 @@ import type {
   SymbolStateRetentionSnapshot
 } from "../types/runtime.ts";
 
-const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts");
-const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("../types/portfolioKillSwitch.ts");
-const { resolveClock } = require("./clock.ts");
+type TradeSideModule = {
+  calculateDirectionalGrossPnl: (params: {
+    entryPrice: number;
+    exitPrice: number;
+    quantity: number;
+    side?: unknown;
+  }) => {
+    grossPnl: number;
+    side: TradeDirection;
+  };
+  normalizeTradeSide: (side: unknown) => TradeDirection;
+};
+
+type PortfolioKillSwitchModule = {
+  VALID_PORTFOLIO_KILL_SWITCH_MODES: {
+    has(value: PortfolioKillSwitchMode): boolean;
+  };
+};
+
+type ClockModule = {
+  resolveClock: (clock?: Clock | null) => Clock;
+};
+
+const { calculateDirectionalGrossPnl, normalizeTradeSide } = require("../utils/tradeSide.ts") as TradeSideModule;
+const { VALID_PORTFOLIO_KILL_SWITCH_MODES } = require("../types/portfolioKillSwitch.ts") as PortfolioKillSwitchModule;
+const { resolveClock } = require("./clock.ts") as ClockModule;
 
 interface PerformanceHistoryPoint {
   time: number;

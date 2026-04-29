@@ -2,7 +2,11 @@ import type { RiskOverrides, RiskProfile, BotRuntimeState } from "../types/bot.t
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { PortfolioKillSwitchState, RiskProfileSettings } from "../types/runtime.ts";
 
-const { clamp } = require("../utils/math.ts");
+type MathModule = {
+  clamp: (value: number, min: number, max: number) => number;
+};
+
+const { clamp } = require("../utils/math.ts") as MathModule;
 
 class RiskManager {
   profiles: Record<RiskProfile, RiskProfileSettings>;

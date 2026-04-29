@@ -1,7 +1,11 @@
 import type { ArchitectAssessment, FamilyScores, MarketRegime, RegimeScores, RecommendedFamily } from "../types/architect.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 
-const { clamp } = require("../utils/math.ts");
+type MathModule = {
+  clamp: (value: number, min: number, max: number) => number;
+};
+
+const { clamp } = require("../utils/math.ts") as MathModule;
 
 class BotArchitect {
   minMaturity: number;

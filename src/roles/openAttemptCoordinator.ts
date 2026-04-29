@@ -2,9 +2,23 @@ import type { BotRuntimeState, RiskOverrides, RiskProfile } from "../types/bot.t
 import type { PerformanceSnapshot } from "../types/performance.ts";
 import type { ExecutionEngineLike, RiskManagerLike, TradeConstraints } from "../types/runtime.ts";
 import type { PositionRecord, TradeDirection } from "../types/trade.ts";
+import type { TradeConstraintValidationResult } from "../utils/tradeConstraints.ts";
 
-const { validateTradeConstraints } = require("../utils/tradeConstraints.ts");
-const { normalizeTradeSide } = require("../utils/tradeSide.ts");
+type TradeConstraintsModule = {
+  validateTradeConstraints: (params: {
+    minNotionalUsdt: number;
+    minQuantity: number;
+    price: number;
+    quantity: number;
+  }) => TradeConstraintValidationResult;
+};
+
+type TradeSideModule = {
+  normalizeTradeSide: (side: unknown) => TradeDirection;
+};
+
+const { validateTradeConstraints } = require("../utils/tradeConstraints.ts") as TradeConstraintsModule;
+const { normalizeTradeSide } = require("../utils/tradeSide.ts") as TradeSideModule;
 
 export interface OpenAttemptCoordinatorParams {
   executionEngine: ExecutionEngineLike;

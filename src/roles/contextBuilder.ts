@@ -1,9 +1,25 @@
 import type { TrendBias, VolatilityState, StructureState, ArchitectDataMode, MarketRegime } from "../types/architect.ts";
 import type { ContextSnapshot } from "../types/context.ts";
+import type { InvariantError } from "../types/errors.ts";
 import type { MarketTick } from "../types/market.ts";
 
-const { clamp, mean, stddev } = require("../utils/math.ts");
-const { createInvariantError } = require("../types/errors.ts");
+type MathModule = {
+  clamp: (value: number, min: number, max: number) => number;
+  mean: (values: number[]) => number;
+  stddev: (values: number[]) => number;
+};
+
+type ErrorsModule = {
+  createInvariantError: (
+    code: string,
+    message: string,
+    context?: Record<string, unknown>,
+    cause?: unknown
+  ) => InvariantError & Error;
+};
+
+const { clamp, mean, stddev } = require("../utils/math.ts") as MathModule;
+const { createInvariantError } = require("../types/errors.ts") as ErrorsModule;
 
 class ContextBuilder {
   indicatorEngine: any;

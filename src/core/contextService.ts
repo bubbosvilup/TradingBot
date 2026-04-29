@@ -2,7 +2,12 @@ import type { ArchitectDataMode } from "../types/architect.ts";
 import type { ContextSnapshot } from "../types/context.ts";
 import type { MarketTick } from "../types/market.ts";
 
-const { elapsedMs, startTimer } = require("../utils/timing.ts");
+type TimingModule = {
+  elapsedMs: (startedAt: bigint) => number;
+  startTimer: () => bigint;
+};
+
+const { elapsedMs, startTimer } = require("../utils/timing.ts") as TimingModule;
 
 class ContextService {
   store: any;
